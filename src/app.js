@@ -17,6 +17,7 @@ import {
 } from "./project.js";
 import { loadAutosave, saveAutosave } from "./storage.js";
 import { tuneLocalSensitivity } from "./local-tune.js";
+import { dilateBinaryMask } from "./evaluation.js";
 
 const $ = id => document.getElementById(id);
 
@@ -59,7 +60,6 @@ const els = {
   localStrength: $("localStrength"),
   localWindow: $("localWindow"),
   referenceBrush: $("referenceBrush"),
-  tolerance: $("tolerance"),
   reviewRadius: $("reviewRadius"),
   metricPrecision: $("metricPrecision"),
   metricRecall: $("metricRecall"),
@@ -226,9 +226,18 @@ function currentFeatureOptions() {
   };
 }
 
+function normalizedReferenceWidth() {
+  const raw = Math.max(1, Math.min(15, Math.round(Number(els.referenceBrush.value) || 5)));
+  return raw % 2 === 0 ? Math.max(1, raw - 1) : raw;
+}
+
+function referenceJudgementRadius() {
+  return Math.floor(normalizedReferenceWidth() / 2);
+}
+
 function currentComparisonOptions() {
   return {
-    tolerance: Number(els.tolerance.value),
+    tolerance: referenceJudgementRadius(),
     reviewRadius: Number(els.reviewRadius.value),
     opacity: Number(els.overlayOpacity.value),
   };
@@ -287,9 +296,12 @@ function applySettings(settings = {}) {
   if (local.localStrength != null) setRangeValue(els.localStrength, local.localStrength <= 1 ? local.localStrength * 100 : local.localStrength);
   if (local.window != null) setRangeValue(els.localWindow, local.window);
   if (local.localWindow != null) setRangeValue(els.localWindow, local.localWindow);
-  if (comparison.tolerance != null) setRangeValue(els.tolerance, comparison.tolerance);
   if (comparison.reviewRadius != null) setRangeValue(els.reviewRadius, comparison.reviewRadius);
-  if (settings.referenceBrush != null) setRangeValue(els.referenceBrush, settings.referenceBrush);
+  if (settings.referenceBrush != null) {
+    setRangeValue(els.referenceBrush, settings.referenceBrush);
+  } else if (comparison.tolerance != null) {
+    setRangeValue(els.referenceBrush, comparison.tolerance * 2 + 1);
+  }
   if (settings.overlayOpacity != null) setRangeValue(els.overlayOpacity, settings.overlayOpacity);
   if (settings.autosaveEnabled != null) els.autosaveEnabled.checked = Boolean(settings.autosaveEnabled);
   invalidateFeatures();
@@ -410,7 +422,13 @@ function renderNormalOverlay() {
 }
 
 function renderReferenceCanvas() {
-  if (!state.preview || !state.referenceMask) return;
+  if (!state.preview || !state.referenceCenterline) return;
+  state.referenceMask = dilateBinaryMask(
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    referenceJudgementRadius(),
+  );
   const rgba = new Uint8ClampedArray(state.referenceMask.length * 4);
   for (let p = 0; p < state.referenceMask.length; p += 1) {
     if (!state.referenceMask[p]) continue;
@@ -812,8 +830,7 @@ function paintDisk(mask, width, height, cx, cy, radius, value) {
 function paintReferenceSegment(from, to, erase) {
   const width = state.preview.width;
   const height = state.preview.height;
-  const brush = Number(els.referenceBrush.value);
-  const radius = Math.max(1, brush / 2);
+  const eraseRadius = Math.max(1, referenceJudgementRadius());
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy))));
@@ -822,23 +839,20 @@ function paintReferenceSegment(from, to, erase) {
     const t = step / steps;
     const cx = from.x + dx * t;
     const cy = from.y + dy * t;
-    paintDisk(state.referenceMask, width, height, cx, cy, radius, erase ? 0 : 1);
     if (erase) {
-      paintDisk(state.referenceCenterline, width, height, cx, cy, radius, 0);
+      paintDisk(state.referenceCenterline, width, height, cx, cy, eraseRadius, 0);
     } else {
       const sx = Math.max(0, Math.min(width - 1, Math.round(cx)));
       const sy = Math.max(0, Math.min(height - 1, Math.round(cy)));
       state.referenceCenterline[sy * width + sx] = 1;
     }
   }
-  // Exact centerline count is refreshed when the stroke ends; avoid scanning the
-  // whole preview on every pointer-move event.
   if (!erase) state.referenceCount = Math.max(1, state.referenceCount);
 }
 
 function drawReferenceCanvasSegment(from, to, erase) {
   const ctx = els.referenceCanvas.getContext("2d");
-  const brush = Number(els.referenceBrush.value);
+  const brush = normalizedReferenceWidth();
   ctx.save();
   ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
   ctx.strokeStyle = "rgba(255, 216, 74, 0.95)";
@@ -885,6 +899,7 @@ function endReferenceDraw(event) {
   state.drawingReference = false;
   state.lastReferencePoint = null;
   state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
+  renderReferenceCanvas();
   updateMetrics();
   updateControls();
   setStatus(`お手本を更新しました。中心線: ${state.referenceCount.toLocaleString()} px`);
@@ -918,8 +933,18 @@ bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), () => { rerenderOverlayOpacity(); scheduleAutosave(); });
 bindRange(els.localStrength, $("localStrengthValue"), featureSettingChanged);
 bindRange(els.localWindow, $("localWindowValue"), featureSettingChanged);
-bindRange(els.referenceBrush, $("referenceBrushValue"), scheduleAutosave);
-bindRange(els.tolerance, $("toleranceValue"), scheduleAutosave);
+bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
+  const normalized = normalizedReferenceWidth();
+  if (Number(els.referenceBrush.value) !== normalized) setRangeValue(els.referenceBrush, normalized);
+  clearLocalCalibration(true);
+  if (state.preview && state.referenceCenterline) {
+    renderReferenceCanvas();
+    if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent(false);
+    else renderNormalOverlay();
+    updateMetrics();
+  }
+  scheduleAutosave();
+});
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
 els.localEnabled.addEventListener("change", featureSettingChanged);
 els.autosaveEnabled.addEventListener("change", () => { if (els.autosaveEnabled.checked) scheduleAutosave(); else els.projectStatus.textContent = "自動保存OFF"; });
