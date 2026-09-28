@@ -4,57 +4,60 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.1.0-alpha — implementation started**
+**v0.3.0-alpha / boundary-v3**
 
-The first implementation focuses on:
+Current capabilities:
 
-- opening very large, uncompressed BMP files directly in the browser
-- parsing BMP metadata without decoding the whole image at once
-- generating a downsampled preview by reading only sampled source rows
-- preview-level grain-boundary candidate extraction
-- keeping the source image unchanged and drawing results on a separate overlay layer
+- direct loading of very large uncompressed BMP files without expanding the full source image to RGBA
+- low-memory downsampled preview generation
+- grain-boundary candidate extraction on the preview
+- multi-scale Dark Ridge feature for suppressing dot-like intragranular structures
+- direction-aware Lab color difference across the estimated boundary normal
+- local adaptive normalization for illumination and colour unevenness
+- user-drawn reference boundaries
+- tolerant Precision / Recall / F1 comparison
+- CPU-only automatic tuning of sensitivity and Dark / Ridge / Color weights
+- 4×4 regional evaluation data
+- evaluation history
+- project JSON save/load
+- IndexedDB autosave keyed to a lightweight source-image fingerprint
 
-The intended workflow is:
+The original microscopy BMP is treated as read-only. Grain boundaries and reference information are stored separately.
 
-```text
-Original BMP
-  -> lightweight preview
-  -> boundary candidate extraction
-  -> manual correction
-  -> full-resolution tiled analysis
-  -> overlay / mask / SVG / project export
-```
+## Run
 
-## Supported BMP input in v0.1 alpha
+GrainTracer is designed to run directly from GitHub Pages:
 
-- Windows BMP / DIB
-- 24-bit BGR, uncompressed (BI_RGB)
-- 32-bit BGRA, uncompressed (BI_RGB)
+https://kana874.github.io/Grain-Tracer/
 
-Other formats and compressed BMP variants will be added later.
-
-## Run locally
-
-No build step is required.
-
-Serve the repository with any local HTTP server, for example:
+For local use, serve the repository with a static HTTP server, for example:
 
 ```bash
 python -m http.server 8080
 ```
 
-Then open:
+## BMP support
+
+The current alpha supports:
+
+- Windows BMP / DIB
+- 24-bit BGR, uncompressed (BI_RGB)
+- 32-bit BGRA, uncompressed (BI_RGB)
+
+## v0.3 workflow
 
 ```text
-http://localhost:8080/
+Original BMP
+  -> low-memory preview
+  -> local normalization
+  -> multi-scale Dark Ridge
+  -> directional Lab colour difference
+  -> boundary score
+  -> reference comparison
+  -> CPU auto-tune
+  -> evaluation history / project save
 ```
 
-## Design principles
+Full-resolution overlapping-tile analysis, reference-guided local parameter optimisation, Smart Trace, and final PNG / mask / SVG export remain planned.
 
-1. The original microscopy image is never modified.
-2. Boundary information is stored and rendered as a separate layer.
-3. Large images are processed in tiles rather than fully expanded in memory.
-4. Automatic extraction is assistive; manual correction remains part of the workflow.
-5. Analysis coordinates are always expressed in original-image pixel coordinates.
-
-See [docs/DESIGN.md](docs/DESIGN.md) for the current architecture.
+See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
