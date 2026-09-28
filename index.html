@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.5-alpha</div>
+    <div class="version">v0.3.6-alpha</div>
   </header>
 
   <main class="layout">
@@ -124,12 +124,12 @@
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
         <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
-        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。未記入領域はUnknownとして誤検出扱いしません。</p>
+        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。未記入領域はUnknownとして誤検出扱いしません。Auto Tune v2はROIがあればTrue F1、なければPartial Label評価を使います。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
           <button id="compareButton" type="button" disabled>比較</button>
-          <button id="autoTuneButton" class="primary" type="button" disabled>全体自動調整</button>
+          <button id="autoTuneButton" class="primary" type="button" disabled>Auto Tune v2</button>
           <button id="localTuneButton" class="primary" type="button" disabled>局所自動調整</button>
           <button id="clearLocalCalibrationButton" type="button" disabled>局所補正解除</button>
           <button id="clearReferenceButton" type="button" disabled>粒界お手本全消去</button>
@@ -186,6 +186,7 @@
           <li class="done">Reference Editor v2（表示＝判定 / 半透明 / Undo / Redo）</li>
           <li class="done">非粒界お手本 / 解析除外領域</li>
           <li class="done">Partial Label評価 / 完全評価ROI / Multi-Tolerance診断</li>
+          <li class="done">Auto Tune v2（Coordinate Descent / feature=0 / Ablation）</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
