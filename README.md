@@ -17,6 +17,7 @@ Current capabilities:
 - user-drawn reference boundaries
 - tolerant Precision / Recall / F1 comparison
 - CPU-only automatic tuning of sensitivity and Dark / Ridge / Color weights
+- reference-guided 4×4 local sensitivity calibration with smooth interpolation
 - 4×4 regional evaluation data
 - evaluation history
 - project JSON save/load
@@ -54,10 +55,11 @@ Original BMP
   -> directional Lab colour difference
   -> boundary score
   -> reference comparison
-  -> CPU auto-tune
+  -> CPU global auto-tune
+  -> reference-guided local sensitivity calibration
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, reference-guided local parameter optimisation, Smart Trace, and final PNG / mask / SVG export remain planned.
+Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, Smart Trace, and final PNG / mask / SVG export remain planned.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
