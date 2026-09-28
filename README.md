@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.5-alpha / boundary-v4-dendrite-negref**
+**v0.3.6-alpha / boundary-v4-dendrite-negref**
 
 Current capabilities:
 
@@ -24,7 +24,7 @@ Current capabilities:
 - automatic 1 / 2 / 3 / 4 px Multi-Tolerance diagnostics
 - editable rectangular exclusion regions with move, edge/corner resize, Delete, Undo and Redo
 - orange non-boundary annotations for improved visibility on purple/magenta Barker images
-- CPU-only automatic tuning of sensitivity and Dark / Ridge / Color / dendrite weights using labelled Positive/Negative areas
+- Auto Tune v2: CPU-only coordinate-descent tuning of Sensitivity / Dark / Ridge / Color / Dendrite / MinComponent, including zero feature weights and ablation diagnostics
 - reference-guided 4×4 local sensitivity calibration with smooth interpolation
 - 4×4 regional evaluation data
 - evaluation history
@@ -66,7 +66,7 @@ Original BMP
   -> Positive / Negative / Unknown Partial Label comparison
   -> exclusion-mask filtering
   -> complete-evaluation ROI + Multi-Tolerance diagnostics
-  -> CPU global auto-tune on explicit labelled areas
+  -> Auto Tune v2 coordinate descent (ROI True F1 when available; otherwise Partial Label objective)
   -> reference-guided local sensitivity calibration
   -> evaluation history / project save
 ```
