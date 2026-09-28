@@ -1,4 +1,10 @@
-import { computeRegionalMetrics, dilateBinaryMask, splitReferenceCenterline } from "./evaluation.js";
+import {
+  computeFullEvaluationRoiMetrics,
+  computeMultiToleranceMetrics,
+  computeRegionalMetrics,
+  dilateBinaryMask,
+  splitReferenceCenterline,
+} from "./evaluation.js";
 
 function quantile(sorted, q) {
   if (!sorted.length) return 0;
@@ -65,6 +71,7 @@ function buildErrorMasks(prediction, referenceCenterline, width, height, options
   const fp = new Uint8Array(prediction.length);
   const fn = new Uint8Array(prediction.length);
   const negativeViolation = new Uint8Array(prediction.length);
+  const unknownPrediction = new Uint8Array(prediction.length);
 
   for (let p = 0; p < prediction.length; p += 1) {
     if (metrics.exclusionMask?.[p]) continue;
@@ -75,10 +82,12 @@ function buildErrorMasks(prediction, referenceCenterline, width, height, options
         fp[p] = 1;
         if (metrics.negativeMask?.[p]) negativeViolation[p] = 1;
       }
+    } else if (prediction[p] && metrics.unknownMask?.[p]) {
+      unknownPrediction[p] = 1;
     }
     if (referenceCenterline[p] && !metrics.predictionTolerance[p]) fn[p] = 1;
   }
-  return { tp, fp, fn, negativeViolation, metrics };
+  return { tp, fp, fn, negativeViolation, unknownPrediction, metrics };
 }
 
 function hotspotComponents(mask, width, height, features, type, limit = 16) {
@@ -213,6 +222,7 @@ export function buildDiagnosticReport(input) {
     negativeCenterline,
     exclusionMask,
     exclusionRects,
+    fullEvaluationRois,
     localCalibration,
     history,
     algorithmVersion,
@@ -242,6 +252,30 @@ export function buildDiagnosticReport(input) {
     {
       ...comparison,
       negativeMask,
+      exclusionMask,
+    },
+  );
+
+  const multiTolerance = computeMultiToleranceMetrics(
+    prediction,
+    referenceCenterline,
+    preview.width,
+    preview.height,
+    {
+      tolerances: [1, 2, 3, 4],
+      reviewRadius: comparison.reviewRadius,
+      negativeMask,
+      exclusionMask,
+    },
+  );
+  const fullEvaluationRoi = computeFullEvaluationRoiMetrics(
+    prediction,
+    referenceCenterline,
+    preview.width,
+    preview.height,
+    fullEvaluationRois ?? [],
+    {
+      tolerance: comparison.tolerance,
       exclusionMask,
     },
   );
@@ -310,18 +344,22 @@ export function buildDiagnosticReport(input) {
     x1: region.x1,
     y1: region.y1,
     referencePixels: region.referencePixels,
+    matchedReference: region.matchedReference ?? 0,
+    falseNegative: region.falseNegative ?? 0,
+    positiveRecall: region.positiveRecall ?? region.recall,
     negativePixels: region.negativePixels ?? 0,
     negativePrediction: region.negativePrediction ?? 0,
-    negativeHitRate: region.negativeHitRate ?? 0,
+    negativeLeakage: region.negativeLeakage ?? region.negativeHitRate ?? 0,
+    unknownPrediction: region.unknownPrediction ?? 0,
+    alignmentError: region.alignmentError ?? null,
     excludedPixels: region.excludedPixels ?? 0,
-    precision: region.precision,
-    recall: region.recall,
-    f1: region.f1,
+    labelPrecisionProxy: region.labelPrecision ?? region.precision,
+    labelF1Proxy: region.labelF1 ?? region.f1,
     ...regionFeatureSummary(features, preview.width, region),
   }));
 
   return {
-    schema: "graintracer-diagnostic-v2",
+    schema: "graintracer-diagnostic-v3",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -342,33 +380,38 @@ export function buildDiagnosticReport(input) {
     },
     localCalibration: localCalibration ?? null,
     evaluation: {
-      precision: metrics.precision,
-      recall: metrics.recall,
-      f1: metrics.f1,
-      macroRegionF1,
-      matchedPrediction: metrics.matchedPrediction,
-      falsePositive: metrics.falsePositive,
+      mode: "partial-label",
+      positiveRecall: metrics.positiveRecall,
+      negativeLeakage: metrics.negativeLeakage,
+      alignmentError: metrics.alignmentError,
       matchedReference: metrics.matchedReference,
       falseNegative: metrics.falseNegative,
       negativePrediction: metrics.negativePrediction,
       negativePixels: metrics.negativePixels,
-      negativeHitRate: metrics.negativeHitRate,
+      unknownPrediction: metrics.unknownPrediction,
       excludedPixels: metrics.excludedPixels,
+      labelProxy: {
+        precision: metrics.labelPrecision,
+        recall: metrics.positiveRecall,
+        f1: metrics.labelF1,
+        macroRegionF1,
+        note: "Proxy score over labelled Positive/Negative areas only; not whole-image Precision/F1.",
+      },
+      multiTolerance,
+      fullEvaluationRoi,
       tuning: {
-        precision: tuningMetrics.precision,
-        recall: tuningMetrics.recall,
-        f1: tuningMetrics.f1,
-        negativePrediction: tuningMetrics.negativePrediction,
-        negativePixels: tuningMetrics.negativePixels,
-        negativeHitRate: tuningMetrics.negativeHitRate,
+        positiveRecall: tuningMetrics.positiveRecall,
+        negativeLeakage: tuningMetrics.negativeLeakage,
+        alignmentError: tuningMetrics.alignmentError,
+        labelPrecisionProxy: tuningMetrics.labelPrecision,
+        labelF1Proxy: tuningMetrics.labelF1,
       },
       validation: validationMetrics ? {
-        precision: validationMetrics.precision,
-        recall: validationMetrics.recall,
-        f1: validationMetrics.f1,
-        negativePrediction: validationMetrics.negativePrediction,
-        negativePixels: validationMetrics.negativePixels,
-        negativeHitRate: validationMetrics.negativeHitRate,
+        positiveRecall: validationMetrics.positiveRecall,
+        negativeLeakage: validationMetrics.negativeLeakage,
+        alignmentError: validationMetrics.alignmentError,
+        labelPrecisionProxy: validationMetrics.labelPrecision,
+        labelF1Proxy: validationMetrics.labelF1,
       } : null,
     },
     validationSplit: {
@@ -389,16 +432,20 @@ export function buildDiagnosticReport(input) {
       regionsWithReference: regionsWithReference.length,
       totalRegions: metrics.regions.length,
       referencePixels: metrics.referencePixels,
-      reviewedPredictionPixels: metrics.reviewedPredictionPixels,
+      labelledPredictionPixels: metrics.reviewedPredictionPixels,
+      unknownPredictionPixels: metrics.unknownPrediction,
       nonBoundaryPixels: metrics.negativePixels,
       nonBoundaryPredictionPixels: metrics.negativePrediction,
       exclusionRectCount: (exclusionRects ?? []).length,
       excludedPixels: metrics.excludedPixels,
+      fullEvaluationRoiCount: (fullEvaluationRois ?? []).length,
+      fullEvaluationRoiPixels: fullEvaluationRoi.roiPixels,
     },
     featureStatistics: {
       truePositive: featureStatistics(features, masks.tp),
-      falsePositive: featureStatistics(features, masks.fp),
+      explicitNegativeViolation: featureStatistics(features, masks.fp),
       falseNegative: featureStatistics(features, masks.fn),
+      unknownPrediction: featureStatistics(features, masks.unknownPrediction),
       nonBoundaryReference: negativeMask ? featureStatistics(features, negativeMask) : {},
       nonBoundaryViolation: featureStatistics(features, masks.negativeViolation),
     },
@@ -410,6 +457,7 @@ export function buildDiagnosticReport(input) {
         ? negativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
       exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
+      fullEvaluationRois: (fullEvaluationRois ?? []).map(rect => ({ ...rect })),
       excludedPixels: exclusionMask
         ? exclusionMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
@@ -423,10 +471,14 @@ export function buildDiagnosticReport(input) {
     tuningTrace: compactHistory(history),
     notes: [
       "Feature values are normalized to 0..1.",
-      "False-positive statistics use predicted pixels inside the positive review area or user-labelled non-boundary area, excluding exclusion regions.",
-      "Non-boundary reference pixels are explicit negative examples; predictions inside them count as false positives.",
+      "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",
+      "Predictions in Unknown areas are not counted as false positives.",
+      "Positive Recall measures how much of the user-labelled boundary centerline is recovered.",
+      "Negative Leakage measures prediction pixels inside explicit non-boundary labels.",
+      "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
+      "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",
+      "Multi-Tolerance diagnostics are reported for 1, 2, 3, and 4 preview pixels.",
       "Exclusion rectangles are removed from both boundary output and evaluation.",
-      "False-negative statistics use reference centerline pixels without a prediction inside the judgement radius.",
       "Dendrite statistics represent cross-boundary orientation/coherence change estimated from a local structure tensor.",
     ],
   };
