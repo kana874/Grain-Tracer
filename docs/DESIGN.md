@@ -2,112 +2,102 @@
 
 ## 1. Goal
 
-GrainTracer is intended to extract and annotate grain boundaries from Barker-etched, polarized-light aluminum micrographs while preserving the original source image unchanged.
+GrainTracer extracts and annotates grain boundaries from Barker-etched polarized-light aluminum micrographs while leaving the original source image unchanged.
 
-The normal user input is the original, non-split BMP exported by the microscope/camera system. Large source files (for example 400+ MB BMPs) must not require the user to pre-split the image.
+The normal input is the original large BMP exported by the microscope/camera system. The user should not need to pre-split a 400 MB-class image.
 
-## 2. Non-destructive data model
-
-The source microscopy image is immutable. Derived information is stored separately:
+## 2. Non-destructive model
 
 ```text
 Source BMP (read only)
+  + derived feature maps
   + automatic boundary candidates
-  + accepted boundary geometry
-  + manual additions / deletions
-  + scale calibration
+  + user reference boundaries
+  + comparison/evaluation history
   + analysis settings
 ```
 
-All geometry uses original-image pixel coordinates.
+The current preview workflow stores reference information at preview resolution. Full-resolution geometry will use original-image coordinates when tiled analysis is implemented.
 
 ## 3. Large BMP strategy
 
-### v0.1 alpha
+The browser reads the BMP header and only source rows required for a reduced preview. It does not decode the complete source BMP into an RGBA canvas.
 
-The browser reads only:
-
-1. the BMP/DIB header;
-2. source rows needed to build a reduced preview.
-
-The full BMP is not decoded into an RGBA canvas. A 24-bit 400 MB BMP would otherwise require even more memory after RGBA expansion.
-
-Supported initially:
-
-- 24-bit BI_RGB BMP
-- 32-bit BI_RGB BMP
-
-### Full-resolution analysis target
-
-Full-resolution extraction will operate in overlapping tiles:
+Future full-resolution extraction will use overlapping tiles, initially targeting approximately:
 
 ```text
-nominal tile: 2048 x 2048 px
-overlap/halo: 64 px per side
+tile: 2048 × 2048 px
+halo: 64 px per side
 ```
 
-Only the non-overlap core is committed to the global result. This reduces seams at tile boundaries.
+## 4. v0.3 boundary model
 
-## 4. Boundary detection model
-
-Barker micrographs contain three visually competing dark structures:
-
-- true grain boundaries;
-- small dark dot-like features;
-- short intragranular linear features.
-
-Therefore plain thresholding or Canny alone is not sufficient.
-
-The intended boundary score combines multiple cues:
+The v0.3 boundary score uses three features:
 
 ```text
-BoundaryScore = w_dark * dark-line evidence
-              + w_color * across-boundary colour difference
-              + w_cont * line continuity / topology
+BoundaryScore =
+  w_dark  * LocalDarkness
++ w_ridge * MultiScaleDarkRidge
++ w_color * DirectionalLabDifference
 ```
 
-The preview implementation starts with dark-line and colour-difference cues, followed by connected-component filtering. Later OpenCV.js stages will add morphology, thinning/skeletonization, gap closing and watershed-assisted region reasoning.
+### Local darkness
 
-## 5. User correction workflow
+Brightness is evaluated relative to a local neighbourhood as well as by absolute darkness. This reduces sensitivity to uneven illumination and Barker colour variation across the field.
 
-Automatic extraction is assistive rather than authoritative.
+### Multi-scale Dark Ridge
 
-Planned correction tools:
+Ridge response is evaluated at several scales and four orientations. The normal-direction dark-line response is penalised by the tangent-direction response. Dot-like dark structures therefore tend to score lower than elongated grain-boundary lines.
 
-- eraser for false positives;
-- pen/polyline for missing boundaries;
-- Smart Trace: click two endpoints and find the lowest-cost path through the boundary-likelihood map;
-- undo / redo;
-- per-boundary accept/reject.
+### Directional Lab difference
 
-## 6. Rendering layers
+The ridge detector supplies an estimated boundary normal. Colour samples are taken on both sides of that normal at several distances and compared in Lab space.
 
-```text
-Layer 4: manual edits
-Layer 3: accepted/final boundaries
-Layer 2: automatic candidates
-Layer 1: immutable source image
-```
+### Local adaptive normalisation
 
-The current alpha uses two HTML canvases (image + overlay). Konva.js is planned when editable vector geometry is introduced.
+Local adaptation can be enabled/disabled and has adjustable strength/window size. Ridge and colour features are normalised against their local neighbourhood so that one global absolute threshold is not the only criterion across a spatially uneven image.
 
-## 7. Planned exports
+## 5. Reference evaluation
 
-- annotated PNG
-- binary boundary mask PNG
-- SVG boundary geometry
-- GrainTracer project JSON
+The visible reference stroke can be thick for usability, but evaluation uses a separate thin centerline.
 
-Future analysis exports may include grain area, equivalent circle diameter and grain-size distributions after closed-grain segmentation is sufficiently reliable.
+Prediction and reference matching use a configurable spatial tolerance. Precision and Recall use separate denominators:
 
-## 8. Version plan
+- Precision: matched predicted boundary pixels / predicted pixels in the reviewed zone.
+- Recall: matched reference-centerline pixels / all reference-centerline pixels.
 
-| Version | Scope |
-|---|---|
-| v0.1 | Direct BMP load, low-memory preview, preview candidate extraction |
-| v0.2 | Manual correction, undo/redo, Smart Trace |
-| v0.3 | Full-resolution tiled processing and seam handling |
-| v0.4 | PNG / mask / SVG / project export |
-| v0.5 | Scale calibration and closed-grain recognition |
-| v0.6 | Grain metrics and distributions |
-| v1.0 | Validated stable workflow |
+Regional metrics are currently calculated on a 4×4 grid and stored with each evaluation-history entry.
+
+## 6. CPU auto-tuning
+
+GPU use is not required.
+
+Auto-tuning is deliberately split into two stages for company-PC performance:
+
+1. sensitivity and Dark/Ridge/Color weight profiles are scored only in the user-reviewed area;
+2. the best raw configuration is built once over the preview, then minimum connected-component size is tuned.
+
+## 7. Persistence
+
+A `.graintracer.json` project stores:
+
+- source-image identity/fingerprint
+- preview metadata
+- extraction settings
+- local-adaptation settings
+- comparison settings
+- reference display mask and centerline
+- evaluation history, including global and regional metrics
+
+The 400 MB-class BMP itself is not embedded.
+
+IndexedDB is used for optional autosave and automatic restore when the same BMP fingerprint is opened again.
+
+## 8. Next stages
+
+- Reference-guided local parameter optimisation.
+- Local F1 / compensation-map visualisation.
+- Full-resolution overlapping-tile analysis and seam handling.
+- Smart Trace and manual correction workflow.
+- PNG / binary mask / SVG export.
+- Closed-grain segmentation and grain metrics.
