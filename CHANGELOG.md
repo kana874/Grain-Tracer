@@ -1,6 +1,43 @@
 # Changelog
 
-All notable GrainTracer changes will be recorded here.
+All notable GrainTracer changes are recorded here.
+
+## [0.3.0-alpha] - 2026-09-28
+
+### Added
+
+- Multi-scale Dark Ridge detection at multiple line widths and four orientations.
+- Direction-aware Lab colour-difference feature across the detected ridge normal.
+- Local adaptive luminance normalisation for spatial illumination/colour unevenness.
+- Local normalisation of Ridge and colour features.
+- Separate Dark / Ridge / Color weights.
+- Centerline-based reference evaluation to reduce dependence on reference brush width.
+- 4×4 regional Precision / Recall / F1 metrics.
+- Persistent evaluation history.
+- GrainTracer project JSON save/load.
+- IndexedDB autosave and automatic restore for matching BMP files.
+- Lightweight source fingerprint using metadata plus sampled file regions.
+- CPU auto-tuning updated for the three-feature boundary model.
+
+### Changed
+
+- CPU auto-tuning now uses a fast two-stage search: threshold/weight tuning in the reviewed area, then connected-component tuning on one full-image candidate.
+- Reference drawing internally keeps a thin centerline for evaluation while retaining a thicker display mask.
+
+### Validation
+
+- JavaScript syntax checks passed for the new v0.3 modules.
+- A synthetic boundary test passed for the v0.3 analysis pipeline and auto-tuning.
+- Real 400 MB-class BMP behaviour still requires validation in the browser on production microscopy images.
+
+## [0.2.0-alpha] - 2026-09-28
+
+### Added
+
+- Reference boundary drawing and erasing.
+- Tolerant comparison overlay.
+- Precision / Recall / F1 metrics.
+- CPU-based parameter auto-tuning.
 
 ## [0.1.0-alpha] - 2026-09-28
 
@@ -8,16 +45,8 @@ All notable GrainTracer changes will be recorded here.
 
 - Initial browser application shell.
 - Direct parsing of large uncompressed 24-bit and 32-bit BMP files.
-- Low-memory preview generation that samples source BMP rows instead of expanding the entire image.
+- Low-memory preview generation.
 - Image metadata display.
 - Pan, zoom, fit and 100% preview controls.
 - Preview-level grain-boundary candidate extraction.
-- Separate cyan boundary overlay so source pixels remain unchanged.
-- Controls for extraction sensitivity, dark-line weighting, colour-difference weighting and minimum connected-component size.
-- Architecture/design document for tiled full-resolution processing.
-- Windows launcher for local use.
-
-### Validation performed
-
-- JavaScript syntax checks passed for the initial source modules.
-- BMP header parsing and preview decoding were tested with a generated 24-bit bottom-up BMP.
+- Separate boundary overlay layer.
