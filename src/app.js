@@ -25,6 +25,15 @@ import {
   featureMapImageData,
   imageDataToBlob,
 } from "./diagnostics.js";
+import {
+  applyReferenceHistoryEntry,
+  buildClearReferenceEntry,
+  createReferenceEditTracker,
+  finalizeReferenceEdit,
+  paintReferenceCenterlineSegment,
+  rebuildReferenceMaskRegion,
+  renderReferenceMaskRegion,
+} from "./reference-editor.js";
 
 const $ = id => document.getElementById(id);
 
@@ -41,6 +50,8 @@ const els = {
   panToolButton: $("panToolButton"),
   referenceToolButton: $("referenceToolButton"),
   eraseReferenceToolButton: $("eraseReferenceToolButton"),
+  undoReferenceButton: $("undoReferenceButton"),
+  redoReferenceButton: $("redoReferenceButton"),
   fitButton: $("fitButton"),
   actualButton: $("actualButton"),
   clearOverlayButton: $("clearOverlayButton"),
@@ -69,6 +80,7 @@ const els = {
   localStrength: $("localStrength"),
   localWindow: $("localWindow"),
   referenceBrush: $("referenceBrush"),
+  referenceOpacity: $("referenceOpacity"),
   reviewRadius: $("reviewRadius"),
   metricPrecision: $("metricPrecision"),
   metricRecall: $("metricRecall"),
@@ -101,6 +113,9 @@ const state = {
   drawingReference: false,
   dragOrigin: null,
   lastReferencePoint: null,
+  currentReferenceEdit: null,
+  undoStack: [],
+  redoStack: [],
   analysisMask: null,
   referenceMask: null,
   referenceCenterline: null,
@@ -147,6 +162,8 @@ function updateControls() {
   els.panToolButton.disabled = disabled || !hasPreview;
   els.referenceToolButton.disabled = disabled || !hasPreview;
   els.eraseReferenceToolButton.disabled = disabled || !hasPreview || !hasRef;
+  els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
+  els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
   els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
   els.localTuneButton.disabled = disabled || !hasPreview || !hasRef;
@@ -280,7 +297,8 @@ function currentSettings() {
     extraction: currentExtractionOptions(),
     local: currentFeatureOptions(),
     comparison: currentComparisonOptions(),
-    referenceBrush: Number(els.referenceBrush.value),
+    referenceBrush: normalizedReferenceWidth(),
+    referenceOpacity: Number(els.referenceOpacity.value),
     overlayOpacity: Number(els.overlayOpacity.value),
     autosaveEnabled: els.autosaveEnabled.checked,
   };
@@ -314,6 +332,7 @@ function applySettings(settings = {}) {
   } else if (comparison.tolerance != null) {
     setRangeValue(els.referenceBrush, comparison.tolerance * 2 + 1);
   }
+  if (settings.referenceOpacity != null) setRangeValue(els.referenceOpacity, settings.referenceOpacity);
   if (settings.overlayOpacity != null) setRangeValue(els.overlayOpacity, settings.overlayOpacity);
   if (settings.autosaveEnabled != null) els.autosaveEnabled.checked = Boolean(settings.autosaveEnabled);
   invalidateFeatures();
@@ -445,9 +464,82 @@ function renderReferenceCanvas() {
   for (let p = 0; p < state.referenceMask.length; p += 1) {
     if (!state.referenceMask[p]) continue;
     const i = p * 4;
-    rgba[i] = 255; rgba[i + 1] = 216; rgba[i + 2] = 74; rgba[i + 3] = 242;
+    rgba[i] = 255;
+    rgba[i + 1] = 216;
+    rgba[i + 2] = 74;
+    rgba[i + 3] = Math.round(255 * Math.max(0.1, Math.min(1, Number(els.referenceOpacity.value) / 100)));
   }
   els.referenceCanvas.getContext("2d").putImageData(new ImageData(rgba, state.preview.width, state.preview.height), 0, 0);
+}
+
+function resetReferenceHistory() {
+  state.undoStack = [];
+  state.redoStack = [];
+  state.currentReferenceEdit = null;
+  updateControls();
+}
+
+function referenceOpacityRatio() {
+  return Math.max(0.1, Math.min(1, Number(els.referenceOpacity.value) / 100));
+}
+
+function refreshReferenceDirty(changedBounds) {
+  if (!state.preview || !state.referenceCenterline || !state.referenceMask || !changedBounds) return;
+  const dirty = rebuildReferenceMaskRegion(
+    state.referenceCenterline,
+    state.referenceMask,
+    state.preview.width,
+    state.preview.height,
+    referenceJudgementRadius(),
+    changedBounds,
+  );
+  renderReferenceMaskRegion(
+    els.referenceCanvas,
+    state.referenceMask,
+    state.preview.width,
+    dirty,
+    referenceOpacityRatio(),
+  );
+}
+
+function commitReferenceHistory(entry) {
+  if (!entry) return;
+  state.undoStack.push(entry);
+  if (state.undoStack.length > 120) state.undoStack.splice(0, state.undoStack.length - 120);
+  state.redoStack = [];
+  updateControls();
+}
+
+function invalidateAfterReferenceEdit() {
+  clearLocalCalibration(true);
+  state.comparisonMode = false;
+  els.referenceCanvas.style.visibility = "visible";
+  updateMetrics();
+}
+
+function applyReferenceUndoRedo(direction) {
+  const source = direction === "redo" ? state.redoStack : state.undoStack;
+  const target = direction === "redo" ? state.undoStack : state.redoStack;
+  if (!state.preview || !state.referenceCenterline || source.length === 0) return;
+
+  if (state.comparisonMode) showNormalView();
+  invalidateAfterReferenceEdit();
+  const entry = source.pop();
+  const bounds = applyReferenceHistoryEntry(state.referenceCenterline, entry, direction);
+  refreshReferenceDirty(bounds);
+  target.push(entry);
+  state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  updateControls();
+  setStatus(`お手本を${direction === "redo" ? "やり直しました" : "元に戻しました"}。中心線: ${state.referenceCount.toLocaleString()} px`);
+  scheduleAutosave();
+}
+
+function undoReference() {
+  applyReferenceUndoRedo("undo");
+}
+
+function redoReference() {
+  applyReferenceUndoRedo("redo");
 }
 
 function showNormalView() {
@@ -467,17 +559,26 @@ function clearOverlay() {
 }
 
 function clearReference() {
-  if (!state.preview) return;
-  clearLocalCalibration(true);
-  state.referenceMask = new Uint8Array(state.preview.width * state.preview.height);
-  state.referenceCenterline = new Uint8Array(state.preview.width * state.preview.height);
-  state.referenceCount = 0;
+  if (!state.preview || !state.referenceCenterline || !hasReference()) return;
+  if (state.comparisonMode) showNormalView();
+  invalidateAfterReferenceEdit();
+
+  const entry = buildClearReferenceEntry(
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+  );
+  if (!entry) return;
+
+  state.referenceCenterline.fill(0);
+  state.referenceMask.fill(0);
   els.referenceCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  state.referenceCount = 0;
+  commitReferenceHistory(entry);
   renderNormalOverlay();
-  updateMetrics();
   setTool("pan");
   updateControls();
-  setStatus("お手本線をすべて消去しました。");
+  setStatus("お手本線をすべて消去しました。Undoで復元できます。");
   scheduleAutosave();
 }
 
@@ -528,6 +629,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.referenceMask = masks.referenceMask;
   state.referenceCenterline = masks.referenceCenterline;
   state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
+  resetReferenceHistory();
   state.history = Array.isArray(project.history) ? project.history : [];
   state.localCalibration = project.localCalibration ?? null;
   applySettings(project.settings ?? {});
@@ -676,6 +778,7 @@ async function loadBmp(file) {
   state.referenceCount = 0;
   state.referenceMask = null;
   state.referenceCenterline = null;
+  resetReferenceHistory();
   state.sourceFingerprint = null;
   state.localCalibration = null;
   updateLocalCalibrationStatus();
@@ -973,73 +1076,35 @@ function eventToPreviewPoint(event) {
   return { x, y };
 }
 
-function paintDisk(mask, width, height, cx, cy, radius, value) {
-  const minX = Math.max(0, Math.floor(cx - radius));
-  const maxX = Math.min(width - 1, Math.ceil(cx + radius));
-  const minY = Math.max(0, Math.floor(cy - radius));
-  const maxY = Math.min(height - 1, Math.ceil(cy + radius));
-  const rr = radius * radius;
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let x = minX; x <= maxX; x += 1) {
-      const dx = x - cx;
-      const dy = y - cy;
-      if (dx * dx + dy * dy <= rr) mask[y * width + x] = value;
-    }
-  }
-}
-
-function paintReferenceSegment(from, to, erase) {
-  const width = state.preview.width;
-  const height = state.preview.height;
-  const eraseRadius = Math.max(1, referenceJudgementRadius());
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy))));
-
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps;
-    const cx = from.x + dx * t;
-    const cy = from.y + dy * t;
-    if (erase) {
-      paintDisk(state.referenceCenterline, width, height, cx, cy, eraseRadius, 0);
-    } else {
-      const sx = Math.max(0, Math.min(width - 1, Math.round(cx)));
-      const sy = Math.max(0, Math.min(height - 1, Math.round(cy)));
-      state.referenceCenterline[sy * width + sx] = 1;
-    }
-  }
-  if (!erase) state.referenceCount = Math.max(1, state.referenceCount);
-}
-
-function drawReferenceCanvasSegment(from, to, erase) {
-  const ctx = els.referenceCanvas.getContext("2d");
-  const brush = normalizedReferenceWidth();
-  ctx.save();
-  ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
-  ctx.strokeStyle = "rgba(255, 216, 74, 0.95)";
-  ctx.fillStyle = "rgba(255, 216, 74, 0.95)";
-  ctx.lineWidth = brush;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  if (Math.hypot(to.x - from.x, to.y - from.y) < 0.5) {
-    ctx.beginPath(); ctx.arc(to.x, to.y, brush / 2, 0, Math.PI * 2); ctx.fill();
-  } else {
-    ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
-  }
-  ctx.restore();
+function applyReferenceSegment(from, to) {
+  if (!state.currentReferenceEdit) return false;
+  const dirtyBounds = paintReferenceCenterlineSegment(
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    from,
+    to,
+    {
+      erase: state.tool === "erase-reference",
+      eraseRadius: Math.max(1, referenceJudgementRadius()),
+    },
+    state.currentReferenceEdit,
+  );
+  if (!dirtyBounds) return false;
+  refreshReferenceDirty(dirtyBounds);
+  if (state.tool !== "erase-reference") state.referenceCount = Math.max(1, state.referenceCount);
+  return true;
 }
 
 function beginReferenceDraw(event) {
   const point = eventToPreviewPoint(event);
   if (!point) return false;
   if (state.comparisonMode) showNormalView();
-  if (state.localCalibration) clearLocalCalibration(true);
+  invalidateAfterReferenceEdit();
+  state.currentReferenceEdit = createReferenceEditTracker();
   state.drawingReference = true;
   state.lastReferencePoint = point;
-  const erase = state.tool === "erase-reference";
-  paintReferenceSegment(point, point, erase);
-  drawReferenceCanvasSegment(point, point, erase);
-  updateMetrics();
+  applyReferenceSegment(point, point);
   updateControls();
   els.viewer.setPointerCapture(event.pointerId);
   return true;
@@ -1049,9 +1114,7 @@ function continueReferenceDraw(event) {
   if (!state.drawingReference || !state.lastReferencePoint) return;
   const point = eventToPreviewPoint(event);
   if (!point) return;
-  const erase = state.tool === "erase-reference";
-  paintReferenceSegment(state.lastReferencePoint, point, erase);
-  drawReferenceCanvasSegment(state.lastReferencePoint, point, erase);
+  applyReferenceSegment(state.lastReferencePoint, point);
   state.lastReferencePoint = point;
 }
 
@@ -1059,8 +1122,10 @@ function endReferenceDraw(event) {
   if (!state.drawingReference) return;
   state.drawingReference = false;
   state.lastReferencePoint = null;
-  state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
-  renderReferenceCanvas();
+  const entry = finalizeReferenceEdit(state.referenceCenterline, state.currentReferenceEdit);
+  state.currentReferenceEdit = null;
+  if (entry) commitReferenceHistory(entry);
+  state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0);
   updateMetrics();
   updateControls();
   setStatus(`お手本を更新しました。中心線: ${state.referenceCount.toLocaleString()} px`);
@@ -1086,6 +1151,8 @@ els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
+els.undoReferenceButton.addEventListener("click", undoReference);
+els.redoReferenceButton.addEventListener("click", redoReference);
 
 bindRange(els.sensitivity, $("sensitivityValue"), extractionSettingChanged);
 bindRange(els.darkWeight, $("darkWeightValue"), extractionSettingChanged);
@@ -1106,6 +1173,10 @@ bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
     else renderNormalOverlay();
     updateMetrics();
   }
+  scheduleAutosave();
+});
+bindRange(els.referenceOpacity, $("referenceOpacityValue"), () => {
+  if (state.preview && state.referenceCenterline) renderReferenceCanvas();
   scheduleAutosave();
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
@@ -1164,6 +1235,25 @@ function endPointer(event) {
 }
 els.viewer.addEventListener("pointerup", endPointer);
 els.viewer.addEventListener("pointercancel", endPointer);
+
+window.addEventListener("keydown", event => {
+  if (!state.preview || state.busy || !(event.ctrlKey || event.metaKey)) return;
+  const key = event.key.toLowerCase();
+  if (key === "z" && !event.shiftKey) {
+    if (state.undoStack.length) {
+      event.preventDefault();
+      undoReference();
+    }
+    return;
+  }
+  if (key === "y" || (key === "z" && event.shiftKey)) {
+    if (state.redoStack.length) {
+      event.preventDefault();
+      redoReference();
+    }
+  }
+});
+
 window.addEventListener("resize", () => { if (state.preview) fitToViewer(); });
 
 renderHistory();
