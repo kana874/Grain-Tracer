@@ -315,6 +315,47 @@ function currentEvaluationOptions(overrides = {}) {
   };
 }
 
+function buildNegativeHoldout() {
+  if (!state.preview || !state.negativeCenterline || !hasNegativeReference()) {
+    return {
+      tuningMask: null,
+      validationMask: null,
+      validationPixels: 0,
+      split: null,
+    };
+  }
+  const split = splitReferenceCenterline(
+    state.negativeCenterline,
+    state.preview.width,
+    state.preview.height,
+    { validationFraction: 0.20, minComponentPixels: 8 },
+  );
+  if (split.validationPixels < 20) {
+    return {
+      tuningMask: state.negativeMask,
+      validationMask: null,
+      validationPixels: 0,
+      split,
+    };
+  }
+  return {
+    tuningMask: dilateBinaryMask(
+      split.tuneMask,
+      state.preview.width,
+      state.preview.height,
+      referenceJudgementRadius(),
+    ),
+    validationMask: dilateBinaryMask(
+      split.validationMask,
+      state.preview.width,
+      state.preview.height,
+      referenceJudgementRadius(),
+    ),
+    validationPixels: split.validationPixels,
+    split,
+  };
+}
+
 function currentBoundaryOptions() {
   return {
     ...currentExtractionOptions(),
@@ -1161,10 +1202,11 @@ async function autoTune() {
       { validationFraction: 0.20, minComponentPixels: 8 },
     );
     const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
-    setStatus("調整用お手本でDark/Ridge/Color/デンドライトを自動調整中...", 1);
+    const negativeHoldout = buildNegativeHoldout();
+    setStatus("調整用お手本＋非粒界例でDark/Ridge/Color/デンドライトを自動調整中...", 1);
     const result = await autoTuneBoundary(features, tuningReference, {
       ...currentComparisonOptions(),
-      negativeMask: state.negativeMask,
+      negativeMask: negativeHoldout.tuningMask,
       exclusionMask: state.exclusionMask,
       current: currentExtractionOptions(),
       onProgress: ratio => setStatus(`自動調整中... ${Math.round(ratio * 100)}%`, ratio * 99),
@@ -1197,7 +1239,13 @@ async function autoTune() {
         split.validationMask,
         state.preview.width,
         state.preview.height,
-        { ...currentComparisonOptions(), negativeMask: state.negativeMask, exclusionMask: state.exclusionMask, cols: 4, rows: 4 },
+        {
+          ...currentComparisonOptions(),
+          negativeMask: negativeHoldout.validationMask,
+          exclusionMask: state.exclusionMask,
+          cols: 4,
+          rows: 4,
+        },
       )
       : null;
     const validationNote = validationMetrics
@@ -1232,10 +1280,11 @@ async function localTune() {
       { validationFraction: 0.20, minComponentPixels: 8 },
     );
     const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
-    setStatus("調整用お手本を使って範囲ごとの感度を調整中...", 1);
+    const negativeHoldout = buildNegativeHoldout();
+    setStatus("調整用お手本＋非粒界例を使って範囲ごとの感度を調整中...", 1);
     const calibration = await tuneLocalSensitivity(features, tuningReference, {
       ...currentComparisonOptions(),
-      negativeMask: state.negativeMask,
+      negativeMask: negativeHoldout.tuningMask,
       exclusionMask: state.exclusionMask,
       ...extraction,
       cols: 4,
@@ -1272,7 +1321,13 @@ async function localTune() {
         split.validationMask,
         state.preview.width,
         state.preview.height,
-        { ...currentComparisonOptions(), negativeMask: state.negativeMask, exclusionMask: state.exclusionMask, cols: 4, rows: 4 },
+        {
+          ...currentComparisonOptions(),
+          negativeMask: negativeHoldout.validationMask,
+          exclusionMask: state.exclusionMask,
+          cols: 4,
+          rows: 4,
+        },
       )
       : null;
     addHistory(
@@ -1356,11 +1411,15 @@ function applyReferenceSegment(from, to) {
   let changed = false;
 
   if (state.tool === "reference") {
-    changed = applyLineSegment("reference", state.currentReferenceEdit.reference, from, to, false) || changed;
-    if (changed) state.referenceCount = Math.max(1, state.referenceCount);
+    const positiveChanged = applyLineSegment("reference", state.currentReferenceEdit.reference, from, to, false);
+    const conflictingNegativeRemoved = applyLineSegment("negative", state.currentReferenceEdit.negative, from, to, true);
+    changed = positiveChanged || conflictingNegativeRemoved || changed;
+    if (positiveChanged) state.referenceCount = Math.max(1, state.referenceCount);
   } else if (state.tool === "negative-reference") {
-    changed = applyLineSegment("negative", state.currentReferenceEdit.negative, from, to, false) || changed;
-    if (changed) state.negativeCount = Math.max(1, state.negativeCount);
+    const negativeChanged = applyLineSegment("negative", state.currentReferenceEdit.negative, from, to, false);
+    const conflictingPositiveRemoved = applyLineSegment("reference", state.currentReferenceEdit.reference, from, to, true);
+    changed = negativeChanged || conflictingPositiveRemoved || changed;
+    if (negativeChanged) state.negativeCount = Math.max(1, state.negativeCount);
   } else if (state.tool === "erase-reference") {
     changed = applyLineSegment("reference", state.currentReferenceEdit.reference, from, to, true) || changed;
     changed = applyLineSegment("negative", state.currentReferenceEdit.negative, from, to, true) || changed;
