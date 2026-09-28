@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6-alpha / boundary-v4-dendrite-negref**
+**v0.3.6.1-alpha / boundary-v4-dendrite-negref**
 
 Current capabilities:
 
@@ -18,8 +18,9 @@ Current capabilities:
 - adjustable semi-transparent reference display
 - reference Undo / Redo with keyboard shortcuts and changed-pixel history
 - user-labelled non-boundary examples for explicit false-positive suppression during tuning
+- closed-region Negative Fill: click inside a grain enclosed by Positive reference lines to label its safe interior as non-boundary
 - Partial Label evaluation: Positive / Negative / Unknown, with unlabelled predictions excluded from false-positive counts
-- whole-image Positive Recall / Negative Leakage / Alignment Error metrics
+- whole-image Positive Recall / pixel-weighted Negative Leakage / region-balanced Macro Negative Leakage / Alignment Error metrics
 - complete-evaluation ROIs that report formal True Precision / Recall / F1 only where the user declares all boundaries labelled
 - automatic 1 / 2 / 3 / 4 px Multi-Tolerance diagnostics
 - editable rectangular exclusion regions with move, edge/corner resize, Delete, Undo and Redo
@@ -64,9 +65,10 @@ Original BMP
   -> dendrite orientation-difference feature
   -> boundary score
   -> Positive / Negative / Unknown Partial Label comparison
+  -> optional closed-grain interior Negative Fill
   -> exclusion-mask filtering
   -> complete-evaluation ROI + Multi-Tolerance diagnostics
-  -> Auto Tune v2 coordinate descent (ROI True F1 when available; otherwise Partial Label objective)
+  -> Auto Tune v2 coordinate descent (ROI True F1 when available; otherwise Positive Recall + region-balanced Negative Leakage)
   -> reference-guided local sensitivity calibration
   -> evaluation history / project save
 ```
