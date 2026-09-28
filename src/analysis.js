@@ -272,7 +272,7 @@ function buildFastEvaluationHelpers(
   for (let p = 0; p < referenceCenterline.length; p += 1) {
     if (exclusionMask?.[p]) continue;
     if (referenceCenterline[p]) referenceIndices.push(p);
-    if (reviewMask[p] || (negativeMask?.[p] && !referenceTolerance[p])) reviewIndices.push(p);
+    if (referenceTolerance[p] || (negativeMask?.[p] && !referenceTolerance[p])) reviewIndices.push(p);
   }
   return { referenceTolerance, referenceIndices, reviewIndices, tolerance, exclusionMask };
 }
@@ -367,8 +367,8 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     .sort((a, b) => a - b);
   const profiles = weightProfiles(current);
 
-  // Stage 1: tune threshold and feature weights only inside the reviewed region.
-  // This avoids repeatedly allocating full-image masks for every candidate.
+  // Stage 1: tune only against explicitly labelled Positive / Negative pixels.
+  // Unlabelled predictions are Unknown and must not be treated as false positives.
   let bestRaw = null;
   let rawStep = 0;
   const rawTotal = sensitivityCandidates.length * profiles.length;
@@ -495,10 +495,10 @@ export function renderComparisonOverlay(prediction, referenceCenterline, width, 
       rgba[i + 2] = 74;
       rgba[i + 3] = Math.round(alpha * 0.24);
     } else if (metrics.negativeMask?.[p]) {
-      rgba[i] = 190;
-      rgba[i + 1] = 110;
-      rgba[i + 2] = 255;
-      rgba[i + 3] = Math.round(alpha * 0.20);
+      rgba[i] = 255;
+      rgba[i + 1] = 138;
+      rgba[i + 2] = 0;
+      rgba[i + 3] = Math.round(alpha * 0.24);
     }
 
     if (!metrics.evaluationMask[p]) {
