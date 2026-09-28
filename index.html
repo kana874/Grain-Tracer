@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.2-alpha</div>
+    <div class="version">v0.3.3-alpha</div>
   </header>
 
   <main class="layout">
@@ -64,6 +64,8 @@
         <button id="panToolButton" class="tool-button active" type="button" disabled>移動</button>
         <button id="referenceToolButton" class="tool-button" type="button" disabled>お手本線</button>
         <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>お手本消去</button>
+        <button id="undoReferenceButton" type="button" title="お手本を元に戻す (Ctrl+Z)" disabled>↶ Undo</button>
+        <button id="redoReferenceButton" type="button" title="お手本をやり直す (Ctrl+Y / Ctrl+Shift+Z)" disabled>↷ Redo</button>
         <span class="toolbar-separator"></span>
         <button id="fitButton" type="button" disabled>全体表示</button>
         <button id="actualButton" type="button" disabled>100%</button>
@@ -114,7 +116,8 @@
       <section>
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
-        <p class="help">黄色のお手本線そのものを一致判定範囲として使います。表示幅と判定幅は常に同じです。</p>
+        <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
+        <p class="help">黄色線は判定マスクそのものを表示します。透明度は見た目だけに作用し、判定結果には影響しません。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
@@ -164,6 +167,7 @@
           <li class="done">JSON / IndexedDBプロジェクト保存</li>
           <li class="done">お手本による局所感度最適化</li>
           <li class="done">ChatGPT向け診断JSON / 画像出力</li>
+          <li class="done">Reference Editor v2（表示＝判定 / 半透明 / Undo / Redo）</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
         </ul>
