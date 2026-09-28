@@ -421,9 +421,19 @@ export function renderComparisonOverlay(prediction, referenceCenterline, width, 
   const alpha = Math.round(255 * opacity);
 
   for (let p = 0; p < prediction.length; p += 1) {
+    const i = p * 4;
+
+    // Show the exact acceptance band used by Precision evaluation.
+    // The visible yellow band therefore has the same width as the judgement area.
+    if (metrics.referenceTolerance[p]) {
+      rgba[i] = 255;
+      rgba[i + 1] = 216;
+      rgba[i + 2] = 74;
+      rgba[i + 3] = Math.round(alpha * 0.24);
+    }
+
     if (!metrics.reviewMask[p]) {
       if (prediction[p]) {
-        const i = p * 4;
         rgba[i] = 35;
         rgba[i + 1] = 245;
         rgba[i + 2] = 222;
@@ -432,7 +442,6 @@ export function renderComparisonOverlay(prediction, referenceCenterline, width, 
       continue;
     }
 
-    const i = p * 4;
     if (prediction[p]) {
       if (metrics.referenceTolerance[p]) {
         rgba[i] = 88;
