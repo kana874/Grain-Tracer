@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.3-alpha</div>
+    <div class="version">v0.3.4-alpha</div>
   </header>
 
   <main class="layout">
@@ -41,8 +41,9 @@
         <h2>お手本の使い方</h2>
         <ol class="guide-list">
           <li>「お手本線」で正しい粒界をなぞる</li>
-          <li>「比較」で自動判定との差を確認</li>
-          <li>「自動調整」でF1が高い設定を探索</li>
+          <li>「非粒界線」で粒内模様・傷など誤検出してほしくない線を教える</li>
+          <li>スケールバー・文字などは「除外矩形」で解析対象外にする</li>
+          <li>「比較」「自動調整」で判定との差を確認・最適化する</li>
         </ol>
         <p class="help">v0.3では、お手本の中心線を評価に使うため、ブラシの太さによるRecallのズレを抑えています。</p>
       </section>
@@ -63,8 +64,10 @@
       <div class="toolbar">
         <button id="panToolButton" class="tool-button active" type="button" disabled>移動</button>
         <button id="referenceToolButton" class="tool-button" type="button" disabled>お手本線</button>
-        <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>お手本消去</button>
-        <button id="undoReferenceButton" type="button" title="お手本を元に戻す (Ctrl+Z)" disabled>↶ Undo</button>
+        <button id="negativeToolButton" class="tool-button negative-tool" type="button" disabled>非粒界線</button>
+        <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>線消去</button>
+        <button id="exclusionToolButton" class="tool-button exclusion-tool" type="button" disabled>除外矩形</button>
+        <button id="undoReferenceButton" type="button" title="注釈を元に戻す (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="redoReferenceButton" type="button" title="お手本をやり直す (Ctrl+Y / Ctrl+Shift+Z)" disabled>↷ Redo</button>
         <span class="toolbar-separator"></span>
         <button id="fitButton" type="button" disabled>全体表示</button>
@@ -77,6 +80,8 @@
         <div id="canvasStage" class="canvas-stage">
           <canvas id="imageCanvas"></canvas>
           <canvas id="overlayCanvas"></canvas>
+          <canvas id="exclusionCanvas"></canvas>
+          <canvas id="negativeCanvas"></canvas>
           <canvas id="referenceCanvas"></canvas>
         </div>
         <div id="emptyState" class="empty-state">
@@ -117,7 +122,7 @@
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
         <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
-        <p class="help">黄色線は判定マスクそのものを表示します。透明度は見た目だけに作用し、判定結果には影響しません。</p>
+        <p class="help">黄色＝正しい粒界、紫＝非粒界、灰色＝解析除外です。線の透明度は見た目だけに作用し、判定幅には影響しません。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
@@ -125,15 +130,20 @@
           <button id="autoTuneButton" class="primary" type="button" disabled>全体自動調整</button>
           <button id="localTuneButton" class="primary" type="button" disabled>局所自動調整</button>
           <button id="clearLocalCalibrationButton" type="button" disabled>局所補正解除</button>
-          <button id="clearReferenceButton" type="button" disabled>お手本全消去</button>
+          <button id="clearReferenceButton" type="button" disabled>粒界お手本全消去</button>
+          <button id="clearNegativeButton" type="button" disabled>非粒界全消去</button>
+          <button id="clearExclusionButton" type="button" disabled>除外全消去</button>
           <button id="showNormalButton" type="button" disabled>通常表示</button>
         </div>
+        <p id="annotationStatus" class="help metric-detail">非粒界: 0 px / 除外: 0領域</p>
         <p id="localCalibrationStatus" class="help metric-detail">局所補正: 未作成</p>
 
         <div class="legend">
           <span><i class="swatch tp"></i>一致</span>
           <span><i class="swatch fp"></i>誤検出</span>
           <span><i class="swatch fn"></i>見逃し</span>
+          <span><i class="swatch negative"></i>非粒界</span>
+          <span><i class="swatch excluded"></i>除外</span>
         </div>
         <div class="metrics-grid">
           <div><span>Precision</span><strong id="metricPrecision">-</strong></div>
@@ -168,6 +178,7 @@
           <li class="done">お手本による局所感度最適化</li>
           <li class="done">ChatGPT向け診断JSON / 画像出力</li>
           <li class="done">Reference Editor v2（表示＝判定 / 半透明 / Undo / Redo）</li>
+          <li class="done">非粒界お手本 / 解析除外領域</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
         </ul>
