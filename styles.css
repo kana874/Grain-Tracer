@@ -41,7 +41,7 @@ button.tool-button.active { border-color: var(--accent); background: #173f3c; co
 .meta-grid dd { margin: 0; overflow-wrap: anywhere; }
 .guide-list { margin: 0 0 10px; padding-left: 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
 .viewer-shell { min-width: 0; min-height: 0; display: grid; grid-template-rows: 44px 1fr 42px; }
-.toolbar { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #171b22; border-bottom: 1px solid var(--line); }
+.toolbar { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #171b22; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; white-space: nowrap; scrollbar-width: thin; }
 .toolbar button { padding: 6px 9px; font-size: 12px; }
 .toolbar-separator { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
 .zoom-label { margin-left: auto; color: var(--muted); font-size: 12px; }
