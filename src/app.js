@@ -1346,10 +1346,27 @@ function compareCurrent(record = true) {
   els.referenceCanvas.style.visibility = "hidden";
   els.negativeCanvas.style.visibility = "hidden";
   state.comparisonMode = true;
+  result.metrics.multiTolerance = computeMultiToleranceMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    {
+      tolerances: [1, 2, 3, 4],
+      reviewRadius: currentComparisonOptions().reviewRadius,
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+    },
+  );
   updateMetrics(result.metrics);
   updateControls();
   if (record) addHistory("compare", result.metrics);
-  setStatus(`比較完了: Precision ${(result.metrics.precision * 100).toFixed(1)}% / Recall ${(result.metrics.recall * 100).toFixed(1)}% / F1 ${(result.metrics.f1 * 100).toFixed(1)}%`, 100);
+  const tol1 = result.metrics.multiTolerance.find(item => item.tolerance === 1);
+  const tol4 = result.metrics.multiTolerance.find(item => item.tolerance === 4);
+  const toleranceText = tol1 && tol4
+    ? ` / Recall@1px ${(tol1.positiveRecall * 100).toFixed(1)}% → @4px ${(tol4.positiveRecall * 100).toFixed(1)}%`
+    : "";
+  setStatus(`比較完了: Positive Recall ${(result.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(result.metrics.negativeLeakage * 100).toFixed(1)}%${toleranceText}`, 100);
   return result;
 }
 
@@ -1412,16 +1429,16 @@ async function autoTune() {
       )
       : null;
     const validationNote = validationMetrics
-      ? ` / 検証F1 ${(validationMetrics.f1 * 100).toFixed(1)}%`
+      ? ` / 検証 Positive Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`
       : "";
     addHistory(
       "auto-tune",
       comparison.metrics,
       validationMetrics
-        ? `global tuning with holdout validation F1=${validationMetrics.f1.toFixed(4)}`
-        : "global tuning; validation holdout unavailable",
+        ? `partial-label tuning; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}, negativeLeakage=${validationMetrics.negativeLeakage.toFixed(4)}`
+        : "partial-label tuning; validation holdout unavailable",
     );
-    setStatus(`自動調整完了: 全体F1 ${(comparison.metrics.f1 * 100).toFixed(1)}%${validationNote} / 感度 ${result.parameters.sensitivity} / 暗さ ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / 色差 ${result.parameters.colorWeight} / デンドライト ${result.parameters.dendriteWeight ?? 0}`, 100);
+    setStatus(`自動調整完了: Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%${validationNote} / 感度 ${result.parameters.sensitivity} / 暗さ ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / 色差 ${result.parameters.colorWeight} / デンドライト ${result.parameters.dendriteWeight ?? 0}`, 100);
   } catch (error) {
     console.error(error);
     setStatus(`自動調整エラー: ${error.message}`, 0);
@@ -1497,15 +1514,15 @@ async function localTune() {
       "local-tune",
       comparison.metrics,
       validationMetrics
-        ? `4x4 local calibration; holdout validation F1=${validationMetrics.f1.toFixed(4)}`
-        : "4x4 local calibration; validation holdout unavailable",
+        ? `4x4 partial-label calibration; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}, negativeLeakage=${validationMetrics.negativeLeakage.toFixed(4)}`
+        : "4x4 partial-label calibration; validation holdout unavailable",
     );
     const measured = calibration.measured.reduce((sum, value) => sum + (value ? 1 : 0), 0);
     const validationNote = validationMetrics
-      ? ` / 検証F1 ${(validationMetrics.f1 * 100).toFixed(1)}%`
+      ? ` / 検証 Positive Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`
       : "";
     setStatus(
-      `局所調整完了: 全体F1 ${(comparison.metrics.f1 * 100).toFixed(1)}%${validationNote} / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
+      `局所調整完了: Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%${validationNote} / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
       100,
     );
     scheduleAutosave();
@@ -1537,7 +1554,12 @@ function setTool(tool) {
   els.negativeToolButton.classList.toggle("active", tool === "negative-reference");
   els.eraseReferenceToolButton.classList.toggle("active", tool === "erase-reference");
   els.exclusionToolButton.classList.toggle("active", tool === "exclusion");
+  els.fullRoiToolButton.classList.toggle("active", tool === "full-roi");
   els.viewer.classList.toggle("reference-mode", tool !== "pan");
+  if (state.preview) {
+    rebuildExclusionLayer();
+    rebuildFullRoiLayer();
+  }
 }
 
 function eventToPreviewPoint(event) {
