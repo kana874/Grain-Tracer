@@ -268,12 +268,21 @@ function buildFastEvaluationHelpers(
   const referenceIndices = [];
   const positiveBandIndices = [];
   const negativeIndices = [];
+  const negativeRegionIndices = Array.from({ length: 16 }, () => []);
 
   for (let p = 0; p < referenceCenterline.length; p += 1) {
     if (exclusionMask?.[p]) continue;
     if (referenceCenterline[p]) referenceIndices.push(p);
-    if (referenceTolerance[p]) positiveBandIndices.push(p);
-    else if (negativeMask?.[p]) negativeIndices.push(p);
+    if (referenceTolerance[p]) {
+      positiveBandIndices.push(p);
+    } else if (negativeMask?.[p]) {
+      negativeIndices.push(p);
+      const x = p % width;
+      const y = Math.floor(p / width);
+      const rx = Math.min(3, Math.floor(x * 4 / width));
+      const ry = Math.min(3, Math.floor(y * 4 / height));
+      negativeRegionIndices[ry * 4 + rx].push(p);
+    }
   }
 
   const roiMask = buildCompleteRoiMask(fullEvaluationRois, width, height, exclusionMask);
@@ -299,6 +308,7 @@ function buildFastEvaluationHelpers(
     referenceIndices,
     positiveBandIndices,
     negativeIndices,
+    negativeRegionIndices,
     tolerance,
     exclusionMask,
     roiMask,
@@ -320,12 +330,21 @@ function partialBalancedScore(positiveRecall, negativeLeakage, hasNegativeLabels
 function scorePredictionFunction(features, helpers, scoreIsPrediction) {
   let matchedPrediction = 0;
   let negativePrediction = 0;
+  const negativeRegionLeakages = [];
 
   for (const p of helpers.positiveBandIndices) {
     if (scoreIsPrediction(p)) matchedPrediction += 1;
   }
-  for (const p of helpers.negativeIndices) {
-    if (scoreIsPrediction(p)) negativePrediction += 1;
+  for (const region of helpers.negativeRegionIndices) {
+    if (!region.length) continue;
+    let regionPredictions = 0;
+    for (const p of region) {
+      if (scoreIsPrediction(p)) {
+        negativePrediction += 1;
+        regionPredictions += 1;
+      }
+    }
+    negativeRegionLeakages.push(regionPredictions / region.length);
   }
 
   let matchedReference = 0;
@@ -358,6 +377,9 @@ function scorePredictionFunction(features, helpers, scoreIsPrediction) {
   const negativeLeakage = helpers.negativeIndices.length
     ? negativePrediction / helpers.negativeIndices.length
     : 0;
+  const macroNegativeLeakage = negativeRegionLeakages.length
+    ? negativeRegionLeakages.reduce((sum, value) => sum + value, 0) / negativeRegionLeakages.length
+    : 0;
   const labelPrecision = matchedPrediction + negativePrediction
     ? matchedPrediction / (matchedPrediction + negativePrediction)
     : 0;
@@ -366,7 +388,7 @@ function scorePredictionFunction(features, helpers, scoreIsPrediction) {
     : 0;
   const partialScore = partialBalancedScore(
     positiveRecall,
-    negativeLeakage,
+    macroNegativeLeakage,
     helpers.negativeIndices.length > 0,
   );
 
@@ -420,6 +442,8 @@ function scorePredictionFunction(features, helpers, scoreIsPrediction) {
     score: helpers.objectiveMode === "complete-roi-f1" ? (roiF1 ?? 0) : partialScore,
     positiveRecall,
     negativeLeakage,
+    macroNegativeLeakage,
+    negativeRegionCount: negativeRegionLeakages.length,
     labelPrecision,
     labelF1,
     roiPrecision,
@@ -458,7 +482,9 @@ function betterTuneScore(candidate, best) {
 
   if (candidate.positiveRecall > best.positiveRecall + epsilon) return true;
   if (candidate.positiveRecall < best.positiveRecall - epsilon) return false;
-  if (candidate.negativeLeakage < best.negativeLeakage - epsilon) return true;
+  const candidateMacro = candidate.macroNegativeLeakage ?? candidate.negativeLeakage ?? 0;
+  const bestMacro = best.macroNegativeLeakage ?? best.negativeLeakage ?? 0;
+  if (candidateMacro < bestMacro - epsilon) return true;
   return false;
 }
 
@@ -491,7 +517,7 @@ function buildMaskFromComponentSizes(supported, sizes, minComponent, exclusionMa
 }
 
 function scoreProcessedMask(mask, referenceCenterline, features, options, helpers) {
-  const partialMetrics = compareBoundaryMasks(
+  const partialMetrics = computeRegionalMetrics(
     mask,
     referenceCenterline,
     features.width,
@@ -501,12 +527,14 @@ function scoreProcessedMask(mask, referenceCenterline, features, options, helper
       reviewRadius: options.reviewRadius ?? 18,
       negativeMask: options.negativeMask ?? null,
       exclusionMask: options.exclusionMask ?? null,
+      cols: 4,
+      rows: 4,
     },
   );
 
   const partialScore = partialBalancedScore(
     partialMetrics.positiveRecall,
-    partialMetrics.negativeLeakage,
+    partialMetrics.macroNegativeLeakage,
     partialMetrics.negativePixels > 0,
   );
 
@@ -530,6 +558,8 @@ function scoreProcessedMask(mask, referenceCenterline, features, options, helper
     score: roiMetrics?.roiCount ? roiMetrics.f1 : partialScore,
     positiveRecall: partialMetrics.positiveRecall,
     negativeLeakage: partialMetrics.negativeLeakage,
+    macroNegativeLeakage: partialMetrics.macroNegativeLeakage,
+    negativeRegionCount: partialMetrics.negativeRegionCount,
     labelPrecision: partialMetrics.labelPrecision,
     labelF1: partialMetrics.labelF1,
     roiPrecision: roiMetrics?.roiCount ? roiMetrics.precision : null,
@@ -584,6 +614,8 @@ function compactObjective(objective) {
     score: objective.score,
     positiveRecall: objective.positiveRecall,
     negativeLeakage: objective.negativeLeakage,
+    macroNegativeLeakage: objective.macroNegativeLeakage ?? objective.negativeLeakage,
+    negativeRegionCount: objective.negativeRegionCount ?? null,
     labelF1Proxy: objective.labelF1,
     roiPrecision: objective.roiPrecision,
     roiRecall: objective.roiRecall,
