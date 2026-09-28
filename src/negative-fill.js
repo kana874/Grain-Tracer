@@ -113,7 +113,7 @@ export function computeClosedNegativeFill(
   }
 
   const safetyMask = dilateBinaryMask(referenceCenterline, width, height, safetyMargin);
-  const fillMask = new Uint8Array(width * height);
+  const fillIndicesBuffer = new Int32Array(tail);
   let fillPixels = 0;
   let excludedPixels = 0;
 
@@ -124,8 +124,7 @@ export function computeClosedNegativeFill(
       excludedPixels += 1;
       continue;
     }
-    fillMask[p] = 1;
-    fillPixels += 1;
+    fillIndicesBuffer[fillPixels++] = p;
   }
 
   if (fillPixels < minAreaPixels) {
@@ -139,10 +138,18 @@ export function computeClosedNegativeFill(
     };
   }
 
+  const fillIndices = fillIndicesBuffer.slice(0, fillPixels);
+  let fillMask = null;
+  if (options.returnMask !== false) {
+    fillMask = new Uint8Array(width * height);
+    for (const p of fillIndices) fillMask[p] = 1;
+  }
+
   return {
     ok: true,
     seed,
     fillMask,
+    fillIndices,
     regionPixels: tail,
     fillPixels,
     excludedPixels,
@@ -170,7 +177,7 @@ export function rebuildClosedNegativeFillMask(
       width,
       height,
       seeds[index],
-      options,
+      { ...options, returnMask: false },
     );
     results.push({
       index,
@@ -187,9 +194,7 @@ export function rebuildClosedNegativeFillMask(
       continue;
     }
     validSeeds += 1;
-    for (let p = 0; p < mask.length; p += 1) {
-      if (result.fillMask[p]) mask[p] = 1;
-    }
+    for (const p of result.fillIndices) mask[p] = 1;
   }
 
   let fillPixels = 0;
