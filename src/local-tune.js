@@ -182,16 +182,18 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
   ])].sort((a, b) => a - b);
   const weights = normalizedWeights(options);
   const referenceTolerance = dilateBinaryMask(referenceCenterline, features.width, features.height, tolerance);
-  const reviewMask = dilateBinaryMask(referenceCenterline, features.width, features.height, reviewRadius);
   const negativeMask = options.negativeMask ?? null;
   const exclusionMask = options.exclusionMask ?? null;
-  const evaluationMask = reviewMask.slice();
+
+  // Partial Label mode: only explicit Positive and Negative labels participate.
+  // Unlabelled pixels remain Unknown even when they are spatially close to a Positive stroke.
+  const evaluationMask = referenceTolerance.slice();
   if (negativeMask) {
     for (let p = 0; p < evaluationMask.length; p += 1) {
       if (!exclusionMask?.[p] && negativeMask[p] && !referenceTolerance[p]) evaluationMask[p] = 1;
     }
   }
-  const helpers = { tolerance, referenceTolerance, reviewMask, evaluationMask, negativeMask, exclusionMask };
+  const helpers = { tolerance, referenceTolerance, evaluationMask, negativeMask, exclusionMask };
 
   const raw = new Float32Array(cols * rows);
   const measured = new Uint8Array(cols * rows);
