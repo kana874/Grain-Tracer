@@ -139,22 +139,28 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
 }
 
 function regionFeatureSummary(features, width, region) {
-  const values = { dark: [], ridge: [], color: [], dendrite: [] };
+  let count = 0;
+  let dark = 0;
+  let ridge = 0;
+  let color = 0;
+  let dendrite = 0;
   for (let y = region.y0; y < region.y1; y += 1) {
     const base = y * width;
     for (let x = region.x0; x < region.x1; x += 1) {
       const p = base + x;
-      values.dark.push(features.dark[p] / 255);
-      values.ridge.push(features.ridge[p] / 255);
-      values.color.push(features.color[p] / 255);
-      if (features.dendrite) values.dendrite.push(features.dendrite[p] / 255);
+      count += 1;
+      dark += features.dark[p] / 255;
+      ridge += features.ridge[p] / 255;
+      color += features.color[p] / 255;
+      dendrite += (features.dendrite?.[p] ?? 0) / 255;
     }
   }
+  const den = Math.max(1, count);
   return {
-    darkMean: summarizeValues(values.dark).mean,
-    ridgeMean: summarizeValues(values.ridge).mean,
-    colorMean: summarizeValues(values.color).mean,
-    dendriteMean: summarizeValues(values.dendrite).mean,
+    darkMean: dark / den,
+    ridgeMean: ridge / den,
+    colorMean: color / den,
+    dendriteMean: dendrite / den,
   };
 }
 
