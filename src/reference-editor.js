@@ -49,7 +49,7 @@ function eraseDisk(mask, width, height, cx, cy, radius, tracker) {
       if (setCenterlinePixel(mask, width, height, x, y, 0, tracker)) changed = true;
     }
   }
-  return changed && tracker.segmentBounds ? { ...tracker.segmentBounds } : null;
+  return changed;
 }
 
 export function paintReferenceCenterlineSegment(mask, width, height, from, to, options, tracker) {
@@ -71,7 +71,7 @@ export function paintReferenceCenterlineSegment(mask, width, height, from, to, o
       changed = true;
     }
   }
-  return changed;
+  return changed && tracker.segmentBounds ? { ...tracker.segmentBounds } : null;
 }
 
 export function finalizeReferenceEdit(mask, tracker) {
