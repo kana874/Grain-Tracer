@@ -17,7 +17,13 @@ import {
 } from "./project.js";
 import { loadAutosave, saveAutosave } from "./storage.js";
 import { tuneLocalSensitivity } from "./local-tune.js";
-import { computeRegionalMetrics, dilateBinaryMask, splitReferenceCenterline } from "./evaluation.js";
+import {
+  computeFullEvaluationRoiMetrics,
+  computeMultiToleranceMetrics,
+  computeRegionalMetrics,
+  dilateBinaryMask,
+  splitReferenceCenterline,
+} from "./evaluation.js";
 import {
   buildDiagnosticReport,
   downloadBlob,
@@ -38,9 +44,12 @@ import {
 import {
   buildExclusionMask,
   countMaskPixels,
+  hitTestRect,
   normalizeRect,
   rectArea,
   renderExclusionCanvas,
+  renderFullEvaluationRoiCanvas,
+  transformRect,
 } from "./annotations.js";
 
 const $ = id => document.getElementById(id);
@@ -53,6 +62,7 @@ const els = {
   canvasStage: $("canvasStage"),
   imageCanvas: $("imageCanvas"),
   overlayCanvas: $("overlayCanvas"),
+  fullRoiCanvas: $("fullRoiCanvas"),
   exclusionCanvas: $("exclusionCanvas"),
   negativeCanvas: $("negativeCanvas"),
   referenceCanvas: $("referenceCanvas"),
@@ -62,6 +72,7 @@ const els = {
   negativeToolButton: $("negativeToolButton"),
   eraseReferenceToolButton: $("eraseReferenceToolButton"),
   exclusionToolButton: $("exclusionToolButton"),
+  fullRoiToolButton: $("fullRoiToolButton"),
   undoReferenceButton: $("undoReferenceButton"),
   redoReferenceButton: $("redoReferenceButton"),
   fitButton: $("fitButton"),
@@ -75,6 +86,7 @@ const els = {
   clearReferenceButton: $("clearReferenceButton"),
   clearNegativeButton: $("clearNegativeButton"),
   clearExclusionButton: $("clearExclusionButton"),
+  clearFullRoiButton: $("clearFullRoiButton"),
   showNormalButton: $("showNormalButton"),
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
@@ -96,10 +108,11 @@ const els = {
   referenceBrush: $("referenceBrush"),
   referenceOpacity: $("referenceOpacity"),
   reviewRadius: $("reviewRadius"),
-  metricPrecision: $("metricPrecision"),
-  metricRecall: $("metricRecall"),
-  metricF1: $("metricF1"),
+  metricPositiveRecall: $("metricPositiveRecall"),
+  metricNegativeLeakage: $("metricNegativeLeakage"),
+  metricAlignment: $("metricAlignment"),
   metricDetail: $("metricDetail"),
+  fullRoiMetrics: $("fullRoiMetrics"),
   annotationStatus: $("annotationStatus"),
   localCalibrationStatus: $("localCalibrationStatus"),
   historyList: $("historyList"),
@@ -129,9 +142,9 @@ const state = {
   dragOrigin: null,
   lastReferencePoint: null,
   currentReferenceEdit: null,
-  drawingExclusion: false,
-  exclusionStart: null,
-  exclusionPreviewRect: null,
+  rectInteraction: null,
+  selectedExclusionIndex: -1,
+  selectedFullRoiIndex: -1,
   undoStack: [],
   redoStack: [],
   analysisMask: null,
@@ -143,6 +156,7 @@ const state = {
   negativeCount: 0,
   exclusionRects: [],
   exclusionMask: null,
+  fullEvaluationRois: [],
   comparisonMode: false,
   lastMetrics: null,
   localCalibration: null,
@@ -180,6 +194,10 @@ function hasExclusions() {
   return state.exclusionRects.length > 0;
 }
 
+function hasFullEvaluationRois() {
+  return state.fullEvaluationRois.length > 0;
+}
+
 function updateControls() {
   const hasPreview = Boolean(state.preview);
   const hasAnalysis = Boolean(state.analysisMask);
@@ -195,6 +213,7 @@ function updateControls() {
   els.negativeToolButton.disabled = disabled || !hasPreview;
   els.eraseReferenceToolButton.disabled = disabled || !hasPreview || (!hasRef && !hasNegativeReference());
   els.exclusionToolButton.disabled = disabled || !hasPreview;
+  els.fullRoiToolButton.disabled = disabled || !hasPreview;
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
@@ -204,6 +223,7 @@ function updateControls() {
   els.clearReferenceButton.disabled = disabled || !hasRef;
   els.clearNegativeButton.disabled = disabled || !hasNegativeReference();
   els.clearExclusionButton.disabled = disabled || !hasExclusions();
+  els.clearFullRoiButton.disabled = disabled || !hasFullEvaluationRois();
   els.showNormalButton.disabled = disabled || !state.comparisonMode;
   els.saveProjectButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
   els.loadProjectButton.disabled = disabled || !hasPreview;
@@ -232,7 +252,7 @@ function resetMetadata() {
 }
 
 function prepareCanvas(width, height) {
-  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas]) {
+  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.fullRoiCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas]) {
     canvas.width = width;
     canvas.height = height;
     canvas.style.width = `${width}px`;
@@ -455,19 +475,48 @@ function featureSettingChanged() {
 function updateMetrics(metrics = null) {
   state.lastMetrics = metrics;
   if (!metrics) {
-    els.metricPrecision.textContent = "-";
-    els.metricRecall.textContent = "-";
-    els.metricF1.textContent = "-";
+    els.metricPositiveRecall.textContent = "-";
+    els.metricNegativeLeakage.textContent = "-";
+    els.metricAlignment.textContent = "-";
     els.metricDetail.textContent = hasReference()
-      ? "自動抽出後に「比較」を押してください。"
-      : "お手本線を描くと比較できます。";
+      ? "自動抽出後に「比較」を押してください。未記入領域はUnknownです。"
+      : "お手本線を描くとPartial Label評価できます。";
+    els.fullRoiMetrics.textContent = hasFullEvaluationRois()
+      ? "完全評価ROIがあります。比較後に True Precision / Recall / F1 を表示します。"
+      : "完全評価ROIを指定すると True Precision / Recall / F1 を表示します。";
     return;
   }
-  els.metricPrecision.textContent = `${(metrics.precision * 100).toFixed(1)}%`;
-  els.metricRecall.textContent = `${(metrics.recall * 100).toFixed(1)}%`;
-  els.metricF1.textContent = `${(metrics.f1 * 100).toFixed(1)}%`;
-  const negativeText = metrics.negativePixels ? `　非粒界内予測 ${metrics.negativePrediction.toLocaleString()} / ${metrics.negativePixels.toLocaleString()} px` : "";
-  els.metricDetail.textContent = `自動線: 一致 ${metrics.matchedPrediction.toLocaleString()} / 誤検出 ${metrics.falsePositive.toLocaleString()} px　お手本: 一致 ${metrics.matchedReference.toLocaleString()} / 見逃し ${metrics.falseNegative.toLocaleString()} px${negativeText}`;
+
+  els.metricPositiveRecall.textContent = `${(metrics.positiveRecall * 100).toFixed(1)}%`;
+  els.metricNegativeLeakage.textContent = `${(metrics.negativeLeakage * 100).toFixed(1)}%`;
+  const alignment = metrics.alignmentError?.mean;
+  els.metricAlignment.textContent = alignment == null ? "-" : `${alignment.toFixed(2)} px`;
+
+  const negativeText = metrics.negativePixels
+    ? `　Negative漏れ ${metrics.negativePrediction.toLocaleString()} / ${metrics.negativePixels.toLocaleString()} px`
+    : "";
+  const unknownText = `　Unknown上の自動線 ${(metrics.unknownPrediction ?? 0).toLocaleString()} px（FPに含めない）`;
+  els.metricDetail.textContent =
+    `Positive: 一致 ${metrics.matchedReference.toLocaleString()} / 見逃し ${metrics.falseNegative.toLocaleString()} px${negativeText}${unknownText}`;
+
+  if (hasFullEvaluationRois() && state.analysisMask && state.preview) {
+    const roi = computeFullEvaluationRoiMetrics(
+      state.analysisMask,
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      state.fullEvaluationRois,
+      {
+        tolerance: currentComparisonOptions().tolerance,
+        exclusionMask: state.exclusionMask,
+      },
+    );
+    els.fullRoiMetrics.textContent =
+      `完全評価ROI ${roi.roiCount}領域 / True Precision ${(roi.precision * 100).toFixed(1)}% / True Recall ${(roi.recall * 100).toFixed(1)}% / True F1 ${(roi.f1 * 100).toFixed(1)}% / Tolerance ${roi.tolerance}px`;
+  } else {
+    els.fullRoiMetrics.textContent =
+      "完全評価ROIを指定すると True Precision / Recall / F1 を表示します。";
+  }
 }
 
 function renderHistory() {
@@ -483,9 +532,12 @@ function renderHistory() {
   for (const item of items) {
     const li = document.createElement("li");
     const date = new Date(item.timestamp);
-    const f1 = item.metrics?.f1 == null ? "-" : `${(item.metrics.f1 * 100).toFixed(1)}%`;
+    const positiveRecall = item.metrics?.positiveRecall ?? item.metrics?.recall;
+    const negativeLeakage = item.metrics?.negativeLeakage ?? item.metrics?.negativeHitRate;
+    const recallText = positiveRecall == null ? "-" : `${(positiveRecall * 100).toFixed(1)}%`;
+    const leakText = negativeLeakage == null ? "-" : `${(negativeLeakage * 100).toFixed(1)}%`;
     const label = item.kind === "auto-tune" ? "全体調整" : item.kind === "local-tune" ? "局所調整" : "比較";
-    li.innerHTML = `<strong>${label}</strong><span>F1 ${f1}</span><small>${date.toLocaleString("ja-JP")}</small>`;
+    li.innerHTML = `<strong>${label}</strong><span>R ${recallText} / Leak ${leakText}</span><small>${date.toLocaleString("ja-JP")}</small>`;
     els.historyList.appendChild(li);
   }
 }
@@ -509,6 +561,12 @@ function addHistory(kind, metrics, note = "") {
       measured: state.localCalibration.measured,
     } : null,
     metrics: {
+      evaluationMode: metrics.evaluationMode ?? "partial-label",
+      positiveRecall: metrics.positiveRecall ?? metrics.recall,
+      negativeLeakage: metrics.negativeLeakage ?? metrics.negativeHitRate ?? 0,
+      alignmentError: metrics.alignmentError ?? null,
+      labelPrecisionProxy: metrics.labelPrecision ?? metrics.precision,
+      labelF1Proxy: metrics.labelF1 ?? metrics.f1,
       precision: metrics.precision,
       recall: metrics.recall,
       f1: metrics.f1,
@@ -516,6 +574,7 @@ function addHistory(kind, metrics, note = "") {
       falsePositive: metrics.falsePositive,
       matchedReference: metrics.matchedReference,
       falseNegative: metrics.falseNegative,
+      unknownPrediction: metrics.unknownPrediction ?? 0,
       negativePrediction: metrics.negativePrediction ?? 0,
       negativePixels: metrics.negativePixels ?? 0,
       negativeHitRate: metrics.negativeHitRate ?? 0,
@@ -541,6 +600,7 @@ function renderNormalOverlay() {
   els.referenceCanvas.style.visibility = "visible";
   els.negativeCanvas.style.visibility = "visible";
   els.exclusionCanvas.style.visibility = "visible";
+  els.fullRoiCanvas.style.visibility = "visible";
   state.comparisonMode = false;
   updateControls();
 }
@@ -579,7 +639,7 @@ function renderNegativeCanvas() {
     state.preview.width,
     state.preview.height,
     referenceOpacityRatio(),
-    [190, 120, 255],
+    [255, 138, 0],
   );
 }
 
@@ -654,7 +714,7 @@ function refreshNegativeDirty(changedBounds) {
     state.preview.width,
     dirty,
     referenceOpacityRatio(),
-    [190, 120, 255],
+    [255, 138, 0],
   );
 }
 
