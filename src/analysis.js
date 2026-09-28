@@ -3,6 +3,7 @@ import { computeDirectionalColorDifference } from "./color.js";
 import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./local-adaptive.js";
 import { compareBoundaryMasks, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
 import { interpolateSensitivityDelta } from "./local-tune.js";
+import { computeDendriteDifference, computeDendriteOrientation } from "./dendrite.js";
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -12,12 +13,13 @@ function thresholdFromSensitivity(sensitivity) {
   return 0.76 - (sensitivity / 100) * 0.50;
 }
 
-function normalizeWeights(darkWeightRaw, ridgeWeightRaw, colorWeightRaw) {
-  const total = Math.max(1, darkWeightRaw + ridgeWeightRaw + colorWeightRaw);
+function normalizeWeights(darkWeightRaw, ridgeWeightRaw, colorWeightRaw, dendriteWeightRaw = 0) {
+  const total = Math.max(1, darkWeightRaw + ridgeWeightRaw + colorWeightRaw + dendriteWeightRaw);
   return {
     dark: darkWeightRaw / total,
     ridge: ridgeWeightRaw / total,
     color: colorWeightRaw / total,
+    dendrite: dendriteWeightRaw / total,
   };
 }
 
@@ -45,8 +47,24 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
 
   const directionalColor = await computeDirectionalColorDifference(imageData, ridgeResult.orientation, {
     distances: options.colorDistances ?? [2, 4, 6],
-    onProgress: ratio => onProgress(0.53 + ratio * 0.30),
+    onProgress: ratio => onProgress(0.53 + ratio * 0.17),
   });
+
+  const dendriteOrientation = await computeDendriteOrientation(luma, width, height, {
+    radius: options.dendriteRadius ?? 7,
+    onProgress: ratio => onProgress(0.70 + ratio * 0.14),
+  });
+  const dendrite = await computeDendriteDifference(
+    dendriteOrientation.orientation,
+    dendriteOrientation.coherence,
+    ridgeResult.orientation,
+    width,
+    height,
+    {
+      distances: options.dendriteDistances ?? [5, 9, 13],
+      onProgress: ratio => onProgress(0.84 + ratio * 0.14),
+    },
+  );
 
   const ridge = localStrength > 0
     ? normalizeFeatureLocally(ridgeResult.ridge, width, height, { radius: localRadius, strength: localStrength * 0.45 })
@@ -62,6 +80,9 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
     dark,
     ridge,
     color,
+    dendrite,
+    dendriteOrientation: dendriteOrientation.orientation,
+    dendriteCoherence: dendriteOrientation.coherence,
     orientation: ridgeResult.orientation,
     ridgeScale: ridgeResult.bestScale,
     local: {
@@ -75,9 +96,10 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
 export function buildRawBoundaryMask(features, options = {}) {
   const sensitivity = options.sensitivity ?? 62;
   const weights = normalizeWeights(
-    options.darkWeight ?? 20,
-    options.ridgeWeight ?? 55,
+    options.darkWeight ?? 15,
+    options.ridgeWeight ?? 40,
     options.colorWeight ?? 25,
+    options.dendriteWeight ?? 20,
   );
   const calibration = options.localCalibration ?? null;
   const mask = new Uint8Array(features.width * features.height);
@@ -87,7 +109,8 @@ export function buildRawBoundaryMask(features, options = {}) {
     for (let p = 0; p < mask.length; p += 1) {
       const score = (features.dark[p] / 255) * weights.dark
         + (features.ridge[p] / 255) * weights.ridge
-        + (features.color[p] / 255) * weights.color;
+        + (features.color[p] / 255) * weights.color
+        + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite;
       if (score >= threshold) mask[p] = 1;
     }
     return mask;
@@ -108,7 +131,8 @@ export function buildRawBoundaryMask(features, options = {}) {
       const threshold = thresholdFromSensitivity(localSensitivity);
       const score = (features.dark[p] / 255) * weights.dark
         + (features.ridge[p] / 255) * weights.ridge
-        + (features.color[p] / 255) * weights.color;
+        + (features.color[p] / 255) * weights.color
+        + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite;
       if (score >= threshold) mask[p] = 1;
     }
   }
@@ -203,14 +227,15 @@ function betterScore(candidate, best) {
 
 function weightProfiles(current) {
   const profiles = [
-    [current.darkWeight, current.ridgeWeight, current.colorWeight],
-    [15, 60, 25],
-    [20, 55, 25],
-    [15, 50, 35],
-    [25, 50, 25],
-    [10, 70, 20],
-    [20, 45, 35],
-    [30, 45, 25],
+    [current.darkWeight, current.ridgeWeight, current.colorWeight, current.dendriteWeight ?? 20],
+    [15, 40, 25, 20],
+    [10, 45, 20, 25],
+    [15, 35, 25, 25],
+    [20, 35, 25, 20],
+    [10, 50, 15, 25],
+    [15, 30, 30, 25],
+    [20, 30, 20, 30],
+    [10, 35, 20, 35],
   ];
   const seen = new Set();
   return profiles.filter(profile => {
@@ -235,10 +260,16 @@ function buildFastEvaluationHelpers(referenceCenterline, width, height, toleranc
 
 function evaluateRawConfiguration(features, helpers, config) {
   const threshold = thresholdFromSensitivity(config.sensitivity);
-  const weights = normalizeWeights(config.darkWeight, config.ridgeWeight, config.colorWeight);
+  const weights = normalizeWeights(
+    config.darkWeight,
+    config.ridgeWeight,
+    config.colorWeight,
+    config.dendriteWeight ?? 0,
+  );
   const scoreIsPrediction = p => ((features.dark[p] / 255) * weights.dark
     + (features.ridge[p] / 255) * weights.ridge
-    + (features.color[p] / 255) * weights.color) >= threshold;
+    + (features.color[p] / 255) * weights.color
+    + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite) >= threshold;
 
   let matchedPrediction = 0;
   let falsePositive = 0;
@@ -286,9 +317,10 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   const onProgress = options.onProgress ?? (() => {});
   const current = options.current ?? {
     sensitivity: 62,
-    darkWeight: 20,
-    ridgeWeight: 55,
+    darkWeight: 15,
+    ridgeWeight: 40,
     colorWeight: 25,
+    dendriteWeight: 20,
     minComponent: 24,
   };
 
@@ -318,14 +350,15 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   let rawStep = 0;
   const rawTotal = sensitivityCandidates.length * profiles.length;
   for (const sensitivity of sensitivityCandidates) {
-    for (const [darkWeight, ridgeWeight, colorWeight] of profiles) {
+    for (const [darkWeight, ridgeWeight, colorWeight, dendriteWeight] of profiles) {
       const metrics = evaluateRawConfiguration(features, helpers, {
         sensitivity,
         darkWeight,
         ridgeWeight,
         colorWeight,
+        dendriteWeight,
       });
-      const candidate = { sensitivity, darkWeight, ridgeWeight, colorWeight, ...metrics };
+      const candidate = { sensitivity, darkWeight, ridgeWeight, colorWeight, dendriteWeight, ...metrics };
       if (betterScore(candidate, bestRaw)) bestRaw = candidate;
       rawStep += 1;
       if (rawStep % 6 === 0 || rawStep === rawTotal) {
@@ -364,6 +397,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
       darkWeight: bestRaw.darkWeight,
       ridgeWeight: bestRaw.ridgeWeight,
       colorWeight: bestRaw.colorWeight,
+      dendriteWeight: bestRaw.dendriteWeight,
       minComponent,
       precision: metrics.precision,
       recall: metrics.recall,
@@ -389,6 +423,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
       darkWeight: best.darkWeight,
       ridgeWeight: best.ridgeWeight,
       colorWeight: best.colorWeight,
+      dendriteWeight: best.dendriteWeight,
       minComponent: best.minComponent,
     },
     metrics,
