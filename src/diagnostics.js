@@ -224,6 +224,8 @@ export function buildDiagnosticReport(input) {
     referenceCenterline,
     negativeMask,
     negativeCenterline,
+    negativeFillSeeds,
+    negativeFillInfo,
     exclusionMask,
     exclusionRects,
     fullEvaluationRois,
@@ -295,19 +297,19 @@ export function buildDiagnosticReport(input) {
     preview.height,
     { validationFraction: 0.20, minComponentPixels: 8 },
   );
-  const negativeSplit = negativeCenterline
+  const negativeSplit = negativeMask
     ? splitReferenceCenterline(
-      negativeCenterline,
+      negativeMask,
       preview.width,
       preview.height,
-      { validationFraction: 0.20, minComponentPixels: 8 },
+      { validationFraction: 0.20, minComponentPixels: 12 },
     )
     : null;
   const tuningNegativeMask = negativeSplit?.validationPixels > 0
-    ? dilateBinaryMask(negativeSplit.tuneMask, preview.width, preview.height, comparison.tolerance)
+    ? negativeSplit.tuneMask
     : negativeMask;
   const validationNegativeMask = negativeSplit?.validationPixels > 0
-    ? dilateBinaryMask(negativeSplit.validationMask, preview.width, preview.height, comparison.tolerance)
+    ? negativeSplit.validationMask
     : null;
   const tuningMetrics = computeRegionalMetrics(
     prediction,
@@ -387,6 +389,9 @@ export function buildDiagnosticReport(input) {
       mode: "partial-label",
       positiveRecall: metrics.positiveRecall,
       negativeLeakage: metrics.negativeLeakage,
+      macroNegativeLeakage: metrics.macroNegativeLeakage,
+      negativeRegionCount: metrics.negativeRegionCount,
+      maxNegativeRegionFraction: metrics.maxNegativeRegionFraction,
       alignmentError: metrics.alignmentError,
       matchedReference: metrics.matchedReference,
       falseNegative: metrics.falseNegative,
@@ -406,6 +411,8 @@ export function buildDiagnosticReport(input) {
       tuning: {
         positiveRecall: tuningMetrics.positiveRecall,
         negativeLeakage: tuningMetrics.negativeLeakage,
+        macroNegativeLeakage: tuningMetrics.macroNegativeLeakage,
+        negativeRegionCount: tuningMetrics.negativeRegionCount,
         alignmentError: tuningMetrics.alignmentError,
         labelPrecisionProxy: tuningMetrics.labelPrecision,
         labelF1Proxy: tuningMetrics.labelF1,
@@ -413,6 +420,8 @@ export function buildDiagnosticReport(input) {
       validation: validationMetrics ? {
         positiveRecall: validationMetrics.positiveRecall,
         negativeLeakage: validationMetrics.negativeLeakage,
+        macroNegativeLeakage: validationMetrics.macroNegativeLeakage,
+        negativeRegionCount: validationMetrics.negativeRegionCount,
         alignmentError: validationMetrics.alignmentError,
         labelPrecisionProxy: validationMetrics.labelPrecision,
         labelF1Proxy: validationMetrics.labelF1,
@@ -440,6 +449,8 @@ export function buildDiagnosticReport(input) {
       unknownPredictionPixels: metrics.unknownPrediction,
       nonBoundaryPixels: metrics.negativePixels,
       nonBoundaryPredictionPixels: metrics.negativePrediction,
+      negativeRegionCount: metrics.negativeRegionCount,
+      maxNegativeRegionFraction: metrics.maxNegativeRegionFraction,
       exclusionRectCount: (exclusionRects ?? []).length,
       excludedPixels: metrics.excludedPixels,
       fullEvaluationRoiCount: (fullEvaluationRois ?? []).length,
@@ -460,6 +471,21 @@ export function buildDiagnosticReport(input) {
       nonBoundaryMaskPixels: negativeMask
         ? negativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
+      closedNegativeFill: {
+        seedCount: negativeFillInfo?.seedCount ?? (negativeFillSeeds ?? []).length,
+        validSeeds: negativeFillInfo?.validSeeds ?? 0,
+        invalidSeeds: negativeFillInfo?.invalidSeeds ?? 0,
+        fillPixels: negativeFillInfo?.fillPixels ?? 0,
+        seeds: (negativeFillSeeds ?? []).map(seed => ({ ...seed })),
+        results: (negativeFillInfo?.results ?? []).map(result => ({
+          index: result.index,
+          ok: result.ok,
+          reason: result.reason,
+          regionPixels: result.regionPixels,
+          fillPixels: result.fillPixels,
+          bounds: result.bounds,
+        })),
+      },
       exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
       fullEvaluationRois: (fullEvaluationRois ?? []).map(rect => ({ ...rect })),
       excludedPixels: exclusionMask
@@ -467,6 +493,25 @@ export function buildDiagnosticReport(input) {
         : 0,
     },
     regions,
+    negativeSpatialDistribution: {
+      grid: "4x4",
+      regionsWithNegative: metrics.negativeRegionCount,
+      macroNegativeLeakage: metrics.macroNegativeLeakage,
+      pixelWeightedNegativeLeakage: metrics.negativeLeakage,
+      maxNegativeRegionFraction: metrics.maxNegativeRegionFraction,
+      regions: metrics.regions
+        .filter(region => region.negativePixels > 0)
+        .map(region => ({
+          rx: region.rx,
+          ry: region.ry,
+          negativePixels: region.negativePixels,
+          negativePrediction: region.negativePrediction,
+          negativeLeakage: region.negativeLeakage,
+          fractionOfAllNegative: metrics.negativePixels
+            ? region.negativePixels / metrics.negativePixels
+            : 0,
+        })),
+    },
     hotspots: [
       ...hotspotComponents(masks.fp, preview.width, preview.height, features, "explicitNegativeViolation"),
       ...hotspotComponents(masks.fn, preview.width, preview.height, features, "falseNegative"),
@@ -479,6 +524,8 @@ export function buildDiagnosticReport(input) {
       "Predictions in Unknown areas are not counted as false positives.",
       "Positive Recall measures how much of the user-labelled boundary centerline is recovered.",
       "Negative Leakage measures prediction pixels inside explicit non-boundary labels.",
+      "Macro Negative Leakage gives equal weight to each 4x4 region containing Negative labels, reducing bias from one densely labelled area.",
+      "Closed-region Negative Fill uses user-selected closed Positive contours to create high-confidence interior Negative labels while keeping a safety margin from the boundary.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
       "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",
       "Multi-Tolerance diagnostics are reported for 1, 2, 3, and 4 preview pixels.",
