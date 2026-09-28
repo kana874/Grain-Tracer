@@ -37,8 +37,9 @@ function summarizeValues(values) {
 
 function featureStatistics(features, selector) {
   const result = {};
-  for (const name of ["dark", "ridge", "color"]) {
+  for (const name of ["dark", "ridge", "color", "dendrite"]) {
     const source = features[name];
+    if (!source) continue;
     const values = [];
     for (let p = 0; p < selector.length; p += 1) {
       if (selector[p]) values.push(source[p] / 255);
@@ -135,7 +136,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
 }
 
 function regionFeatureSummary(features, width, region) {
-  const values = { dark: [], ridge: [], color: [] };
+  const values = { dark: [], ridge: [], color: [], dendrite: [] };
   for (let y = region.y0; y < region.y1; y += 1) {
     const base = y * width;
     for (let x = region.x0; x < region.x1; x += 1) {
@@ -143,12 +144,14 @@ function regionFeatureSummary(features, width, region) {
       values.dark.push(features.dark[p] / 255);
       values.ridge.push(features.ridge[p] / 255);
       values.color.push(features.color[p] / 255);
+      if (features.dendrite) values.dendrite.push(features.dendrite[p] / 255);
     }
   }
   return {
     darkMean: summarizeValues(values.dark).mean,
     ridgeMean: summarizeValues(values.ridge).mean,
     colorMean: summarizeValues(values.color).mean,
+    dendriteMean: summarizeValues(values.dendrite).mean,
   };
 }
 
@@ -271,7 +274,7 @@ export function buildDiagnosticReport(input) {
       "Feature values are normalized to 0..1.",
       "False-positive statistics use predicted pixels inside the review area but outside the visible reference judgement band.",
       "False-negative statistics use reference centerline pixels without a prediction inside the judgement radius.",
-      "Dendrite features are not present in diagnostic-v1 and will be added in a later algorithm revision.",
+      "Dendrite statistics represent cross-boundary orientation/coherence change estimated from a local structure tensor.",
     ],
   };
 }
