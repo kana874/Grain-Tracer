@@ -32,8 +32,16 @@ import {
   finalizeReferenceEdit,
   paintReferenceCenterlineSegment,
   rebuildReferenceMaskRegion,
+  renderBinaryMaskCanvas,
   renderReferenceMaskRegion,
 } from "./reference-editor.js";
+import {
+  buildExclusionMask,
+  countMaskPixels,
+  normalizeRect,
+  rectArea,
+  renderExclusionCanvas,
+} from "./annotations.js";
 
 const $ = id => document.getElementById(id);
 
@@ -45,11 +53,15 @@ const els = {
   canvasStage: $("canvasStage"),
   imageCanvas: $("imageCanvas"),
   overlayCanvas: $("overlayCanvas"),
+  exclusionCanvas: $("exclusionCanvas"),
+  negativeCanvas: $("negativeCanvas"),
   referenceCanvas: $("referenceCanvas"),
   emptyState: $("emptyState"),
   panToolButton: $("panToolButton"),
   referenceToolButton: $("referenceToolButton"),
+  negativeToolButton: $("negativeToolButton"),
   eraseReferenceToolButton: $("eraseReferenceToolButton"),
+  exclusionToolButton: $("exclusionToolButton"),
   undoReferenceButton: $("undoReferenceButton"),
   redoReferenceButton: $("redoReferenceButton"),
   fitButton: $("fitButton"),
@@ -61,6 +73,8 @@ const els = {
   localTuneButton: $("localTuneButton"),
   clearLocalCalibrationButton: $("clearLocalCalibrationButton"),
   clearReferenceButton: $("clearReferenceButton"),
+  clearNegativeButton: $("clearNegativeButton"),
+  clearExclusionButton: $("clearExclusionButton"),
   showNormalButton: $("showNormalButton"),
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
@@ -86,6 +100,7 @@ const els = {
   metricRecall: $("metricRecall"),
   metricF1: $("metricF1"),
   metricDetail: $("metricDetail"),
+  annotationStatus: $("annotationStatus"),
   localCalibrationStatus: $("localCalibrationStatus"),
   historyList: $("historyList"),
   projectStatus: $("projectStatus"),
@@ -114,12 +129,20 @@ const state = {
   dragOrigin: null,
   lastReferencePoint: null,
   currentReferenceEdit: null,
+  drawingExclusion: false,
+  exclusionStart: null,
+  exclusionPreviewRect: null,
   undoStack: [],
   redoStack: [],
   analysisMask: null,
   referenceMask: null,
   referenceCenterline: null,
   referenceCount: 0,
+  negativeMask: null,
+  negativeCenterline: null,
+  negativeCount: 0,
+  exclusionRects: [],
+  exclusionMask: null,
   comparisonMode: false,
   lastMetrics: null,
   localCalibration: null,
@@ -149,6 +172,14 @@ function hasReference() {
   return state.referenceCount > 0;
 }
 
+function hasNegativeReference() {
+  return state.negativeCount > 0;
+}
+
+function hasExclusions() {
+  return state.exclusionRects.length > 0;
+}
+
 function updateControls() {
   const hasPreview = Boolean(state.preview);
   const hasAnalysis = Boolean(state.analysisMask);
@@ -161,7 +192,9 @@ function updateControls() {
   els.clearOverlayButton.disabled = disabled || !hasAnalysis;
   els.panToolButton.disabled = disabled || !hasPreview;
   els.referenceToolButton.disabled = disabled || !hasPreview;
-  els.eraseReferenceToolButton.disabled = disabled || !hasPreview || !hasRef;
+  els.negativeToolButton.disabled = disabled || !hasPreview;
+  els.eraseReferenceToolButton.disabled = disabled || !hasPreview || (!hasRef && !hasNegativeReference());
+  els.exclusionToolButton.disabled = disabled || !hasPreview;
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
@@ -169,6 +202,8 @@ function updateControls() {
   els.localTuneButton.disabled = disabled || !hasPreview || !hasRef;
   els.clearLocalCalibrationButton.disabled = disabled || !state.localCalibration;
   els.clearReferenceButton.disabled = disabled || !hasRef;
+  els.clearNegativeButton.disabled = disabled || !hasNegativeReference();
+  els.clearExclusionButton.disabled = disabled || !hasExclusions();
   els.showNormalButton.disabled = disabled || !state.comparisonMode;
   els.saveProjectButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
   els.loadProjectButton.disabled = disabled || !hasPreview;
@@ -197,7 +232,7 @@ function resetMetadata() {
 }
 
 function prepareCanvas(width, height) {
-  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.referenceCanvas]) {
+  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas]) {
     canvas.width = width;
     canvas.height = height;
     canvas.style.width = `${width}px`;
@@ -271,10 +306,20 @@ function currentComparisonOptions() {
   };
 }
 
+function currentEvaluationOptions(overrides = {}) {
+  return {
+    ...currentComparisonOptions(),
+    negativeMask: state.negativeMask,
+    exclusionMask: state.exclusionMask,
+    ...overrides,
+  };
+}
+
 function currentBoundaryOptions() {
   return {
     ...currentExtractionOptions(),
     localCalibration: state.localCalibration,
+    exclusionMask: state.exclusionMask,
   };
 }
 
