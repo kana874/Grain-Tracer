@@ -967,6 +967,7 @@ function buildProject() {
     negativeMask: state.negativeMask,
     negativeCenterline: state.negativeCenterline,
     exclusionRects: state.exclusionRects,
+    fullEvaluationRois: state.fullEvaluationRois,
     localCalibration: state.localCalibration,
     history: state.history,
   });
@@ -1001,6 +1002,9 @@ async function restoreProject(project, source = "プロジェクト") {
   state.negativeMask = masks.negativeMask;
   state.negativeCenterline = masks.negativeCenterline;
   state.exclusionRects = masks.exclusionRects;
+  state.fullEvaluationRois = masks.fullEvaluationRois;
+  state.selectedExclusionIndex = -1;
+  state.selectedFullRoiIndex = -1;
   state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
   state.negativeCount = state.negativeCenterline.reduce((sum, value) => sum + value, 0);
   resetReferenceHistory();
@@ -1011,13 +1015,14 @@ async function restoreProject(project, source = "プロジェクト") {
   renderReferenceCanvas();
   renderNegativeCanvas();
   rebuildExclusionLayer();
+  rebuildFullRoiLayer();
   renderHistory();
   state.analysisMask = null;
   renderNormalOverlay();
   updateMetrics();
   updateControls();
   els.projectStatus.textContent = `${source}を復元しました`;
-  setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px / 除外 ${state.exclusionRects.length}領域`, 100);
+  setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
 }
 
 async function saveProjectManual() {
@@ -1070,6 +1075,7 @@ async function exportDiagnostics() {
       negativeCenterline: state.negativeCenterline,
       exclusionMask: state.exclusionMask,
       exclusionRects: state.exclusionRects,
+      fullEvaluationRois: state.fullEvaluationRois,
       localCalibration: state.localCalibration,
       history: state.history,
       algorithmVersion: ALGORITHM_VERSION,
@@ -1095,12 +1101,22 @@ async function exportDiagnostics() {
       state.preview.width,
       state.preview.height,
     );
+    rebuildExclusionLayer(null, false);
+    rebuildFullRoiLayer(null, false);
     const exclusionImage = els.exclusionCanvas.getContext("2d").getImageData(
       0,
       0,
       state.preview.width,
       state.preview.height,
     );
+    const fullRoiImage = els.fullRoiCanvas.getContext("2d").getImageData(
+      0,
+      0,
+      state.preview.width,
+      state.preview.height,
+    );
+    rebuildExclusionLayer();
+    rebuildFullRoiLayer();
     const ridgeImage = featureMapImageData(
       features.ridge,
       state.preview.width,
@@ -1152,12 +1168,17 @@ async function exportDiagnostics() {
       await imageDataToBlob(exclusionImage, "image/png"),
       `${base}.graintracer-exclusion.png`,
     );
+    await new Promise(resolve => setTimeout(resolve, 120));
+    downloadBlob(
+      await imageDataToBlob(fullRoiImage, "image/png"),
+      `${base}.graintracer-full-roi.png`,
+    );
 
-    const validationText = report.evaluation.validation
-      ? ` / 検証F1 ${(report.evaluation.validation.f1 * 100).toFixed(1)}%`
+    const roiText = report.evaluation.fullEvaluationRoi?.roiCount
+      ? ` / ROI True F1 ${(report.evaluation.fullEvaluationRoi.f1 * 100).toFixed(1)}%`
       : "";
     setStatus(
-      `診断出力完了: F1 ${(report.evaluation.f1 * 100).toFixed(1)}% / Macro F1 ${(report.evaluation.macroRegionF1 * 100).toFixed(1)}%${validationText}`,
+      `診断出力完了: Positive Recall ${(report.evaluation.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(report.evaluation.negativeLeakage * 100).toFixed(1)}%${roiText}`,
       100,
     );
   } catch (error) {
@@ -1185,6 +1206,10 @@ async function loadBmp(file) {
   state.negativeCenterline = null;
   state.exclusionRects = [];
   state.exclusionMask = null;
+  state.fullEvaluationRois = [];
+  state.selectedExclusionIndex = -1;
+  state.selectedFullRoiIndex = -1;
+  state.rectInteraction = null;
   resetReferenceHistory();
   state.sourceFingerprint = null;
   state.localCalibration = null;
@@ -1214,9 +1239,11 @@ async function loadBmp(file) {
     state.negativeCenterline = new Uint8Array(preview.width * preview.height);
     state.exclusionMask = new Uint8Array(preview.width * preview.height);
     state.exclusionRects = [];
+    state.fullEvaluationRois = [];
     prepareCanvas(preview.width, preview.height);
     els.imageCanvas.getContext("2d").putImageData(preview.imageData, 0, 0);
     els.overlayCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
+    els.fullRoiCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
     els.referenceCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
     els.negativeCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
     els.exclusionCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
@@ -1256,6 +1283,10 @@ async function loadBmp(file) {
     state.negativeCenterline = null;
     state.exclusionMask = null;
     state.exclusionRects = [];
+    state.fullEvaluationRois = [];
+    state.selectedExclusionIndex = -1;
+    state.selectedFullRoiIndex = -1;
+    state.rectInteraction = null;
     els.canvasStage.style.display = "none";
     els.emptyState.style.display = "grid";
     const message = error instanceof BmpError ? error.message : `読込エラー: ${error.message}`;
