@@ -161,7 +161,7 @@ export function rebuildReferenceMaskRegion(centerline, mask, width, height, radi
   return target;
 }
 
-export function renderReferenceMaskRegion(canvas, mask, width, bounds, opacity = 0.5) {
+export function renderReferenceMaskRegion(canvas, mask, width, bounds, opacity = 0.5, color = [255, 216, 74]) {
   if (!bounds) return;
   const x0 = bounds.x0;
   const y0 = bounds.y0;
@@ -176,9 +176,9 @@ export function renderReferenceMaskRegion(canvas, mask, width, bounds, opacity =
       const x = x0 + rx;
       if (!mask[y * width + x]) continue;
       const i = (ry * regionWidth + rx) * 4;
-      rgba[i] = 255;
-      rgba[i + 1] = 216;
-      rgba[i + 2] = 74;
+      rgba[i] = color[0] ?? 255;
+      rgba[i + 1] = color[1] ?? 216;
+      rgba[i + 2] = color[2] ?? 74;
       rgba[i + 3] = alpha;
     }
   }
@@ -186,4 +186,10 @@ export function renderReferenceMaskRegion(canvas, mask, width, bounds, opacity =
   const ctx = canvas.getContext("2d");
   ctx.clearRect(x0, y0, regionWidth, regionHeight);
   ctx.putImageData(new ImageData(rgba, regionWidth, regionHeight), x0, y0);
+}
+
+
+export function renderBinaryMaskCanvas(canvas, mask, width, height, opacity = 0.5, color = [255, 216, 74]) {
+  const bounds = { x0: 0, y0: 0, x1: width - 1, y1: height - 1 };
+  renderReferenceMaskRegion(canvas, mask, width, bounds, opacity, color);
 }
