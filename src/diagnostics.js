@@ -87,6 +87,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
     let dark = 0;
     let ridge = 0;
     let color = 0;
+    let dendrite = 0;
 
     while (head < tail) {
       const p = queue[head++];
@@ -99,6 +100,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
       dark += features.dark[p] / 255;
       ridge += features.ridge[p] / 255;
       color += features.color[p] / 255;
+      dendrite += (features.dendrite?.[p] ?? 0) / 255;
 
       for (let dy = -1; dy <= 1; dy += 1) {
         const ny = y + dy;
@@ -127,6 +129,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
         dark: dark / tail,
         ridge: ridge / tail,
         color: color / tail,
+        dendrite: dendrite / tail,
       },
     });
   }
