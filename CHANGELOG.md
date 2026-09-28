@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.3.4-alpha - 2026-09-28
+
+### Added
+- Purple non-boundary reference brush for explicitly labelling intragranular lines, dendrite structures, scratches, and other false-positive examples.
+- Grey rectangular exclusion tool for scale bars, text, and image regions that should not participate in extraction or evaluation.
+- Non-boundary and exclusion annotations are persisted in project JSON / IndexedDB autosave.
+- Non-boundary annotations participate in global and local CPU tuning as negative examples.
+- Independent positive/negative holdout handling for validation when enough labelled components exist.
+- Diagnostic JSON v2 fields for non-boundary hit rate, excluded-pixel coverage, annotation counts, and non-boundary feature statistics.
+- Diagnostic PNG export for non-boundary and exclusion annotation layers.
+- Undo / Redo support for positive lines, non-boundary lines, exclusion rectangles, and clear-all annotation operations.
+
+### Changed
+- Positive and non-boundary labels automatically remove conflicting labels along a newly drawn stroke.
+- Exclusion regions are removed before connected-component analysis and ignored by Precision / Recall / F1 evaluation.
+- Predictions in labelled non-boundary areas count as false positives even when outside the positive-reference review radius.
+- Algorithm identifier advanced to `boundary-v4-dendrite-negref`.
+- App version advanced to `0.3.4-alpha`.
+
+### Validation
+- JavaScript syntax validation passed for the updated annotation, analysis, evaluation, project, diagnostics, and UI modules.
+- Synthetic evaluation confirmed that a labelled non-boundary prediction lowers Precision and that covering the same region with an exclusion rectangle removes that false-positive contribution.
+
 ## v0.3.3-alpha - 2026-09-28
 
 ### Added
