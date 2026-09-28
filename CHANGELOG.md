@@ -18,6 +18,9 @@ All notable GrainTracer changes are recorded here.
 - IndexedDB autosave and automatic restore for matching BMP files.
 - Lightweight source fingerprint using metadata plus sampled file regions.
 - CPU auto-tuning updated for the three-feature boundary model.
+- Reference-guided 4×4 local sensitivity calibration with bounded, regularised regional search.
+- Smooth per-pixel interpolation of local sensitivity corrections with decay toward the global setting in unlabelled regions.
+- Local calibration persistence in project JSON / IndexedDB autosave.
 
 ### Changed
 
@@ -28,6 +31,7 @@ All notable GrainTracer changes are recorded here.
 
 - JavaScript syntax checks passed for the new v0.3 modules.
 - A synthetic boundary test passed for the v0.3 analysis pipeline and auto-tuning.
+- Module syntax validation passed after local-calibration integration.
 - Real 400 MB-class BMP behaviour still requires validation in the browser on production microscopy images.
 
 ## [0.2.0-alpha] - 2026-09-28
