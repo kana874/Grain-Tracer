@@ -18,6 +18,13 @@ import {
 import { loadAutosave, saveAutosave } from "./storage.js";
 import { tuneLocalSensitivity } from "./local-tune.js";
 import { dilateBinaryMask } from "./evaluation.js";
+import {
+  buildDiagnosticReport,
+  downloadBlob,
+  downloadJson,
+  featureMapImageData,
+  imageDataToBlob,
+} from "./diagnostics.js";
 
 const $ = id => document.getElementById(id);
 
@@ -46,6 +53,7 @@ const els = {
   showNormalButton: $("showNormalButton"),
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
+  exportDiagnosticsButton: $("exportDiagnosticsButton"),
   autosaveEnabled: $("autosaveEnabled"),
   zoomLabel: $("zoomLabel"),
   statusText: $("statusText"),
@@ -146,6 +154,7 @@ function updateControls() {
   els.showNormalButton.disabled = disabled || !state.comparisonMode;
   els.saveProjectButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
   els.loadProjectButton.disabled = disabled || !hasPreview;
+  els.exportDiagnosticsButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
 }
 
 function setBusy(busy) {
@@ -555,6 +564,91 @@ async function importProjectFile(file) {
   }
 }
 
+async function exportDiagnostics() {
+  if (!state.preview || !state.analysisMask || !hasReference()) return;
+  setBusy(true);
+  try {
+    const features = await ensureFeatures();
+    const source = {
+      name: state.file?.name ?? "",
+      size: state.file?.size ?? 0,
+      width: state.header?.width ?? 0,
+      height: state.header?.height ?? 0,
+      bitDepth: state.header?.bitDepth ?? 0,
+      fingerprint: state.sourceFingerprint,
+    };
+    const settings = currentSettings();
+    const report = buildDiagnosticReport({
+      source,
+      preview: state.preview,
+      settings,
+      features,
+      prediction: state.analysisMask,
+      referenceCenterline: state.referenceCenterline,
+      localCalibration: state.localCalibration,
+      history: state.history,
+      algorithmVersion: ALGORITHM_VERSION,
+      appVersion: APP_VERSION,
+    });
+
+    const comparison = renderComparisonOverlay(
+      state.analysisMask,
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      currentComparisonOptions(),
+    );
+    const referenceImage = els.referenceCanvas.getContext("2d").getImageData(
+      0,
+      0,
+      state.preview.width,
+      state.preview.height,
+    );
+    const ridgeImage = featureMapImageData(
+      features.ridge,
+      state.preview.width,
+      state.preview.height,
+    );
+    const base = (state.file?.name ?? "graintracer").replace(/\.bmp$/i, "");
+
+    setStatus("診断JSONを作成中...", 82);
+    downloadJson(report, `${base}.graintracer-diagnostic.json`);
+    await new Promise(resolve => setTimeout(resolve, 120));
+
+    setStatus("診断画像を書き出し中...", 88);
+    downloadBlob(
+      await imageDataToBlob(state.preview.imageData, "image/jpeg", 0.90),
+      `${base}.graintracer-preview.jpg`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 120));
+    downloadBlob(
+      await imageDataToBlob(comparison.imageData, "image/png"),
+      `${base}.graintracer-comparison.png`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 120));
+    downloadBlob(
+      await imageDataToBlob(ridgeImage, "image/png"),
+      `${base}.graintracer-ridge.png`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 120));
+    downloadBlob(
+      await imageDataToBlob(referenceImage, "image/png"),
+      `${base}.graintracer-reference.png`,
+    );
+
+    setStatus(
+      `診断出力完了: F1 ${(report.evaluation.f1 * 100).toFixed(1)}% / Macro F1 ${(report.evaluation.macroRegionF1 * 100).toFixed(1)}%`,
+      100,
+    );
+  } catch (error) {
+    console.error(error);
+    setStatus(`診断出力エラー: ${error.message}`, 0);
+    alert(`診断出力エラー: ${error.message}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function loadBmp(file) {
   if (!file) return;
   state.abortController?.abort();
@@ -921,6 +1015,7 @@ els.clearReferenceButton.addEventListener("click", clearReference);
 els.showNormalButton.addEventListener("click", showNormalView);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
+els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
