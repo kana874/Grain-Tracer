@@ -542,7 +542,7 @@ function renderHistory() {
   }
 }
 
-function addHistory(kind, metrics, note = "") {
+function addHistory(kind, metrics, note = "", tuning = null) {
   const cleanRegions = (metrics.regions ?? []).map(region => ({
     rx: region.rx, ry: region.ry, precision: region.precision, recall: region.recall,
     f1: region.f1, referencePixels: region.referencePixels,
@@ -581,6 +581,7 @@ function addHistory(kind, metrics, note = "") {
       excludedPixels: metrics.excludedPixels ?? 0,
       regions: cleanRegions,
     },
+    tuning,
     note,
   });
   if (state.history.length > 100) state.history.splice(0, state.history.length - 100);
@@ -1386,21 +1387,33 @@ async function autoTune() {
   setBusy(true);
   try {
     const features = await ensureFeatures();
+    const useCompleteRoi = hasFullEvaluationRois();
     const split = splitReferenceCenterline(
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
       { validationFraction: 0.20, minComponentPixels: 8 },
     );
-    const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
     const negativeHoldout = buildNegativeHoldout();
-    setStatus("調整用お手本＋非粒界例でDark/Ridge/Color/デンドライトを自動調整中...", 1);
+    const tuningReference = useCompleteRoi
+      ? state.referenceCenterline
+      : split.validationPixels >= 40
+        ? split.tuneMask
+        : state.referenceCenterline;
+    const tuningNegative = useCompleteRoi
+      ? state.negativeMask
+      : negativeHoldout.tuningMask;
+    const objectiveText = useCompleteRoi
+      ? "完全評価ROIのTrue F1"
+      : "Positive Recall / Negative Leakage";
+    setStatus(`Auto Tune v2: ${objectiveText}を基準にCoordinate Descentで調整中...`, 1);
     const result = await autoTuneBoundary(features, tuningReference, {
       ...currentComparisonOptions(),
-      negativeMask: negativeHoldout.tuningMask,
+      negativeMask: tuningNegative,
       exclusionMask: state.exclusionMask,
+      fullEvaluationRois: useCompleteRoi ? state.fullEvaluationRois : null,
       current: currentExtractionOptions(),
-      onProgress: ratio => setStatus(`自動調整中... ${Math.round(ratio * 100)}%`, ratio * 99),
+      onProgress: ratio => setStatus(`Auto Tune v2実行中... ${Math.round(ratio * 100)}%`, ratio * 99),
     });
     setRangeValue(els.sensitivity, result.parameters.sensitivity);
     setRangeValue(els.darkWeight, result.parameters.darkWeight);
@@ -1424,7 +1437,7 @@ async function autoTune() {
     els.negativeCanvas.style.visibility = "hidden";
     state.comparisonMode = true;
     updateMetrics(comparison.metrics);
-    const validationMetrics = split.validationPixels >= 40
+    const validationMetrics = !useCompleteRoi && split.validationPixels >= 40
       ? computeRegionalMetrics(
         result.mask,
         split.validationMask,
@@ -1439,17 +1452,38 @@ async function autoTune() {
         },
       )
       : null;
-    const validationNote = validationMetrics
-      ? ` / 検証 Positive Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`
-      : "";
-    addHistory(
-      "auto-tune",
-      comparison.metrics,
-      validationMetrics
-        ? `partial-label tuning; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}, negativeLeakage=${validationMetrics.negativeLeakage.toFixed(4)}`
-        : "partial-label tuning; validation holdout unavailable",
+    const roiMetrics = useCompleteRoi
+      ? computeFullEvaluationRoiMetrics(
+        result.mask,
+        state.referenceCenterline,
+        state.preview.width,
+        state.preview.height,
+        state.fullEvaluationRois,
+        {
+          tolerance: currentComparisonOptions().tolerance,
+          exclusionMask: state.exclusionMask,
+        },
+      )
+      : null;
+
+    let note;
+    let objectiveStatus;
+    if (roiMetrics?.roiCount) {
+      note = `auto-tune-v2 coordinate-descent; objective=complete-roi-f1; roiF1=${roiMetrics.f1.toFixed(4)}`;
+      objectiveStatus = `ROI True F1 ${(roiMetrics.f1 * 100).toFixed(1)}% / P ${(roiMetrics.precision * 100).toFixed(1)}% / R ${(roiMetrics.recall * 100).toFixed(1)}%`;
+    } else if (validationMetrics) {
+      note = `auto-tune-v2 coordinate-descent; objective=partial-label-balanced; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}, negativeLeakage=${validationMetrics.negativeLeakage.toFixed(4)}`;
+      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / 検証Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`;
+    } else {
+      note = "auto-tune-v2 coordinate-descent; objective=partial-label-balanced; validation holdout unavailable";
+      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%`;
+    }
+
+    addHistory("auto-tune", comparison.metrics, note, result.search);
+    setStatus(
+      `Auto Tune v2完了: ${objectiveStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent}`,
+      100,
     );
-    setStatus(`自動調整完了: Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%${validationNote} / 感度 ${result.parameters.sensitivity} / 暗さ ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / 色差 ${result.parameters.colorWeight} / デンドライト ${result.parameters.dendriteWeight ?? 0}`, 100);
   } catch (error) {
     console.error(error);
     setStatus(`自動調整エラー: ${error.message}`, 0);
