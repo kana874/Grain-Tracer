@@ -51,7 +51,7 @@ function evaluateRegionSensitivity(features, reference, helpers, bounds, sensiti
     const base = y * features.width;
     for (let x = bounds.x0; x < bounds.x1; x += 1) {
       const p = base + x;
-      if (!helpers.reviewMask[p]) continue;
+      if (helpers.exclusionMask?.[p] || !helpers.evaluationMask[p]) continue;
       if (featureScore(features, p, weights) < threshold) continue;
       if (helpers.referenceTolerance[p]) matchedPrediction += 1;
       else falsePositive += 1;
@@ -62,7 +62,7 @@ function evaluateRegionSensitivity(features, reference, helpers, bounds, sensiti
     const base = y * features.width;
     for (let x = bounds.x0; x < bounds.x1; x += 1) {
       const p = base + x;
-      if (!reference[p]) continue;
+      if (!reference[p] || helpers.exclusionMask?.[p]) continue;
       let found = false;
       for (let dy = -tolerance; dy <= tolerance && !found; dy += 1) {
         const ny = y + dy;
@@ -71,6 +71,7 @@ function evaluateRegionSensitivity(features, reference, helpers, bounds, sensiti
           const nx = x + dx;
           if (nx < 0 || nx >= features.width) continue;
           const np = ny * features.width + nx;
+          if (helpers.exclusionMask?.[np]) continue;
           if (featureScore(features, np, weights) >= threshold) {
             found = true;
             break;
@@ -182,7 +183,15 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
   const weights = normalizedWeights(options);
   const referenceTolerance = dilateBinaryMask(referenceCenterline, features.width, features.height, tolerance);
   const reviewMask = dilateBinaryMask(referenceCenterline, features.width, features.height, reviewRadius);
-  const helpers = { tolerance, referenceTolerance, reviewMask };
+  const negativeMask = options.negativeMask ?? null;
+  const exclusionMask = options.exclusionMask ?? null;
+  const evaluationMask = reviewMask.slice();
+  if (negativeMask) {
+    for (let p = 0; p < evaluationMask.length; p += 1) {
+      if (!exclusionMask?.[p] && negativeMask[p] && !referenceTolerance[p]) evaluationMask[p] = 1;
+    }
+  }
+  const helpers = { tolerance, referenceTolerance, reviewMask, evaluationMask, negativeMask, exclusionMask };
 
   const raw = new Float32Array(cols * rows);
   const measured = new Uint8Array(cols * rows);
@@ -197,7 +206,10 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
       let referencePixels = 0;
       for (let y = bounds.y0; y < bounds.y1; y += 1) {
         const base = y * features.width;
-        for (let x = bounds.x0; x < bounds.x1; x += 1) referencePixels += referenceCenterline[base + x] ? 1 : 0;
+        for (let x = bounds.x0; x < bounds.x1; x += 1) {
+          const p = base + x;
+          if (!exclusionMask?.[p]) referencePixels += referenceCenterline[p] ? 1 : 0;
+        }
       }
 
       let best = null;
