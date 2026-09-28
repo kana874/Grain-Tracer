@@ -21,6 +21,8 @@ All notable GrainTracer changes are recorded here.
 - Reference-guided 4×4 local sensitivity calibration with bounded, regularised regional search.
 - Smooth per-pixel interpolation of local sensitivity corrections with decay toward the global setting in unlabelled regions.
 - Local calibration persistence in project JSON / IndexedDB autosave.
+- Reference-line display width now exactly matches the comparison judgement band; the separate hidden tolerance width was removed from the UI.
+- Comparison view now shows the exact reference judgement band faintly behind match/error colours.
 
 ### Changed
 
