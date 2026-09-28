@@ -1,4 +1,4 @@
-import { computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
+import { computeRegionalMetrics, dilateBinaryMask, splitReferenceCenterline } from "./evaluation.js";
 
 function quantile(sorted, q) {
   if (!sorted.length) return 0;
@@ -219,6 +219,39 @@ export function buildDiagnosticReport(input) {
     ? regionsWithReference.reduce((sum, region) => sum + region.f1, 0) / regionsWithReference.length
     : 0;
 
+  const split = splitReferenceCenterline(
+    referenceCenterline,
+    preview.width,
+    preview.height,
+    { validationFraction: 0.20, minComponentPixels: 8 },
+  );
+  const tuningMetrics = computeRegionalMetrics(
+    prediction,
+    split.tuneMask,
+    preview.width,
+    preview.height,
+    {
+      tolerance: comparison.tolerance,
+      reviewRadius: comparison.reviewRadius,
+      cols: 4,
+      rows: 4,
+    },
+  );
+  const validationMetrics = split.validationPixels > 0
+    ? computeRegionalMetrics(
+      prediction,
+      split.validationMask,
+      preview.width,
+      preview.height,
+      {
+        tolerance: comparison.tolerance,
+        reviewRadius: comparison.reviewRadius,
+        cols: 4,
+        rows: 4,
+      },
+    )
+    : null;
+
   const regions = metrics.regions.map(region => ({
     rx: region.rx,
     ry: region.ry,
@@ -255,6 +288,23 @@ export function buildDiagnosticReport(input) {
       falsePositive: metrics.falsePositive,
       matchedReference: metrics.matchedReference,
       falseNegative: metrics.falseNegative,
+      tuning: {
+        precision: tuningMetrics.precision,
+        recall: tuningMetrics.recall,
+        f1: tuningMetrics.f1,
+      },
+      validation: validationMetrics ? {
+        precision: validationMetrics.precision,
+        recall: validationMetrics.recall,
+        f1: validationMetrics.f1,
+      } : null,
+    },
+    validationSplit: {
+      mode: split.mode,
+      componentCount: split.componentCount,
+      tuningPixels: split.tuningPixels,
+      validationPixels: split.validationPixels,
+      validationFraction: split.validationFraction,
     },
     referenceCoverage: {
       regionsWithReference: regionsWithReference.length,
