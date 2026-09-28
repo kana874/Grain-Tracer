@@ -17,7 +17,7 @@ import {
 } from "./project.js";
 import { loadAutosave, saveAutosave } from "./storage.js";
 import { tuneLocalSensitivity } from "./local-tune.js";
-import { dilateBinaryMask } from "./evaluation.js";
+import { computeRegionalMetrics, dilateBinaryMask, splitReferenceCenterline } from "./evaluation.js";
 import {
   buildDiagnosticReport,
   downloadBlob,
@@ -649,8 +649,11 @@ async function exportDiagnostics() {
       `${base}.graintracer-reference.png`,
     );
 
+    const validationText = report.evaluation.validation
+      ? ` / 検証F1 ${(report.evaluation.validation.f1 * 100).toFixed(1)}%`
+      : "";
     setStatus(
-      `診断出力完了: F1 ${(report.evaluation.f1 * 100).toFixed(1)}% / Macro F1 ${(report.evaluation.macroRegionF1 * 100).toFixed(1)}%`,
+      `診断出力完了: F1 ${(report.evaluation.f1 * 100).toFixed(1)}% / Macro F1 ${(report.evaluation.macroRegionF1 * 100).toFixed(1)}%${validationText}`,
       100,
     );
   } catch (error) {
@@ -802,8 +805,15 @@ async function autoTune() {
   setBusy(true);
   try {
     const features = await ensureFeatures();
-    setStatus("お手本と比較してDark/Ridge/Colorを自動調整中...", 1);
-    const result = await autoTuneBoundary(features, state.referenceCenterline, {
+    const split = splitReferenceCenterline(
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      { validationFraction: 0.20, minComponentPixels: 8 },
+    );
+    const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
+    setStatus("調整用お手本でDark/Ridge/Color/デンドライトを自動調整中...", 1);
+    const result = await autoTuneBoundary(features, tuningReference, {
       ...currentComparisonOptions(),
       current: currentExtractionOptions(),
       onProgress: ratio => setStatus(`自動調整中... ${Math.round(ratio * 100)}%`, ratio * 99),
@@ -829,8 +839,26 @@ async function autoTune() {
     els.referenceCanvas.style.visibility = "hidden";
     state.comparisonMode = true;
     updateMetrics(comparison.metrics);
-    addHistory("auto-tune", comparison.metrics, "global ridge-weight tuning");
-    setStatus(`自動調整完了: F1 ${(comparison.metrics.f1 * 100).toFixed(1)}% / 感度 ${result.parameters.sensitivity} / 暗さ ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / 色差 ${result.parameters.colorWeight} / デンドライト ${result.parameters.dendriteWeight ?? 0}`, 100);
+    const validationMetrics = split.validationPixels >= 40
+      ? computeRegionalMetrics(
+        result.mask,
+        split.validationMask,
+        state.preview.width,
+        state.preview.height,
+        { ...currentComparisonOptions(), cols: 4, rows: 4 },
+      )
+      : null;
+    const validationNote = validationMetrics
+      ? ` / 検証F1 ${(validationMetrics.f1 * 100).toFixed(1)}%`
+      : "";
+    addHistory(
+      "auto-tune",
+      comparison.metrics,
+      validationMetrics
+        ? `global tuning with holdout validation F1=${validationMetrics.f1.toFixed(4)}`
+        : "global tuning; validation holdout unavailable",
+    );
+    setStatus(`自動調整完了: 全体F1 ${(comparison.metrics.f1 * 100).toFixed(1)}%${validationNote} / 感度 ${result.parameters.sensitivity} / 暗さ ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / 色差 ${result.parameters.colorWeight} / デンドライト ${result.parameters.dendriteWeight ?? 0}`, 100);
   } catch (error) {
     console.error(error);
     setStatus(`自動調整エラー: ${error.message}`, 0);
@@ -845,8 +873,15 @@ async function localTune() {
   try {
     const features = await ensureFeatures();
     const extraction = currentExtractionOptions();
-    setStatus("お手本を使って範囲ごとの感度を調整中...", 1);
-    const calibration = await tuneLocalSensitivity(features, state.referenceCenterline, {
+    const split = splitReferenceCenterline(
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      { validationFraction: 0.20, minComponentPixels: 8 },
+    );
+    const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
+    setStatus("調整用お手本を使って範囲ごとの感度を調整中...", 1);
+    const calibration = await tuneLocalSensitivity(features, tuningReference, {
       ...currentComparisonOptions(),
       ...extraction,
       cols: 4,
@@ -875,10 +910,28 @@ async function localTune() {
     els.referenceCanvas.style.visibility = "hidden";
     state.comparisonMode = true;
     updateMetrics(comparison.metrics);
-    addHistory("local-tune", comparison.metrics, "4x4 reference-guided sensitivity calibration");
+    const validationMetrics = split.validationPixels >= 40
+      ? computeRegionalMetrics(
+        state.analysisMask,
+        split.validationMask,
+        state.preview.width,
+        state.preview.height,
+        { ...currentComparisonOptions(), cols: 4, rows: 4 },
+      )
+      : null;
+    addHistory(
+      "local-tune",
+      comparison.metrics,
+      validationMetrics
+        ? `4x4 local calibration; holdout validation F1=${validationMetrics.f1.toFixed(4)}`
+        : "4x4 local calibration; validation holdout unavailable",
+    );
     const measured = calibration.measured.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+    const validationNote = validationMetrics
+      ? ` / 検証F1 ${(validationMetrics.f1 * 100).toFixed(1)}%`
+      : "";
     setStatus(
-      `局所調整完了: F1 ${(comparison.metrics.f1 * 100).toFixed(1)}% / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
+      `局所調整完了: 全体F1 ${(comparison.metrics.f1 * 100).toFixed(1)}%${validationNote} / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
       100,
     );
     scheduleAutosave();
