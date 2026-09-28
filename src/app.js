@@ -425,7 +425,8 @@ function updateMetrics(metrics = null) {
   els.metricPrecision.textContent = `${(metrics.precision * 100).toFixed(1)}%`;
   els.metricRecall.textContent = `${(metrics.recall * 100).toFixed(1)}%`;
   els.metricF1.textContent = `${(metrics.f1 * 100).toFixed(1)}%`;
-  els.metricDetail.textContent = `自動線: 一致 ${metrics.matchedPrediction.toLocaleString()} / 誤検出 ${metrics.falsePositive.toLocaleString()} px　お手本: 一致 ${metrics.matchedReference.toLocaleString()} / 見逃し ${metrics.falseNegative.toLocaleString()} px`;
+  const negativeText = metrics.negativePixels ? `　非粒界内予測 ${metrics.negativePrediction.toLocaleString()} / ${metrics.negativePixels.toLocaleString()} px` : "";
+  els.metricDetail.textContent = `自動線: 一致 ${metrics.matchedPrediction.toLocaleString()} / 誤検出 ${metrics.falsePositive.toLocaleString()} px　お手本: 一致 ${metrics.matchedReference.toLocaleString()} / 見逃し ${metrics.falseNegative.toLocaleString()} px${negativeText}`;
 }
 
 function renderHistory() {
@@ -474,6 +475,10 @@ function addHistory(kind, metrics, note = "") {
       falsePositive: metrics.falsePositive,
       matchedReference: metrics.matchedReference,
       falseNegative: metrics.falseNegative,
+      negativePrediction: metrics.negativePrediction ?? 0,
+      negativePixels: metrics.negativePixels ?? 0,
+      negativeHitRate: metrics.negativeHitRate ?? 0,
+      excludedPixels: metrics.excludedPixels ?? 0,
       regions: cleanRegions,
     },
     note,
@@ -493,6 +498,8 @@ function renderNormalOverlay() {
     }), 0, 0);
   }
   els.referenceCanvas.style.visibility = "visible";
+  els.negativeCanvas.style.visibility = "visible";
+  els.exclusionCanvas.style.visibility = "visible";
   state.comparisonMode = false;
   updateControls();
 }
@@ -515,6 +522,48 @@ function renderReferenceCanvas() {
     rgba[i + 3] = Math.round(255 * Math.max(0.1, Math.min(1, Number(els.referenceOpacity.value) / 100)));
   }
   els.referenceCanvas.getContext("2d").putImageData(new ImageData(rgba, state.preview.width, state.preview.height), 0, 0);
+}
+
+function renderNegativeCanvas() {
+  if (!state.preview || !state.negativeCenterline) return;
+  state.negativeMask = dilateBinaryMask(
+    state.negativeCenterline,
+    state.preview.width,
+    state.preview.height,
+    referenceJudgementRadius(),
+  );
+  renderBinaryMaskCanvas(
+    els.negativeCanvas,
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    referenceOpacityRatio(),
+    [190, 120, 255],
+  );
+}
+
+function rebuildExclusionLayer(previewRect = null) {
+  if (!state.preview) return;
+  state.exclusionMask = buildExclusionMask(
+    state.exclusionRects,
+    state.preview.width,
+    state.preview.height,
+  );
+  renderExclusionCanvas(
+    els.exclusionCanvas,
+    state.exclusionRects,
+    state.preview.width,
+    state.preview.height,
+    previewRect,
+  );
+  updateAnnotationStatus();
+}
+
+function updateAnnotationStatus() {
+  const negative = state.negativeCount ?? 0;
+  const excluded = state.exclusionMask ? countMaskPixels(state.exclusionMask) : 0;
+  els.annotationStatus.textContent =
+    `非粒界: ${negative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px)`;
 }
 
 function resetReferenceHistory() {
@@ -544,6 +593,27 @@ function refreshReferenceDirty(changedBounds) {
     state.preview.width,
     dirty,
     referenceOpacityRatio(),
+    [255, 216, 74],
+  );
+}
+
+function refreshNegativeDirty(changedBounds) {
+  if (!state.preview || !state.negativeCenterline || !state.negativeMask || !changedBounds) return;
+  const dirty = rebuildReferenceMaskRegion(
+    state.negativeCenterline,
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    referenceJudgementRadius(),
+    changedBounds,
+  );
+  renderReferenceMaskRegion(
+    els.negativeCanvas,
+    state.negativeMask,
+    state.preview.width,
+    dirty,
+    referenceOpacityRatio(),
+    [190, 120, 255],
   );
 }
 
@@ -555,27 +625,66 @@ function commitReferenceHistory(entry) {
   updateControls();
 }
 
-function invalidateAfterReferenceEdit() {
+function invalidateAfterReferenceEdit(affectsAnalysis = false) {
   clearLocalCalibration(true);
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
+  els.negativeCanvas.style.visibility = "visible";
+  els.exclusionCanvas.style.visibility = "visible";
+  if (affectsAnalysis) {
+    state.analysisMask = null;
+    els.overlayCanvas.getContext("2d").clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
+  }
   updateMetrics();
+}
+
+function recalcAnnotationCounts() {
+  state.referenceCount = state.referenceCenterline
+    ? state.referenceCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0)
+    : 0;
+  state.negativeCount = state.negativeCenterline
+    ? state.negativeCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0)
+    : 0;
+  updateAnnotationStatus();
+}
+
+function applyMaskHistoryPart(part, direction) {
+  const centerline = part.layer === "negative" ? state.negativeCenterline : state.referenceCenterline;
+  const bounds = applyReferenceHistoryEntry(centerline, part.entry, direction);
+  if (part.layer === "negative") refreshNegativeDirty(bounds);
+  else refreshReferenceDirty(bounds);
 }
 
 function applyReferenceUndoRedo(direction) {
   const source = direction === "redo" ? state.redoStack : state.undoStack;
   const target = direction === "redo" ? state.undoStack : state.redoStack;
-  if (!state.preview || !state.referenceCenterline || source.length === 0) return;
+  if (!state.preview || source.length === 0) return;
 
   if (state.comparisonMode) showNormalView();
-  invalidateAfterReferenceEdit();
-  const entry = source.pop();
-  const bounds = applyReferenceHistoryEntry(state.referenceCenterline, entry, direction);
-  refreshReferenceDirty(bounds);
-  target.push(entry);
-  state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  const item = source.pop();
+  const affectsAnalysis = item.kind === "exclusion-add" || item.kind === "exclusion-clear";
+  invalidateAfterReferenceEdit(affectsAnalysis);
+
+  if (item.kind === "mask-edit") {
+    for (const part of item.parts) applyMaskHistoryPart(part, direction);
+  } else if (item.kind === "exclusion-add") {
+    if (direction === "undo") {
+      state.exclusionRects.splice(item.index, 1);
+    } else {
+      state.exclusionRects.splice(item.index, 0, { ...item.rect });
+    }
+    rebuildExclusionLayer();
+  } else if (item.kind === "exclusion-clear") {
+    state.exclusionRects = direction === "undo"
+      ? item.rects.map(rect => ({ ...rect }))
+      : [];
+    rebuildExclusionLayer();
+  }
+
+  target.push(item);
+  recalcAnnotationCounts();
   updateControls();
-  setStatus(`お手本を${direction === "redo" ? "やり直しました" : "元に戻しました"}。中心線: ${state.referenceCount.toLocaleString()} px`);
+  setStatus(`注釈を${direction === "redo" ? "やり直しました" : "元に戻しました"}。`);
   scheduleAutosave();
 }
 
@@ -598,6 +707,8 @@ function clearOverlay() {
   state.analysisMask = null;
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
+  els.negativeCanvas.style.visibility = "visible";
+  els.exclusionCanvas.style.visibility = "visible";
   updateMetrics();
   updateControls();
   setStatus("粒界オーバーレイを消去しました。");
@@ -618,12 +729,50 @@ function clearReference() {
   state.referenceCenterline.fill(0);
   state.referenceMask.fill(0);
   els.referenceCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
-  state.referenceCount = 0;
-  commitReferenceHistory(entry);
+  commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "reference", entry }] });
+  recalcAnnotationCounts();
   renderNormalOverlay();
-  setTool("pan");
   updateControls();
-  setStatus("お手本線をすべて消去しました。Undoで復元できます。");
+  setStatus("粒界お手本を全消去しました。Undoで復元できます。");
+  scheduleAutosave();
+}
+
+function clearNegativeReference() {
+  if (!state.preview || !state.negativeCenterline || !hasNegativeReference()) return;
+  if (state.comparisonMode) showNormalView();
+  invalidateAfterReferenceEdit();
+
+  const entry = buildClearReferenceEntry(
+    state.negativeCenterline,
+    state.preview.width,
+    state.preview.height,
+  );
+  if (!entry) return;
+
+  state.negativeCenterline.fill(0);
+  state.negativeMask.fill(0);
+  els.negativeCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "negative", entry }] });
+  recalcAnnotationCounts();
+  renderNormalOverlay();
+  updateControls();
+  setStatus("非粒界お手本を全消去しました。Undoで復元できます。");
+  scheduleAutosave();
+}
+
+function clearExclusions() {
+  if (!state.preview || !hasExclusions()) return;
+  if (state.comparisonMode) showNormalView();
+  const item = {
+    kind: "exclusion-clear",
+    rects: state.exclusionRects.map(rect => ({ ...rect })),
+  };
+  state.exclusionRects = [];
+  rebuildExclusionLayer();
+  invalidateAfterReferenceEdit(true);
+  commitReferenceHistory(item);
+  updateControls();
+  setStatus("除外領域を全消去しました。再解析してください。Undoで復元できます。");
   scheduleAutosave();
 }
 
@@ -642,6 +791,9 @@ function buildProject() {
     settings: currentSettings(),
     referenceMask: state.referenceMask,
     referenceCenterline: state.referenceCenterline,
+    negativeMask: state.negativeMask,
+    negativeCenterline: state.negativeCenterline,
+    exclusionRects: state.exclusionRects,
     localCalibration: state.localCalibration,
     history: state.history,
   });
