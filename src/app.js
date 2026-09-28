@@ -16,6 +16,7 @@ import {
   validateProject,
 } from "./project.js";
 import { loadAutosave, saveAutosave } from "./storage.js";
+import { tuneLocalSensitivity } from "./local-tune.js";
 
 const $ = id => document.getElementById(id);
 
@@ -38,6 +39,8 @@ const els = {
   analyzeButton: $("analyzeButton"),
   compareButton: $("compareButton"),
   autoTuneButton: $("autoTuneButton"),
+  localTuneButton: $("localTuneButton"),
+  clearLocalCalibrationButton: $("clearLocalCalibrationButton"),
   clearReferenceButton: $("clearReferenceButton"),
   showNormalButton: $("showNormalButton"),
   saveProjectButton: $("saveProjectButton"),
@@ -62,6 +65,7 @@ const els = {
   metricRecall: $("metricRecall"),
   metricF1: $("metricF1"),
   metricDetail: $("metricDetail"),
+  localCalibrationStatus: $("localCalibrationStatus"),
   historyList: $("historyList"),
   projectStatus: $("projectStatus"),
   metaName: $("metaName"),
@@ -94,6 +98,7 @@ const state = {
   referenceCount: 0,
   comparisonMode: false,
   lastMetrics: null,
+  localCalibration: null,
   history: [],
   busy: false,
   abortController: null,
@@ -135,6 +140,8 @@ function updateControls() {
   els.eraseReferenceToolButton.disabled = disabled || !hasPreview || !hasRef;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
   els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
+  els.localTuneButton.disabled = disabled || !hasPreview || !hasRef;
+  els.clearLocalCalibrationButton.disabled = disabled || !state.localCalibration;
   els.clearReferenceButton.disabled = disabled || !hasRef;
   els.showNormalButton.disabled = disabled || !state.comparisonMode;
   els.saveProjectButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
@@ -227,6 +234,26 @@ function currentComparisonOptions() {
   };
 }
 
+function currentBoundaryOptions() {
+  return {
+    ...currentExtractionOptions(),
+    localCalibration: state.localCalibration,
+  };
+}
+
+function updateLocalCalibrationStatus() {
+  if (!state.localCalibration) {
+    els.localCalibrationStatus.textContent = "局所補正: 未作成";
+    return;
+  }
+  const measured = (state.localCalibration.measured ?? []).reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  const values = state.localCalibration.values ?? [];
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values) : 0;
+  els.localCalibrationStatus.textContent =
+    `局所補正: ${measured}/${state.localCalibration.cols * state.localCalibration.rows}領域をお手本で校正 / 感度補正 ${min.toFixed(1)}～+${Math.max(0, max).toFixed(1)}`;
+}
+
 function currentSettings() {
   return {
     extraction: currentExtractionOptions(),
@@ -272,6 +299,29 @@ function invalidateFeatures() {
   state.featuresKey = null;
 }
 
+function clearLocalCalibration(silent = false) {
+  state.localCalibration = null;
+  updateLocalCalibrationStatus();
+  updateControls();
+  if (!silent) {
+    state.analysisMask = null;
+    renderNormalOverlay();
+    updateMetrics();
+    setStatus("局所補正を解除しました。再度粒界抽出してください。");
+  }
+}
+
+function extractionSettingChanged() {
+  clearLocalCalibration(true);
+  scheduleAutosave();
+}
+
+function featureSettingChanged() {
+  invalidateFeatures();
+  clearLocalCalibration(true);
+  scheduleAutosave();
+}
+
 function updateMetrics(metrics = null) {
   state.lastMetrics = metrics;
   if (!metrics) {
@@ -303,7 +353,8 @@ function renderHistory() {
     const li = document.createElement("li");
     const date = new Date(item.timestamp);
     const f1 = item.metrics?.f1 == null ? "-" : `${(item.metrics.f1 * 100).toFixed(1)}%`;
-    li.innerHTML = `<strong>${item.kind === "auto-tune" ? "自動調整" : "比較"}</strong><span>F1 ${f1}</span><small>${date.toLocaleString("ja-JP")}</small>`;
+    const label = item.kind === "auto-tune" ? "全体調整" : item.kind === "local-tune" ? "局所調整" : "比較";
+    li.innerHTML = `<strong>${label}</strong><span>F1 ${f1}</span><small>${date.toLocaleString("ja-JP")}</small>`;
     els.historyList.appendChild(li);
   }
 }
@@ -319,6 +370,13 @@ function addHistory(kind, metrics, note = "") {
     algorithmVersion: ALGORITHM_VERSION,
     parameters: currentExtractionOptions(),
     local: currentFeatureOptions(),
+    localCalibration: state.localCalibration ? {
+      cols: state.localCalibration.cols,
+      rows: state.localCalibration.rows,
+      baseSensitivity: state.localCalibration.baseSensitivity,
+      values: state.localCalibration.values,
+      measured: state.localCalibration.measured,
+    } : null,
     metrics: {
       precision: metrics.precision,
       recall: metrics.recall,
@@ -406,6 +464,7 @@ function buildProject() {
     settings: currentSettings(),
     referenceMask: state.referenceMask,
     referenceCenterline: state.referenceCenterline,
+    localCalibration: state.localCalibration,
     history: state.history,
   });
 }
@@ -438,7 +497,9 @@ async function restoreProject(project, source = "プロジェクト") {
   state.referenceCenterline = masks.referenceCenterline;
   state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
   state.history = Array.isArray(project.history) ? project.history : [];
+  state.localCalibration = project.localCalibration ?? null;
   applySettings(project.settings ?? {});
+  updateLocalCalibrationStatus();
   renderReferenceCanvas();
   renderHistory();
   state.analysisMask = null;
@@ -486,6 +547,8 @@ async function loadBmp(file) {
   state.referenceMask = null;
   state.referenceCenterline = null;
   state.sourceFingerprint = null;
+  state.localCalibration = null;
+  updateLocalCalibrationStatus();
   state.history = [];
   renderHistory();
 
@@ -573,7 +636,7 @@ async function analyzePreview() {
     const features = await ensureFeatures();
     setStatus("粒界候補を解析中...", 72);
     state.analysisMask = await buildBoundaryMask(features, {
-      ...currentExtractionOptions(),
+      ...currentBoundaryOptions(),
       onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, 72 + ratio * 27),
     });
     renderNormalOverlay();
@@ -623,6 +686,8 @@ async function autoTune() {
     setRangeValue(els.ridgeWeight, result.parameters.ridgeWeight);
     setRangeValue(els.colorWeight, result.parameters.colorWeight);
     setRangeValue(els.minComponent, result.parameters.minComponent);
+    state.localCalibration = null;
+    updateLocalCalibrationStatus();
     state.analysisMask = result.mask;
 
     const comparison = renderComparisonOverlay(
@@ -641,6 +706,57 @@ async function autoTune() {
   } catch (error) {
     console.error(error);
     setStatus(`自動調整エラー: ${error.message}`, 0);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function localTune() {
+  if (!state.preview || !hasReference()) return;
+  setBusy(true);
+  try {
+    const features = await ensureFeatures();
+    const extraction = currentExtractionOptions();
+    setStatus("お手本を使って範囲ごとの感度を調整中...", 1);
+    const calibration = await tuneLocalSensitivity(features, state.referenceCenterline, {
+      ...currentComparisonOptions(),
+      ...extraction,
+      cols: 4,
+      rows: 4,
+      maxDelta: 18,
+      minReferencePixels: 20,
+      onProgress: ratio => setStatus(`局所調整中... ${Math.round(ratio * 100)}%`, ratio * 62),
+    });
+    state.localCalibration = calibration;
+    updateLocalCalibrationStatus();
+
+    state.analysisMask = await buildBoundaryMask(features, {
+      ...extraction,
+      localCalibration: calibration,
+      onProgress: ratio => setStatus(`局所補正で再抽出中... ${Math.round(ratio * 100)}%`, 62 + ratio * 36),
+    });
+
+    const comparison = renderComparisonOverlay(
+      state.analysisMask,
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      currentComparisonOptions(),
+    );
+    els.overlayCanvas.getContext("2d").putImageData(comparison.imageData, 0, 0);
+    els.referenceCanvas.style.visibility = "hidden";
+    state.comparisonMode = true;
+    updateMetrics(comparison.metrics);
+    addHistory("local-tune", comparison.metrics, "4x4 reference-guided sensitivity calibration");
+    const measured = calibration.measured.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+    setStatus(
+      `局所調整完了: F1 ${(comparison.metrics.f1 * 100).toFixed(1)}% / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
+      100,
+    );
+    scheduleAutosave();
+  } catch (error) {
+    console.error(error);
+    setStatus(`局所調整エラー: ${error.message}`, 0);
   } finally {
     setBusy(false);
   }
@@ -781,6 +897,8 @@ els.clearOverlayButton.addEventListener("click", clearOverlay);
 els.analyzeButton.addEventListener("click", analyzePreview);
 els.compareButton.addEventListener("click", () => compareCurrent(true));
 els.autoTuneButton.addEventListener("click", autoTune);
+els.localTuneButton.addEventListener("click", localTune);
+els.clearLocalCalibrationButton.addEventListener("click", () => clearLocalCalibration(false));
 els.clearReferenceButton.addEventListener("click", clearReference);
 els.showNormalButton.addEventListener("click", showNormalView);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
@@ -789,18 +907,18 @@ els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
 
-bindRange(els.sensitivity, $("sensitivityValue"), scheduleAutosave);
-bindRange(els.darkWeight, $("darkWeightValue"), scheduleAutosave);
-bindRange(els.ridgeWeight, $("ridgeWeightValue"), scheduleAutosave);
-bindRange(els.colorWeight, $("colorWeightValue"), scheduleAutosave);
-bindRange(els.minComponent, $("minComponentValue"), scheduleAutosave);
+bindRange(els.sensitivity, $("sensitivityValue"), extractionSettingChanged);
+bindRange(els.darkWeight, $("darkWeightValue"), extractionSettingChanged);
+bindRange(els.ridgeWeight, $("ridgeWeightValue"), extractionSettingChanged);
+bindRange(els.colorWeight, $("colorWeightValue"), extractionSettingChanged);
+bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), () => { rerenderOverlayOpacity(); scheduleAutosave(); });
-bindRange(els.localStrength, $("localStrengthValue"), () => { invalidateFeatures(); scheduleAutosave(); });
-bindRange(els.localWindow, $("localWindowValue"), () => { invalidateFeatures(); scheduleAutosave(); });
+bindRange(els.localStrength, $("localStrengthValue"), featureSettingChanged);
+bindRange(els.localWindow, $("localWindowValue"), featureSettingChanged);
 bindRange(els.referenceBrush, $("referenceBrushValue"), scheduleAutosave);
 bindRange(els.tolerance, $("toleranceValue"), scheduleAutosave);
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
-els.localEnabled.addEventListener("change", () => { invalidateFeatures(); scheduleAutosave(); });
+els.localEnabled.addEventListener("change", featureSettingChanged);
 els.autosaveEnabled.addEventListener("change", () => { if (els.autosaveEnabled.checked) scheduleAutosave(); else els.projectStatus.textContent = "自動保存OFF"; });
 
 for (const type of ["dragenter", "dragover"]) {
@@ -859,4 +977,5 @@ window.addEventListener("resize", () => { if (state.preview) fitToViewer(); });
 
 renderHistory();
 els.projectStatus.textContent = `v${APP_VERSION} / ${ALGORITHM_VERSION}`;
+updateLocalCalibrationStatus();
 updateControls();
