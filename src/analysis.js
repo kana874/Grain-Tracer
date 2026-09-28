@@ -206,14 +206,24 @@ function applyMinComponent(mask, width, height, minSize) {
   return out;
 }
 
+function applyExclusionInPlace(mask, exclusionMask) {
+  if (!exclusionMask) return mask;
+  for (let p = 0; p < mask.length; p += 1) {
+    if (exclusionMask[p]) mask[p] = 0;
+  }
+  return mask;
+}
+
 export async function buildBoundaryMask(features, options = {}) {
   const onProgress = options.onProgress ?? (() => {});
   onProgress(0.12);
   await new Promise(resolve => setTimeout(resolve, 0));
   const raw = buildRawBoundaryMask(features, options);
+  applyExclusionInPlace(raw, options.exclusionMask);
   onProgress(0.5);
   await new Promise(resolve => setTimeout(resolve, 0));
   const result = applyMinComponent(raw, features.width, features.height, options.minComponent ?? 24);
+  applyExclusionInPlace(result, options.exclusionMask);
   onProgress(1);
   return result;
 }
@@ -246,14 +256,23 @@ function weightProfiles(current) {
   });
 }
 
-function buildFastEvaluationHelpers(referenceCenterline, width, height, tolerance, reviewRadius) {
+function buildFastEvaluationHelpers(
+  referenceCenterline,
+  width,
+  height,
+  tolerance,
+  reviewRadius,
+  negativeMask = null,
+  exclusionMask = null,
+) {
   const referenceTolerance = dilateBinaryMask(referenceCenterline, width, height, tolerance);
   const reviewMask = dilateBinaryMask(referenceCenterline, width, height, reviewRadius);
   const referenceIndices = [];
   const reviewIndices = [];
   for (let p = 0; p < referenceCenterline.length; p += 1) {
+    if (exclusionMask?.[p]) continue;
     if (referenceCenterline[p]) referenceIndices.push(p);
-    if (reviewMask[p]) reviewIndices.push(p);
+    if (reviewMask[p] || (negativeMask?.[p] && !referenceTolerance[p])) reviewIndices.push(p);
   }
   return { referenceTolerance, referenceIndices, reviewIndices, tolerance };
 }
@@ -330,6 +349,8 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     features.height,
     tolerance,
     reviewRadius,
+    options.negativeMask ?? null,
+    options.exclusionMask ?? null,
   );
   if (helpers.referenceIndices.length === 0) throw new Error("お手本線がありません。");
 
@@ -371,6 +392,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   // Stage 2: build morphology/component data once for the best raw configuration,
   // then only tune the minimum connected component size.
   const raw = buildRawBoundaryMask(features, bestRaw);
+  applyExclusionInPlace(raw, options.exclusionMask);
   const supported = neighborSupport(raw, features.width, features.height);
   const sizes = computeComponentSizeMap(supported, features.width, features.height);
   onProgress(0.78);
@@ -388,9 +410,12 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     for (let p = 0; p < mask.length; p += 1) {
       if (supported[p] && sizes[p] >= minComponent) mask[p] = 1;
     }
+    applyExclusionInPlace(mask, options.exclusionMask);
     const metrics = compareBoundaryMasks(mask, referenceCenterline, features.width, features.height, {
       tolerance,
       reviewRadius,
+      negativeMask: options.negativeMask ?? null,
+      exclusionMask: options.exclusionMask ?? null,
     });
     const candidate = {
       sensitivity: bestRaw.sensitivity,
@@ -414,6 +439,8 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   const metrics = computeRegionalMetrics(bestMask, referenceCenterline, features.width, features.height, {
     tolerance,
     reviewRadius,
+    negativeMask: options.negativeMask ?? null,
+    exclusionMask: options.exclusionMask ?? null,
     cols: 4,
     rows: 4,
   });
@@ -458,16 +485,21 @@ export function renderComparisonOverlay(prediction, referenceCenterline, width, 
   for (let p = 0; p < prediction.length; p += 1) {
     const i = p * 4;
 
-    // Show the exact acceptance band used by Precision evaluation.
-    // The visible yellow band therefore has the same width as the judgement area.
+    if (metrics.exclusionMask?.[p]) continue;
+
     if (metrics.referenceTolerance[p]) {
       rgba[i] = 255;
       rgba[i + 1] = 216;
       rgba[i + 2] = 74;
       rgba[i + 3] = Math.round(alpha * 0.24);
+    } else if (metrics.negativeMask?.[p]) {
+      rgba[i] = 190;
+      rgba[i + 1] = 110;
+      rgba[i + 2] = 255;
+      rgba[i + 3] = Math.round(alpha * 0.20);
     }
 
-    if (!metrics.reviewMask[p]) {
+    if (!metrics.evaluationMask[p]) {
       if (prediction[p]) {
         rgba[i] = 35;
         rgba[i + 1] = 245;
