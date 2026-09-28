@@ -9,17 +9,24 @@ function thresholdFromSensitivity(sensitivity) {
 }
 
 function normalizedWeights(options) {
-  const dark = options.darkWeight ?? 20;
-  const ridge = options.ridgeWeight ?? 55;
+  const dark = options.darkWeight ?? 15;
+  const ridge = options.ridgeWeight ?? 40;
   const color = options.colorWeight ?? 25;
-  const total = Math.max(1, dark + ridge + color);
-  return { dark: dark / total, ridge: ridge / total, color: color / total };
+  const dendrite = options.dendriteWeight ?? 20;
+  const total = Math.max(1, dark + ridge + color + dendrite);
+  return {
+    dark: dark / total,
+    ridge: ridge / total,
+    color: color / total,
+    dendrite: dendrite / total,
+  };
 }
 
 function featureScore(features, p, weights) {
   return (features.dark[p] / 255) * weights.dark
     + (features.ridge[p] / 255) * weights.ridge
-    + (features.color[p] / 255) * weights.color;
+    + (features.color[p] / 255) * weights.color
+    + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite;
 }
 
 function buildRegionBounds(width, height, cols, rows, rx, ry) {
