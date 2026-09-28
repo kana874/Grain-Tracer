@@ -118,10 +118,13 @@
 
         <div class="button-grid">
           <button id="compareButton" type="button" disabled>比較</button>
-          <button id="autoTuneButton" class="primary" type="button" disabled>自動調整</button>
+          <button id="autoTuneButton" class="primary" type="button" disabled>全体自動調整</button>
+          <button id="localTuneButton" class="primary" type="button" disabled>局所自動調整</button>
+          <button id="clearLocalCalibrationButton" type="button" disabled>局所補正解除</button>
           <button id="clearReferenceButton" type="button" disabled>お手本全消去</button>
           <button id="showNormalButton" type="button" disabled>通常表示</button>
         </div>
+        <p id="localCalibrationStatus" class="help metric-detail">局所補正: 未作成</p>
 
         <div class="legend">
           <span><i class="swatch tp"></i>一致</span>
@@ -150,7 +153,7 @@
           <li class="done">中心線ベース評価</li>
           <li class="done">評価履歴の保存</li>
           <li class="done">JSON / IndexedDBプロジェクト保存</li>
-          <li>お手本による局所パラメータ最適化</li>
+          <li class="done">お手本による局所感度最適化</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
         </ul>
