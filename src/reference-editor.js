@@ -15,6 +15,7 @@ export function createReferenceEditTracker() {
   return {
     before: new Map(),
     bounds: null,
+    segmentBounds: null,
   };
 }
 
@@ -28,6 +29,7 @@ function setCenterlinePixel(mask, width, height, x, y, value, tracker) {
   if (!tracker.before.has(index)) tracker.before.set(index, previous);
   mask[index] = value;
   tracker.bounds = includePoint(tracker.bounds, sx, sy);
+  tracker.segmentBounds = includePoint(tracker.segmentBounds, sx, sy);
   return true;
 }
 
@@ -47,10 +49,11 @@ function eraseDisk(mask, width, height, cx, cy, radius, tracker) {
       if (setCenterlinePixel(mask, width, height, x, y, 0, tracker)) changed = true;
     }
   }
-  return changed;
+  return changed && tracker.segmentBounds ? { ...tracker.segmentBounds } : null;
 }
 
 export function paintReferenceCenterlineSegment(mask, width, height, from, to, options, tracker) {
+  tracker.segmentBounds = null;
   const erase = Boolean(options?.erase);
   const eraseRadius = Math.max(1, Number(options?.eraseRadius ?? 1));
   const dx = to.x - from.x;
