@@ -2,6 +2,7 @@ import { buildLuminance, computeMultiScaleDarkRidge } from "./ridge.js";
 import { computeDirectionalColorDifference } from "./color.js";
 import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./local-adaptive.js";
 import { compareBoundaryMasks, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
+import { interpolateSensitivityDelta } from "./local-tune.js";
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -78,14 +79,38 @@ export function buildRawBoundaryMask(features, options = {}) {
     options.ridgeWeight ?? 55,
     options.colorWeight ?? 25,
   );
-  const threshold = thresholdFromSensitivity(sensitivity);
+  const calibration = options.localCalibration ?? null;
   const mask = new Uint8Array(features.width * features.height);
 
-  for (let p = 0; p < mask.length; p += 1) {
-    const score = (features.dark[p] / 255) * weights.dark
-      + (features.ridge[p] / 255) * weights.ridge
-      + (features.color[p] / 255) * weights.color;
-    if (score >= threshold) mask[p] = 1;
+  if (!calibration?.values?.length) {
+    const threshold = thresholdFromSensitivity(sensitivity);
+    for (let p = 0; p < mask.length; p += 1) {
+      const score = (features.dark[p] / 255) * weights.dark
+        + (features.ridge[p] / 255) * weights.ridge
+        + (features.color[p] / 255) * weights.color;
+      if (score >= threshold) mask[p] = 1;
+    }
+    return mask;
+  }
+
+  for (let y = 0; y < features.height; y += 1) {
+    const base = y * features.width;
+    for (let x = 0; x < features.width; x += 1) {
+      const p = base + x;
+      const delta = interpolateSensitivityDelta(
+        calibration,
+        x,
+        y,
+        features.width,
+        features.height,
+      );
+      const localSensitivity = Math.max(1, Math.min(100, sensitivity + delta));
+      const threshold = thresholdFromSensitivity(localSensitivity);
+      const score = (features.dark[p] / 255) * weights.dark
+        + (features.ridge[p] / 255) * weights.ridge
+        + (features.color[p] / 255) * weights.color;
+      if (score >= threshold) mask[p] = 1;
+    }
   }
   return mask;
 }
