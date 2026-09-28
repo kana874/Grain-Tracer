@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GrainTracer</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>GrainTracer</h1>
+      <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
+    </div>
+    <div class="version">v0.1.0-alpha</div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel left-panel">
+      <section>
+        <h2>画像</h2>
+        <label class="file-button" for="fileInput">BMPを開く</label>
+        <input id="fileInput" type="file" accept=".bmp,image/bmp">
+        <div id="dropZone" class="drop-zone">ここにBMPをドロップ</div>
+      </section>
+
+      <section>
+        <h2>画像情報</h2>
+        <dl class="meta-grid">
+          <dt>ファイル</dt><dd id="metaName">-</dd>
+          <dt>サイズ</dt><dd id="metaFileSize">-</dd>
+          <dt>幅</dt><dd id="metaWidth">-</dd>
+          <dt>高さ</dt><dd id="metaHeight">-</dd>
+          <dt>bit</dt><dd id="metaBitDepth">-</dd>
+          <dt>圧縮</dt><dd id="metaCompression">-</dd>
+          <dt>向き</dt><dd id="metaOrientation">-</dd>
+        </dl>
+      </section>
+    </aside>
+
+    <section class="viewer-shell">
+      <div class="toolbar">
+        <button id="fitButton" type="button" disabled>全体表示</button>
+        <button id="actualButton" type="button" disabled>100%</button>
+        <button id="clearOverlayButton" type="button" disabled>粒界表示を消去</button>
+        <span id="zoomLabel" class="zoom-label">-</span>
+      </div>
+
+      <div id="viewer" class="viewer" aria-label="画像ビューア">
+        <div id="canvasStage" class="canvas-stage">
+          <canvas id="imageCanvas"></canvas>
+          <canvas id="overlayCanvas"></canvas>
+        </div>
+        <div id="emptyState" class="empty-state">
+          <strong>未読込</strong>
+          <span>大容量BMPを直接読み込めます</span>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div id="statusText">BMPを選択してください。</div>
+        <progress id="progressBar" max="100" value="0"></progress>
+      </div>
+    </section>
+
+    <aside class="panel right-panel">
+      <section>
+        <h2>粒界候補抽出</h2>
+        <p class="help">現在は低解像度プレビュー上で候補を抽出します。元画像は変更しません。</p>
+
+        <label class="control-row">
+          <span>境界感度</span>
+          <output id="sensitivityValue">58</output>
+          <input id="sensitivity" type="range" min="1" max="100" value="58">
+        </label>
+
+        <label class="control-row">
+          <span>暗線重視</span>
+          <output id="darkWeightValue">65</output>
+          <input id="darkWeight" type="range" min="0" max="100" value="65">
+        </label>
+
+        <label class="control-row">
+          <span>色差重視</span>
+          <output id="colorWeightValue">35</output>
+          <input id="colorWeight" type="range" min="0" max="100" value="35">
+        </label>
+
+        <label class="control-row">
+          <span>最小連結サイズ</span>
+          <output id="minComponentValue">24</output>
+          <input id="minComponent" type="range" min="1" max="300" value="24">
+        </label>
+
+        <label class="control-row">
+          <span>線の不透明度</span>
+          <output id="overlayOpacityValue">90</output>
+          <input id="overlayOpacity" type="range" min="10" max="100" value="90">
+        </label>
+
+        <button id="analyzeButton" class="primary" type="button" disabled>プレビュー粒界抽出</button>
+      </section>
+
+      <section>
+        <h2>v0.1 状態</h2>
+        <ul class="check-list">
+          <li class="done">巨大BMPの直接読込</li>
+          <li class="done">全展開しない縮小プレビュー</li>
+          <li class="done">粒界候補オーバーレイ</li>
+          <li>フル解像度内部タイル解析</li>
+          <li>Smart Trace</li>
+          <li>手動修正</li>
+          <li>PNG / Mask / SVG出力</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
