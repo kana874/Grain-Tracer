@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.3.6.1-alpha - 2026-09-28
+
+### Added
+- Closed-region Negative Fill tool. After the user closes a grain with Positive reference lines, clicking inside the grain flood-fills the enclosed interior as explicit Negative training data.
+- Safety margin around the Positive boundary so filled Negative pixels do not touch the labelled grain boundary.
+- Open-contour detection: fills that reach the preview edge are rejected instead of turning a large unlabelled area into Negative.
+- Large-region safety limit and duplicate-fill rejection.
+- Closed-fill seed persistence in project JSON / IndexedDB autosave; fill masks are regenerated from the current Positive reference after reload.
+- Undo / Redo and clear-all support for closed-region Negative Fill.
+- Region-balanced Macro Negative Leakage over the 4×4 evaluation grid.
+- Negative-label spatial-distribution diagnostics, including regions with Negative labels and maximum regional concentration.
+
+### Changed
+- Auto Tune v2 now uses region-balanced Negative Leakage when no complete-evaluation ROI exists, reducing bias from one densely annotated image area.
+- Negative holdout splitting now operates on the complete Negative mask, so filled grain interiors participate in tuning/validation rather than only hand-drawn Negative centerlines.
+- Positive reference remains dominant: closed-fill Negative pixels are removed near the Positive boundary and from exclusion rectangles.
+- App version advanced to `0.3.6.1-alpha`; extraction algorithm identifier remains `boundary-v4-dendrite-negref`.
+
+### Validation
+- JavaScript syntax checks passed for all modified modules and all referenced DOM IDs exist.
+- Synthetic closed-square test successfully filled only the safe interior, while a contour with a gap was rejected as open.
+- Duplicate fill detection returned zero new pixels for a previously filled grain.
+- Synthetic regional test confirmed pixel-weighted leakage and 4×4 region-balanced leakage are calculated independently.
+
 ## v0.3.6-alpha - 2026-09-28
 
 ### Added
