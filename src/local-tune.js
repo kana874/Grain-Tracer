@@ -167,7 +167,6 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
   const cols = options.cols ?? 4;
   const rows = options.rows ?? 4;
   const tolerance = options.tolerance ?? 4;
-  const reviewRadius = Math.max(tolerance + 1, options.reviewRadius ?? 18);
   const baseSensitivity = options.sensitivity ?? 62;
   const minReferencePixels = options.minReferencePixels ?? 20;
   const maxDelta = options.maxDelta ?? 18;
