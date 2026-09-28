@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.1.0-alpha</div>
+    <div class="version">v0.2.0-alpha</div>
   </header>
 
   <main class="layout">
@@ -36,10 +36,24 @@
           <dt>向き</dt><dd id="metaOrientation">-</dd>
         </dl>
       </section>
+
+      <section>
+        <h2>お手本の使い方</h2>
+        <ol class="guide-list">
+          <li>「お手本線」で正しい粒界を数本なぞる</li>
+          <li>「比較」で自動判定との差を見る</li>
+          <li>「自動調整」でF1が高い設定を探索する</li>
+        </ol>
+        <p class="help">比較は、お手本線の周囲だけを評価します。画像全体を正解として描く必要はありません。</p>
+      </section>
     </aside>
 
     <section class="viewer-shell">
       <div class="toolbar">
+        <button id="panToolButton" class="tool-button active" type="button" disabled>移動</button>
+        <button id="referenceToolButton" class="tool-button" type="button" disabled>お手本線</button>
+        <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>お手本消去</button>
+        <span class="toolbar-separator"></span>
         <button id="fitButton" type="button" disabled>全体表示</button>
         <button id="actualButton" type="button" disabled>100%</button>
         <button id="clearOverlayButton" type="button" disabled>粒界表示を消去</button>
@@ -50,6 +64,7 @@
         <div id="canvasStage" class="canvas-stage">
           <canvas id="imageCanvas"></canvas>
           <canvas id="overlayCanvas"></canvas>
+          <canvas id="referenceCanvas"></canvas>
         </div>
         <div id="emptyState" class="empty-state">
           <strong>未読込</strong>
@@ -66,7 +81,7 @@
     <aside class="panel right-panel">
       <section>
         <h2>粒界候補抽出</h2>
-        <p class="help">現在は低解像度プレビュー上で候補を抽出します。元画像は変更しません。</p>
+        <p class="help">低解像度プレビュー上で候補を抽出します。元画像は変更しません。</p>
 
         <label class="control-row">
           <span>境界感度</span>
@@ -102,14 +117,58 @@
       </section>
 
       <section>
-        <h2>v0.1 状態</h2>
+        <h2>お手本比較・自動調整</h2>
+
+        <label class="control-row">
+          <span>お手本線幅</span>
+          <output id="referenceBrushValue">5</output>
+          <input id="referenceBrush" type="range" min="2" max="16" value="5">
+        </label>
+
+        <label class="control-row">
+          <span>一致許容幅</span>
+          <output id="toleranceValue">4</output>
+          <input id="tolerance" type="range" min="1" max="10" value="4">
+        </label>
+
+        <label class="control-row">
+          <span>比較範囲</span>
+          <output id="reviewRadiusValue">18</output>
+          <input id="reviewRadius" type="range" min="6" max="40" value="18">
+        </label>
+
+        <div class="button-grid">
+          <button id="compareButton" type="button" disabled>比較</button>
+          <button id="autoTuneButton" class="primary" type="button" disabled>自動調整</button>
+          <button id="clearReferenceButton" type="button" disabled>お手本全消去</button>
+          <button id="showNormalButton" type="button" disabled>通常表示</button>
+        </div>
+
+        <div class="legend">
+          <span><i class="swatch tp"></i>一致</span>
+          <span><i class="swatch fp"></i>誤検出</span>
+          <span><i class="swatch fn"></i>見逃し</span>
+        </div>
+
+        <div class="metrics-grid">
+          <div><span>Precision</span><strong id="metricPrecision">-</strong></div>
+          <div><span>Recall</span><strong id="metricRecall">-</strong></div>
+          <div><span>F1</span><strong id="metricF1">-</strong></div>
+        </div>
+        <p id="metricDetail" class="help metric-detail">お手本線を描くと比較できます。</p>
+      </section>
+
+      <section>
+        <h2>v0.2 状態</h2>
         <ul class="check-list">
           <li class="done">巨大BMPの直接読込</li>
           <li class="done">全展開しない縮小プレビュー</li>
           <li class="done">粒界候補オーバーレイ</li>
+          <li class="done">お手本粒界の描画・消去</li>
+          <li class="done">Precision / Recall / F1比較</li>
+          <li class="done">CPU自動パラメータ調整</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
-          <li>手動修正</li>
           <li>PNG / Mask / SVG出力</li>
         </ul>
       </section>
