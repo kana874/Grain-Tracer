@@ -284,6 +284,14 @@ export function buildDiagnosticReport(input) {
       scale: preview.scale,
     },
     settings,
+    algorithmInternals: {
+      ridgeScales: [1, 2, 4],
+      colorSampleDistances: [2, 4, 6],
+      dendriteTensorRadius: 7,
+      dendriteSampleDistances: [5, 9, 13],
+      neighborSupportMinimum: 2,
+      localCalibrationGrid: "4x4",
+    },
     localCalibration: localCalibration ?? null,
     evaluation: {
       precision: metrics.precision,
