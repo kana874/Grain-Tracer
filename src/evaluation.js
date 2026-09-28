@@ -329,7 +329,23 @@ export function computeRegionalMetrics(prediction, referenceCenterline, width, h
       });
     }
   }
-  return { ...global, regions, cols, rows };
+  const negativeRegions = regions.filter(region => region.negativePixels > 0);
+  const macroNegativeLeakage = negativeRegions.length
+    ? negativeRegions.reduce((sum, region) => sum + region.negativeLeakage, 0) / negativeRegions.length
+    : 0;
+  const maxNegativeRegionFraction = global.negativePixels > 0 && negativeRegions.length
+    ? Math.max(...negativeRegions.map(region => region.negativePixels / global.negativePixels))
+    : 0;
+
+  return {
+    ...global,
+    macroNegativeLeakage,
+    negativeRegionCount: negativeRegions.length,
+    maxNegativeRegionFraction,
+    regions,
+    cols,
+    rows,
+  };
 }
 
 export function computeMultiToleranceMetrics(prediction, referenceCenterline, width, height, options = {}) {
