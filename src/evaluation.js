@@ -113,3 +113,108 @@ export function computeRegionalMetrics(prediction, referenceCenterline, width, h
   }
   return { ...global, regions, cols, rows };
 }
+
+
+export function splitReferenceCenterline(referenceCenterline, width, height, options = {}) {
+  const validationFraction = Math.max(0.05, Math.min(0.45, options.validationFraction ?? 0.20));
+  const minComponentPixels = Math.max(1, options.minComponentPixels ?? 8);
+  const visited = new Uint8Array(referenceCenterline.length);
+  const queue = new Int32Array(referenceCenterline.length);
+  const components = [];
+
+  for (let start = 0; start < referenceCenterline.length; start += 1) {
+    if (!referenceCenterline[start] || visited[start]) continue;
+    let head = 0;
+    let tail = 0;
+    let sx = 0;
+    let sy = 0;
+    queue[tail++] = start;
+    visited[start] = 1;
+
+    while (head < tail) {
+      const p = queue[head++];
+      const x = p % width;
+      const y = Math.floor(p / width);
+      sx += x;
+      sy += y;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          const np = ny * width + nx;
+          if (referenceCenterline[np] && !visited[np]) {
+            visited[np] = 1;
+            queue[tail++] = np;
+          }
+        }
+      }
+    }
+
+    if (tail >= minComponentPixels) {
+      const pixels = Array.from(queue.subarray(0, tail));
+      const cx = sx / tail;
+      const cy = sy / tail;
+      // Stable spatial hash so the same reference always produces the same split.
+      const hash = (
+        (Math.round(cx) * 73856093)
+        ^ (Math.round(cy) * 19349663)
+        ^ (tail * 83492791)
+      ) >>> 0;
+      components.push({ pixels, size: tail, cx, cy, hash });
+    }
+  }
+
+  const tuneMask = new Uint8Array(referenceCenterline.length);
+  const validationMask = new Uint8Array(referenceCenterline.length);
+  const totalPixels = components.reduce((sum, component) => sum + component.size, 0);
+
+  if (components.length < 2 || totalPixels === 0) {
+    tuneMask.set(referenceCenterline);
+    return {
+      tuneMask,
+      validationMask,
+      componentCount: components.length,
+      tuningPixels: referenceCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0),
+      validationPixels: 0,
+      validationFraction: 0,
+      mode: "insufficient-components",
+    };
+  }
+
+  const target = Math.max(1, Math.round(totalPixels * validationFraction));
+  const ordered = [...components].sort((a, b) => a.hash - b.hash);
+  let validationPixels = 0;
+  const validationSet = new Set();
+
+  for (const component of ordered) {
+    if (validationPixels >= target && validationSet.size > 0) break;
+    if (validationSet.size >= components.length - 1) break;
+    validationSet.add(component);
+    validationPixels += component.size;
+  }
+
+  for (const component of components) {
+    const destination = validationSet.has(component) ? validationMask : tuneMask;
+    for (const p of component.pixels) destination[p] = 1;
+  }
+
+  // Preserve tiny discarded reference fragments as tuning data rather than losing them.
+  for (let p = 0; p < referenceCenterline.length; p += 1) {
+    if (referenceCenterline[p] && !tuneMask[p] && !validationMask[p]) tuneMask[p] = 1;
+  }
+
+  const tuningPixels = tuneMask.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  validationPixels = validationMask.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  return {
+    tuneMask,
+    validationMask,
+    componentCount: components.length,
+    tuningPixels,
+    validationPixels,
+    validationFraction: validationPixels / Math.max(1, tuningPixels + validationPixels),
+    mode: "connected-component-holdout",
+  };
+}
