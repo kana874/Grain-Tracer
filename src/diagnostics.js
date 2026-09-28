@@ -50,23 +50,35 @@ function featureStatistics(features, selector) {
 }
 
 function buildErrorMasks(prediction, referenceCenterline, width, height, options) {
-  const tolerance = options.tolerance ?? 2;
-  const reviewRadius = Math.max(tolerance + 1, options.reviewRadius ?? 18);
-  const referenceTolerance = dilateBinaryMask(referenceCenterline, width, height, tolerance);
-  const predictionTolerance = dilateBinaryMask(prediction, width, height, tolerance);
-  const reviewMask = dilateBinaryMask(referenceCenterline, width, height, reviewRadius);
+  const metrics = computeRegionalMetrics(
+    prediction,
+    referenceCenterline,
+    width,
+    height,
+    {
+      ...options,
+      cols: 4,
+      rows: 4,
+    },
+  );
   const tp = new Uint8Array(prediction.length);
   const fp = new Uint8Array(prediction.length);
   const fn = new Uint8Array(prediction.length);
+  const negativeViolation = new Uint8Array(prediction.length);
 
   for (let p = 0; p < prediction.length; p += 1) {
-    if (prediction[p] && reviewMask[p]) {
-      if (referenceTolerance[p]) tp[p] = 1;
-      else fp[p] = 1;
+    if (metrics.exclusionMask?.[p]) continue;
+    if (prediction[p] && metrics.evaluationMask[p]) {
+      if (metrics.referenceTolerance[p]) {
+        tp[p] = 1;
+      } else {
+        fp[p] = 1;
+        if (metrics.negativeMask?.[p]) negativeViolation[p] = 1;
+      }
     }
-    if (referenceCenterline[p] && !predictionTolerance[p]) fn[p] = 1;
+    if (referenceCenterline[p] && !metrics.predictionTolerance[p]) fn[p] = 1;
   }
-  return { tp, fp, fn, referenceTolerance, predictionTolerance, reviewMask };
+  return { tp, fp, fn, negativeViolation, metrics };
 }
 
 function hotspotComponents(mask, width, height, features, type, limit = 16) {
@@ -180,6 +192,10 @@ function compactHistory(history) {
       falsePositive: item.metrics.falsePositive,
       matchedReference: item.metrics.matchedReference,
       falseNegative: item.metrics.falseNegative,
+      negativePrediction: item.metrics.negativePrediction ?? 0,
+      negativePixels: item.metrics.negativePixels ?? 0,
+      negativeHitRate: item.metrics.negativeHitRate ?? 0,
+      excludedPixels: item.metrics.excludedPixels ?? 0,
     } : null,
     note: item.note ?? "",
   }));
@@ -193,6 +209,10 @@ export function buildDiagnosticReport(input) {
     features,
     prediction,
     referenceCenterline,
+    negativeMask,
+    negativeCenterline,
+    exclusionMask,
+    exclusionRects,
     localCalibration,
     history,
     algorithmVersion,
@@ -208,6 +228,8 @@ export function buildDiagnosticReport(input) {
     {
       tolerance: comparison.tolerance,
       reviewRadius: comparison.reviewRadius,
+      negativeMask,
+      exclusionMask,
       cols: 4,
       rows: 4,
     },
@@ -217,7 +239,11 @@ export function buildDiagnosticReport(input) {
     referenceCenterline,
     preview.width,
     preview.height,
-    comparison,
+    {
+      ...comparison,
+      negativeMask,
+      exclusionMask,
+    },
   );
 
   const regionsWithReference = metrics.regions.filter(region => region.referencePixels > 0);
@@ -231,6 +257,20 @@ export function buildDiagnosticReport(input) {
     preview.height,
     { validationFraction: 0.20, minComponentPixels: 8 },
   );
+  const negativeSplit = negativeCenterline
+    ? splitReferenceCenterline(
+      negativeCenterline,
+      preview.width,
+      preview.height,
+      { validationFraction: 0.20, minComponentPixels: 8 },
+    )
+    : null;
+  const tuningNegativeMask = negativeSplit?.validationPixels > 0
+    ? dilateBinaryMask(negativeSplit.tuneMask, preview.width, preview.height, comparison.tolerance)
+    : negativeMask;
+  const validationNegativeMask = negativeSplit?.validationPixels > 0
+    ? dilateBinaryMask(negativeSplit.validationMask, preview.width, preview.height, comparison.tolerance)
+    : null;
   const tuningMetrics = computeRegionalMetrics(
     prediction,
     split.tuneMask,
@@ -239,6 +279,8 @@ export function buildDiagnosticReport(input) {
     {
       tolerance: comparison.tolerance,
       reviewRadius: comparison.reviewRadius,
+      negativeMask: tuningNegativeMask,
+      exclusionMask,
       cols: 4,
       rows: 4,
     },
@@ -252,6 +294,8 @@ export function buildDiagnosticReport(input) {
       {
         tolerance: comparison.tolerance,
         reviewRadius: comparison.reviewRadius,
+        negativeMask: validationNegativeMask,
+        exclusionMask,
         cols: 4,
         rows: 4,
       },
@@ -266,6 +310,10 @@ export function buildDiagnosticReport(input) {
     x1: region.x1,
     y1: region.y1,
     referencePixels: region.referencePixels,
+    negativePixels: region.negativePixels ?? 0,
+    negativePrediction: region.negativePrediction ?? 0,
+    negativeHitRate: region.negativeHitRate ?? 0,
+    excludedPixels: region.excludedPixels ?? 0,
     precision: region.precision,
     recall: region.recall,
     f1: region.f1,
@@ -273,7 +321,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v1",
+    schema: "graintracer-diagnostic-v2",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -302,15 +350,25 @@ export function buildDiagnosticReport(input) {
       falsePositive: metrics.falsePositive,
       matchedReference: metrics.matchedReference,
       falseNegative: metrics.falseNegative,
+      negativePrediction: metrics.negativePrediction,
+      negativePixels: metrics.negativePixels,
+      negativeHitRate: metrics.negativeHitRate,
+      excludedPixels: metrics.excludedPixels,
       tuning: {
         precision: tuningMetrics.precision,
         recall: tuningMetrics.recall,
         f1: tuningMetrics.f1,
+        negativePrediction: tuningMetrics.negativePrediction,
+        negativePixels: tuningMetrics.negativePixels,
+        negativeHitRate: tuningMetrics.negativeHitRate,
       },
       validation: validationMetrics ? {
         precision: validationMetrics.precision,
         recall: validationMetrics.recall,
         f1: validationMetrics.f1,
+        negativePrediction: validationMetrics.negativePrediction,
+        negativePixels: validationMetrics.negativePixels,
+        negativeHitRate: validationMetrics.negativeHitRate,
       } : null,
     },
     validationSplit: {
@@ -319,27 +377,55 @@ export function buildDiagnosticReport(input) {
       tuningPixels: split.tuningPixels,
       validationPixels: split.validationPixels,
       validationFraction: split.validationFraction,
+      negative: negativeSplit ? {
+        mode: negativeSplit.mode,
+        componentCount: negativeSplit.componentCount,
+        tuningPixels: negativeSplit.tuningPixels,
+        validationPixels: negativeSplit.validationPixels,
+        validationFraction: negativeSplit.validationFraction,
+      } : null,
     },
     referenceCoverage: {
       regionsWithReference: regionsWithReference.length,
       totalRegions: metrics.regions.length,
       referencePixels: metrics.referencePixels,
       reviewedPredictionPixels: metrics.reviewedPredictionPixels,
+      nonBoundaryPixels: metrics.negativePixels,
+      nonBoundaryPredictionPixels: metrics.negativePrediction,
+      exclusionRectCount: (exclusionRects ?? []).length,
+      excludedPixels: metrics.excludedPixels,
     },
     featureStatistics: {
       truePositive: featureStatistics(features, masks.tp),
       falsePositive: featureStatistics(features, masks.fp),
       falseNegative: featureStatistics(features, masks.fn),
+      nonBoundaryReference: negativeMask ? featureStatistics(features, negativeMask) : {},
+      nonBoundaryViolation: featureStatistics(features, masks.negativeViolation),
+    },
+    annotations: {
+      nonBoundaryCenterlinePixels: negativeCenterline
+        ? negativeCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0)
+        : 0,
+      nonBoundaryMaskPixels: negativeMask
+        ? negativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
+        : 0,
+      exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
+      excludedPixels: exclusionMask
+        ? exclusionMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
+        : 0,
     },
     regions,
     hotspots: [
       ...hotspotComponents(masks.fp, preview.width, preview.height, features, "falsePositive"),
       ...hotspotComponents(masks.fn, preview.width, preview.height, features, "falseNegative"),
+      ...hotspotComponents(masks.negativeViolation, preview.width, preview.height, features, "nonBoundaryViolation"),
     ].sort((a, b) => b.pixels - a.pixels).slice(0, 24),
     tuningTrace: compactHistory(history),
     notes: [
       "Feature values are normalized to 0..1.",
-      "False-positive statistics use predicted pixels inside the review area but outside the visible reference judgement band.",
+      "False-positive statistics use predicted pixels inside the positive review area or user-labelled non-boundary area, excluding exclusion regions.",
+      "Non-boundary reference pixels are explicit negative examples; predictions inside them count as false positives.",
+      "Exclusion rectangles are removed from both boundary output and evaluation.",
       "False-negative statistics use reference centerline pixels without a prediction inside the judgement radius.",
       "Dendrite statistics represent cross-boundary orientation/coherence change estimated from a local structure tensor.",
     ],
