@@ -847,6 +847,7 @@ function applyReferenceUndoRedo(direction) {
 
   target.push(item);
   recalcAnnotationCounts();
+  updateMetrics();
   updateControls();
   setStatus(`注釈を${direction === "redo" ? "やり直しました" : "元に戻しました"}。`);
   scheduleAutosave();
