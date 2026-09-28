@@ -1,5 +1,12 @@
 import { BmpError, parseBmpHeader, decodeBmpPreview } from "./bmp.js";
-import { extractBoundaryCandidates, renderBoundaryOverlay } from "./analysis.js";
+import {
+  autoTuneBoundary,
+  buildBoundaryMask,
+  compareBoundaryMasks,
+  computeBoundaryFeatures,
+  renderBoundaryOverlay,
+  renderComparisonOverlay,
+} from "./analysis.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -10,11 +17,19 @@ const els = {
   canvasStage: $("canvasStage"),
   imageCanvas: $("imageCanvas"),
   overlayCanvas: $("overlayCanvas"),
+  referenceCanvas: $("referenceCanvas"),
   emptyState: $("emptyState"),
+  panToolButton: $("panToolButton"),
+  referenceToolButton: $("referenceToolButton"),
+  eraseReferenceToolButton: $("eraseReferenceToolButton"),
   fitButton: $("fitButton"),
   actualButton: $("actualButton"),
   clearOverlayButton: $("clearOverlayButton"),
   analyzeButton: $("analyzeButton"),
+  compareButton: $("compareButton"),
+  autoTuneButton: $("autoTuneButton"),
+  clearReferenceButton: $("clearReferenceButton"),
+  showNormalButton: $("showNormalButton"),
   zoomLabel: $("zoomLabel"),
   statusText: $("statusText"),
   progressBar: $("progressBar"),
@@ -23,6 +38,13 @@ const els = {
   colorWeight: $("colorWeight"),
   minComponent: $("minComponent"),
   overlayOpacity: $("overlayOpacity"),
+  referenceBrush: $("referenceBrush"),
+  tolerance: $("tolerance"),
+  reviewRadius: $("reviewRadius"),
+  metricPrecision: $("metricPrecision"),
+  metricRecall: $("metricRecall"),
+  metricF1: $("metricF1"),
+  metricDetail: $("metricDetail"),
   metaName: $("metaName"),
   metaFileSize: $("metaFileSize"),
   metaWidth: $("metaWidth"),
@@ -36,12 +58,20 @@ const state = {
   file: null,
   header: null,
   preview: null,
+  features: null,
   scale: 1,
   tx: 0,
   ty: 0,
+  tool: "pan",
   dragging: false,
+  drawingReference: false,
   dragOrigin: null,
+  lastReferencePoint: null,
   analysisMask: null,
+  referenceMask: null,
+  referenceCount: 0,
+  comparisonMode: false,
+  busy: false,
   abortController: null,
 };
 
@@ -61,12 +91,33 @@ function setStatus(text, progress = null) {
   els.progressBar.value = progress == null ? 0 : Math.max(0, Math.min(100, progress));
 }
 
+function hasReference() {
+  return state.referenceCount > 0;
+}
+
+function updateControls() {
+  const hasPreview = Boolean(state.preview);
+  const hasAnalysis = Boolean(state.analysisMask);
+  const hasRef = hasReference();
+  const disabled = state.busy;
+
+  els.fileInput.disabled = disabled;
+  els.analyzeButton.disabled = disabled || !hasPreview;
+  els.fitButton.disabled = disabled || !hasPreview;
+  els.actualButton.disabled = disabled || !hasPreview;
+  els.clearOverlayButton.disabled = disabled || !hasAnalysis;
+  els.panToolButton.disabled = disabled || !hasPreview;
+  els.referenceToolButton.disabled = disabled || !hasPreview;
+  els.eraseReferenceToolButton.disabled = disabled || !hasPreview || !hasRef;
+  els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
+  els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
+  els.clearReferenceButton.disabled = disabled || !hasRef;
+  els.showNormalButton.disabled = disabled || !state.comparisonMode;
+}
+
 function setBusy(busy) {
-  els.fileInput.disabled = busy;
-  els.analyzeButton.disabled = busy || !state.preview;
-  els.fitButton.disabled = busy || !state.preview;
-  els.actualButton.disabled = busy || !state.preview;
-  els.clearOverlayButton.disabled = busy || !state.analysisMask;
+  state.busy = busy;
+  updateControls();
 }
 
 function updateMetadata(file, header) {
@@ -86,7 +137,7 @@ function resetMetadata() {
 }
 
 function prepareCanvas(width, height) {
-  for (const canvas of [els.imageCanvas, els.overlayCanvas]) {
+  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.referenceCanvas]) {
     canvas.width = width;
     canvas.height = height;
     canvas.style.width = `${width}px`;
@@ -124,12 +175,81 @@ function actualSize() {
   applyTransform();
 }
 
-function clearOverlay() {
+function currentExtractionOptions() {
+  return {
+    sensitivity: Number(els.sensitivity.value),
+    darkWeight: Number(els.darkWeight.value),
+    colorWeight: Number(els.colorWeight.value),
+    minComponent: Number(els.minComponent.value),
+  };
+}
+
+function currentComparisonOptions() {
+  return {
+    tolerance: Number(els.tolerance.value),
+    reviewRadius: Number(els.reviewRadius.value),
+    opacity: Number(els.overlayOpacity.value),
+  };
+}
+
+function updateMetrics(metrics = null) {
+  if (!metrics) {
+    els.metricPrecision.textContent = "-";
+    els.metricRecall.textContent = "-";
+    els.metricF1.textContent = "-";
+    els.metricDetail.textContent = hasReference()
+      ? "自動抽出後に「比較」を押してください。"
+      : "お手本線を描くと比較できます。";
+    return;
+  }
+
+  els.metricPrecision.textContent = `${(metrics.precision * 100).toFixed(1)}%`;
+  els.metricRecall.textContent = `${(metrics.recall * 100).toFixed(1)}%`;
+  els.metricF1.textContent = `${(metrics.f1 * 100).toFixed(1)}%`;
+  els.metricDetail.textContent = `一致候補 ${metrics.matchedPrediction.toLocaleString()} px / 誤検出 ${metrics.falsePositive.toLocaleString()} px / 見逃し ${metrics.falseNegative.toLocaleString()} px`;
+}
+
+function renderNormalOverlay() {
+  if (!state.preview) return;
   const ctx = els.overlayCanvas.getContext("2d");
-  ctx.clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
+  ctx.clearRect(0, 0, state.preview.width, state.preview.height);
+  if (state.analysisMask) {
+    const overlay = renderBoundaryOverlay(state.analysisMask, state.preview.width, state.preview.height, {
+      opacity: Number(els.overlayOpacity.value),
+    });
+    ctx.putImageData(overlay, 0, 0);
+  }
+  els.referenceCanvas.style.visibility = "visible";
+  state.comparisonMode = false;
+  updateControls();
+}
+
+function showNormalView() {
+  renderNormalOverlay();
+  updateMetrics();
+  setStatus("通常表示に戻しました。");
+}
+
+function clearOverlay() {
+  els.overlayCanvas.getContext("2d").clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
   state.analysisMask = null;
-  els.clearOverlayButton.disabled = true;
+  state.comparisonMode = false;
+  els.referenceCanvas.style.visibility = "visible";
+  updateMetrics();
+  updateControls();
   setStatus("粒界オーバーレイを消去しました。");
+}
+
+function clearReference() {
+  if (!state.preview) return;
+  state.referenceMask = new Uint8Array(state.preview.width * state.preview.height);
+  state.referenceCount = 0;
+  els.referenceCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  renderNormalOverlay();
+  updateMetrics();
+  setTool("pan");
+  updateControls();
+  setStatus("お手本線をすべて消去しました。");
 }
 
 async function loadBmp(file) {
@@ -139,6 +259,9 @@ async function loadBmp(file) {
   setBusy(true);
   clearOverlay();
   resetMetadata();
+  state.features = null;
+  state.referenceCount = 0;
+  state.referenceMask = null;
 
   try {
     setStatus("BMPヘッダーを確認中...", 2);
@@ -156,12 +279,16 @@ async function loadBmp(file) {
     });
 
     state.preview = preview;
+    state.referenceMask = new Uint8Array(preview.width * preview.height);
     prepareCanvas(preview.width, preview.height);
     els.imageCanvas.getContext("2d").putImageData(preview.imageData, 0, 0);
     els.overlayCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
+    els.referenceCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
     els.canvasStage.style.display = "block";
     els.emptyState.style.display = "none";
+    setTool("pan");
     fitToViewer();
+    updateMetrics();
 
     setStatus(
       `読込完了: ${header.width.toLocaleString()} × ${header.height.toLocaleString()} px → preview ${preview.width} × ${preview.height} px`,
@@ -173,6 +300,8 @@ async function loadBmp(file) {
     state.file = null;
     state.header = null;
     state.preview = null;
+    state.features = null;
+    state.referenceMask = null;
     els.canvasStage.style.display = "none";
     els.emptyState.style.display = "grid";
     const message = error instanceof BmpError ? error.message : `読込エラー: ${error.message}`;
@@ -183,24 +312,30 @@ async function loadBmp(file) {
   }
 }
 
+async function ensureFeatures() {
+  if (state.features) return state.features;
+  if (!state.preview) throw new Error("画像がありません。");
+
+  setStatus("粒界特徴量を計算中...", 2);
+  state.features = await computeBoundaryFeatures(state.preview.imageData, {
+    onProgress: ratio => setStatus(`粒界特徴量を計算中... ${Math.round(ratio * 100)}%`, ratio * 65),
+  });
+  return state.features;
+}
+
 async function analyzePreview() {
   if (!state.preview) return;
   setBusy(true);
   try {
-    setStatus("粒界候補を解析中...", 1);
-    const mask = await extractBoundaryCandidates(state.preview.imageData, {
-      sensitivity: Number(els.sensitivity.value),
-      darkWeight: Number(els.darkWeight.value),
-      colorWeight: Number(els.colorWeight.value),
-      minComponent: Number(els.minComponent.value),
-      onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, ratio * 95),
+    const features = await ensureFeatures();
+    setStatus("粒界候補を解析中...", 65);
+    const mask = await buildBoundaryMask(features, {
+      ...currentExtractionOptions(),
+      onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, 65 + ratio * 34),
     });
     state.analysisMask = mask;
-    const overlay = renderBoundaryOverlay(mask, state.preview.width, state.preview.height, {
-      opacity: Number(els.overlayOpacity.value),
-    });
-    els.overlayCanvas.getContext("2d").putImageData(overlay, 0, 0);
-    els.clearOverlayButton.disabled = false;
+    renderNormalOverlay();
+    updateMetrics();
     const count = mask.reduce((sum, value) => sum + value, 0);
     setStatus(`粒界候補を表示しました。候補画素: ${count.toLocaleString()}`, 100);
   } catch (error) {
@@ -211,12 +346,74 @@ async function analyzePreview() {
   }
 }
 
+function compareCurrent() {
+  if (!state.preview || !state.analysisMask || !hasReference()) return;
+  const result = renderComparisonOverlay(
+    state.analysisMask,
+    state.referenceMask,
+    state.preview.width,
+    state.preview.height,
+    currentComparisonOptions(),
+  );
+  els.overlayCanvas.getContext("2d").putImageData(result.imageData, 0, 0);
+  els.referenceCanvas.style.visibility = "hidden";
+  state.comparisonMode = true;
+  updateMetrics(result.metrics);
+  updateControls();
+  setStatus(`比較完了: F1 ${(result.metrics.f1 * 100).toFixed(1)}%`, 100);
+}
+
+function setRangeValue(input, value) {
+  input.value = String(Math.round(value));
+  const output = $(`${input.id}Value`);
+  if (output) output.value = input.value;
+}
+
+async function autoTune() {
+  if (!state.preview || !hasReference()) return;
+  setBusy(true);
+  try {
+    const features = await ensureFeatures();
+    setStatus("お手本と比較して自動調整中...", 1);
+    const result = await autoTuneBoundary(features, state.referenceMask, {
+      ...currentComparisonOptions(),
+      current: currentExtractionOptions(),
+      onProgress: ratio => setStatus(`自動調整中... ${Math.round(ratio * 100)}%`, ratio * 99),
+    });
+
+    setRangeValue(els.sensitivity, result.parameters.sensitivity);
+    setRangeValue(els.darkWeight, result.parameters.darkWeight);
+    setRangeValue(els.colorWeight, result.parameters.colorWeight);
+    setRangeValue(els.minComponent, result.parameters.minComponent);
+    state.analysisMask = result.mask;
+
+    const comparison = renderComparisonOverlay(
+      result.mask,
+      state.referenceMask,
+      state.preview.width,
+      state.preview.height,
+      currentComparisonOptions(),
+    );
+    els.overlayCanvas.getContext("2d").putImageData(comparison.imageData, 0, 0);
+    els.referenceCanvas.style.visibility = "hidden";
+    state.comparisonMode = true;
+    updateMetrics(comparison.metrics);
+    setStatus(
+      `自動調整完了: F1 ${(comparison.metrics.f1 * 100).toFixed(1)}% / 感度 ${result.parameters.sensitivity} / 暗線 ${result.parameters.darkWeight} / 色差 ${result.parameters.colorWeight} / 最小連結 ${result.parameters.minComponent}`,
+      100,
+    );
+  } catch (error) {
+    console.error(error);
+    setStatus(`自動調整エラー: ${error.message}`, 0);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function rerenderOverlayOpacity() {
   if (!state.analysisMask || !state.preview) return;
-  const overlay = renderBoundaryOverlay(state.analysisMask, state.preview.width, state.preview.height, {
-    opacity: Number(els.overlayOpacity.value),
-  });
-  els.overlayCanvas.getContext("2d").putImageData(overlay, 0, 0);
+  if (state.comparisonMode && hasReference()) compareCurrent();
+  else renderNormalOverlay();
 }
 
 function bindRange(input, output, onInput = null) {
@@ -226,17 +423,148 @@ function bindRange(input, output, onInput = null) {
   });
 }
 
+function setTool(tool) {
+  state.tool = tool;
+  els.panToolButton.classList.toggle("active", tool === "pan");
+  els.referenceToolButton.classList.toggle("active", tool === "reference");
+  els.eraseReferenceToolButton.classList.toggle("active", tool === "erase-reference");
+  els.viewer.classList.toggle("reference-mode", tool !== "pan");
+}
+
+function eventToPreviewPoint(event) {
+  if (!state.preview) return null;
+  const rect = els.viewer.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) - state.tx) / state.scale;
+  const y = ((event.clientY - rect.top) - state.ty) / state.scale;
+  if (x < 0 || y < 0 || x >= state.preview.width || y >= state.preview.height) return null;
+  return { x, y };
+}
+
+function paintReferenceMaskSegment(from, to, erase) {
+  const width = state.preview.width;
+  const height = state.preview.height;
+  const brush = Number(els.referenceBrush.value);
+  const radius = Math.max(1, brush / 2);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy))));
+  let delta = 0;
+
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    const cx = from.x + dx * t;
+    const cy = from.y + dy * t;
+    const minX = Math.max(0, Math.floor(cx - radius));
+    const maxX = Math.min(width - 1, Math.ceil(cx + radius));
+    const minY = Math.max(0, Math.floor(cy - radius));
+    const maxY = Math.min(height - 1, Math.ceil(cy + radius));
+    const rr = radius * radius;
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const ddx = x - cx;
+        const ddy = y - cy;
+        if (ddx * ddx + ddy * ddy > rr) continue;
+        const p = y * width + x;
+        const oldValue = state.referenceMask[p];
+        const newValue = erase ? 0 : 1;
+        if (oldValue === newValue) continue;
+        state.referenceMask[p] = newValue;
+        delta += newValue ? 1 : -1;
+      }
+    }
+  }
+
+  state.referenceCount = Math.max(0, state.referenceCount + delta);
+}
+
+function drawReferenceCanvasSegment(from, to, erase) {
+  const ctx = els.referenceCanvas.getContext("2d");
+  const brush = Number(els.referenceBrush.value);
+  ctx.save();
+  ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
+  ctx.strokeStyle = "rgba(255, 216, 74, 0.95)";
+  ctx.fillStyle = "rgba(255, 216, 74, 0.95)";
+  ctx.lineWidth = brush;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  if (distance < 0.5) {
+    ctx.beginPath();
+    ctx.arc(to.x, to.y, brush / 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function beginReferenceDraw(event) {
+  const point = eventToPreviewPoint(event);
+  if (!point) return false;
+  if (state.comparisonMode) showNormalView();
+  state.drawingReference = true;
+  state.lastReferencePoint = point;
+  const erase = state.tool === "erase-reference";
+  paintReferenceMaskSegment(point, point, erase);
+  drawReferenceCanvasSegment(point, point, erase);
+  updateMetrics();
+  updateControls();
+  els.viewer.setPointerCapture(event.pointerId);
+  return true;
+}
+
+function continueReferenceDraw(event) {
+  if (!state.drawingReference || !state.lastReferencePoint) return;
+  const point = eventToPreviewPoint(event);
+  if (!point) return;
+  const erase = state.tool === "erase-reference";
+  paintReferenceMaskSegment(state.lastReferencePoint, point, erase);
+  drawReferenceCanvasSegment(state.lastReferencePoint, point, erase);
+  state.lastReferencePoint = point;
+}
+
+function endReferenceDraw(event) {
+  if (!state.drawingReference) return;
+  state.drawingReference = false;
+  state.lastReferencePoint = null;
+  updateMetrics();
+  updateControls();
+  setStatus(`お手本を更新しました。お手本画素: ${state.referenceCount.toLocaleString()}`);
+  if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
+    els.viewer.releasePointerCapture(event.pointerId);
+  }
+}
+
 els.fileInput.addEventListener("change", event => loadBmp(event.target.files?.[0]));
 els.fitButton.addEventListener("click", fitToViewer);
 els.actualButton.addEventListener("click", actualSize);
 els.clearOverlayButton.addEventListener("click", clearOverlay);
 els.analyzeButton.addEventListener("click", analyzePreview);
+els.compareButton.addEventListener("click", compareCurrent);
+els.autoTuneButton.addEventListener("click", autoTune);
+els.clearReferenceButton.addEventListener("click", clearReference);
+els.showNormalButton.addEventListener("click", showNormalView);
+els.panToolButton.addEventListener("click", () => setTool("pan"));
+els.referenceToolButton.addEventListener("click", () => setTool("reference"));
+els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
 
 bindRange(els.sensitivity, $("sensitivityValue"));
 bindRange(els.darkWeight, $("darkWeightValue"));
 bindRange(els.colorWeight, $("colorWeightValue"));
 bindRange(els.minComponent, $("minComponentValue"));
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), rerenderOverlayOpacity);
+bindRange(els.referenceBrush, $("referenceBrushValue"));
+bindRange(els.tolerance, $("toleranceValue"), () => {
+  if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent();
+});
+bindRange(els.reviewRadius, $("reviewRadiusValue"), () => {
+  if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent();
+});
 
 for (const type of ["dragenter", "dragover"]) {
   els.dropZone.addEventListener(type, event => {
@@ -276,19 +604,35 @@ els.viewer.addEventListener("wheel", event => {
 }, { passive: false });
 
 els.viewer.addEventListener("pointerdown", event => {
-  if (!state.preview || event.button !== 0) return;
+  if (!state.preview || event.button !== 0 || state.busy) return;
+
+  if (state.tool !== "pan") {
+    beginReferenceDraw(event);
+    return;
+  }
+
   state.dragging = true;
   state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
   els.viewer.classList.add("dragging");
   els.viewer.setPointerCapture(event.pointerId);
 });
+
 els.viewer.addEventListener("pointermove", event => {
+  if (state.drawingReference) {
+    continueReferenceDraw(event);
+    return;
+  }
   if (!state.dragging || !state.dragOrigin) return;
   state.tx = state.dragOrigin.tx + event.clientX - state.dragOrigin.x;
   state.ty = state.dragOrigin.ty + event.clientY - state.dragOrigin.y;
   applyTransform();
 });
-function endDrag(event) {
+
+function endPointerAction(event) {
+  if (state.drawingReference) {
+    endReferenceDraw(event);
+    return;
+  }
   if (!state.dragging) return;
   state.dragging = false;
   state.dragOrigin = null;
@@ -297,9 +641,12 @@ function endDrag(event) {
     els.viewer.releasePointerCapture(event.pointerId);
   }
 }
-els.viewer.addEventListener("pointerup", endDrag);
-els.viewer.addEventListener("pointercancel", endDrag);
+
+els.viewer.addEventListener("pointerup", endPointerAction);
+els.viewer.addEventListener("pointercancel", endPointerAction);
 
 window.addEventListener("resize", () => {
   if (state.preview) fitToViewer();
 });
+
+updateControls();
