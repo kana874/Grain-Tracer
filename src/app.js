@@ -1852,6 +1852,7 @@ els.clearLocalCalibrationButton.addEventListener("click", () => clearLocalCalibr
 els.clearReferenceButton.addEventListener("click", clearReference);
 els.clearNegativeButton.addEventListener("click", clearNegativeReference);
 els.clearExclusionButton.addEventListener("click", clearExclusions);
+els.clearFullRoiButton.addEventListener("click", clearFullEvaluationRois);
 els.showNormalButton.addEventListener("click", showNormalView);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
@@ -1861,6 +1862,7 @@ els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.negativeToolButton.addEventListener("click", () => setTool("negative-reference"));
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
 els.exclusionToolButton.addEventListener("click", () => setTool("exclusion"));
+els.fullRoiToolButton.addEventListener("click", () => setTool("full-roi"));
 els.undoReferenceButton.addEventListener("click", undoReference);
 els.redoReferenceButton.addEventListener("click", redoReference);
 
@@ -1926,7 +1928,8 @@ els.viewer.addEventListener("wheel", event => {
 
 els.viewer.addEventListener("pointerdown", event => {
   if (!state.preview || event.button !== 0) return;
-  if (state.tool === "exclusion") { beginExclusionDraw(event); return; }
+  if (state.tool === "exclusion") { beginRectInteraction(event, "exclusion"); return; }
+  if (state.tool === "full-roi") { beginRectInteraction(event, "roi"); return; }
   if (state.tool !== "pan") { beginReferenceDraw(event); return; }
   state.dragging = true;
   state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
@@ -1934,7 +1937,7 @@ els.viewer.addEventListener("pointerdown", event => {
   els.viewer.setPointerCapture(event.pointerId);
 });
 els.viewer.addEventListener("pointermove", event => {
-  if (state.drawingExclusion) { continueExclusionDraw(event); return; }
+  if (state.rectInteraction) { continueRectInteraction(event); return; }
   if (state.drawingReference) { continueReferenceDraw(event); return; }
   if (!state.dragging || !state.dragOrigin) return;
   state.tx = state.dragOrigin.tx + event.clientX - state.dragOrigin.x;
@@ -1942,7 +1945,7 @@ els.viewer.addEventListener("pointermove", event => {
   applyTransform();
 });
 function endPointer(event) {
-  if (state.drawingExclusion) endExclusionDraw(event);
+  if (state.rectInteraction) endRectInteraction(event);
   if (state.drawingReference) endReferenceDraw(event);
   if (!state.dragging) return;
   state.dragging = false;
@@ -1954,7 +1957,22 @@ els.viewer.addEventListener("pointerup", endPointer);
 els.viewer.addEventListener("pointercancel", endPointer);
 
 window.addEventListener("keydown", event => {
-  if (!state.preview || state.busy || !(event.ctrlKey || event.metaKey)) return;
+  if (!state.preview || state.busy) return;
+
+  if ((event.key === "Delete" || event.key === "Backspace") && !(event.ctrlKey || event.metaKey)) {
+    const tag = event.target?.tagName?.toLowerCase();
+    if (tag !== "input" && tag !== "textarea") {
+      const deleted = state.tool === "exclusion"
+        ? deleteSelectedRect("exclusion")
+        : state.tool === "full-roi"
+          ? deleteSelectedRect("roi")
+          : false;
+      if (deleted) event.preventDefault();
+    }
+    return;
+  }
+
+  if (!(event.ctrlKey || event.metaKey)) return;
   const key = event.key.toLowerCase();
   if (key === "z" && !event.shiftKey) {
     if (state.undoStack.length) {
