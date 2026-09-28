@@ -250,8 +250,9 @@ function updateLocalCalibrationStatus() {
   const values = state.localCalibration.values ?? [];
   const min = values.length ? Math.min(...values) : 0;
   const max = values.length ? Math.max(...values) : 0;
+  const signed = value => `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
   els.localCalibrationStatus.textContent =
-    `局所補正: ${measured}/${state.localCalibration.cols * state.localCalibration.rows}領域をお手本で校正 / 感度補正 ${min.toFixed(1)}～+${Math.max(0, max).toFixed(1)}`;
+    `局所補正: ${measured}/${state.localCalibration.cols * state.localCalibration.rows}領域をお手本で校正 / 感度補正 ${signed(min)}～${signed(max)}`;
 }
 
 function currentSettings() {
@@ -437,6 +438,7 @@ function clearOverlay() {
 
 function clearReference() {
   if (!state.preview) return;
+  clearLocalCalibration(true);
   state.referenceMask = new Uint8Array(state.preview.width * state.preview.height);
   state.referenceCenterline = new Uint8Array(state.preview.width * state.preview.height);
   state.referenceCount = 0;
@@ -856,6 +858,7 @@ function beginReferenceDraw(event) {
   const point = eventToPreviewPoint(event);
   if (!point) return false;
   if (state.comparisonMode) showNormalView();
+  if (state.localCalibration) clearLocalCalibration(true);
   state.drawingReference = true;
   state.lastReferencePoint = point;
   const erase = state.tool === "erase-reference";
