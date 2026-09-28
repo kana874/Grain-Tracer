@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.6-alpha - 2026-09-28
+
+### Added
+- Auto Tune v2 using coarse-to-fine coordinate descent across Sensitivity, Dark, Ridge, Color, Dendrite, and MinComponent.
+- Feature weights may now reach zero, allowing Dark / Ridge / Color / Dendrite to be completely disabled when they reduce tuning quality.
+- Automatic ablation summary for Full, -Dark, -Ridge, -Color, and -Dendrite configurations.
+- Complete-evaluation ROI aware tuning: when one or more complete ROIs exist, formal ROI True F1 becomes the primary objective.
+- Partial Label fallback objective balancing Positive Recall against explicit Negative leakage when no complete ROI exists.
+- Compact Auto Tune v2 search summaries are stored in evaluation history and diagnostic JSON.
+
+### Changed
+- Fixed hard-coded weight profiles were removed from global automatic tuning.
+- Auto Tune no longer uses unlabelled Unknown areas as negative evidence.
+- Positive/negative holdout remains active for Partial Label tuning; complete-ROI tuning uses the complete labelled ROI data instead of presenting an overlapping holdout as independent validation.
+- App version advanced to `0.3.6-alpha`; boundary extraction identifier remains `boundary-v4-dendrite-negref`.
+
+### Validation
+- JavaScript syntax validation passed for the modified analysis, app, diagnostics, project, and UI modules.
+- Synthetic Partial Label tuning started from a misleading Ridge-heavy configuration and converged to Ridge=0 with Positive Recall=1.0 and Negative Leakage=0.
+- Synthetic complete-ROI tuning selected the complete-ROI objective and reached ROI True F1=1.0 on a controlled test image.
+- Ablation output correctly reported the score change when the informative Dark feature was removed.
+
 ## v0.3.5-alpha - 2026-09-28
 
 ### Added
