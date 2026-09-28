@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.1-alpha</div>
+    <div class="version">v0.3.2-alpha</div>
   </header>
 
   <main class="layout">
@@ -92,12 +92,13 @@
     <aside class="panel right-panel">
       <section>
         <h2>粒界候補抽出</h2>
-        <p class="help">Dark Ridge・方向付き色差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。</p>
+        <p class="help">Dark Ridge・方向付き色差・デンドライト方向差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。</p>
 
         <label class="control-row"><span>境界感度</span><output id="sensitivityValue">62</output><input id="sensitivity" type="range" min="1" max="100" value="62"></label>
         <label class="control-row"><span>暗さ</span><output id="darkWeightValue">20</output><input id="darkWeight" type="range" min="0" max="100" value="20"></label>
         <label class="control-row"><span>Dark Ridge</span><output id="ridgeWeightValue">55</output><input id="ridgeWeight" type="range" min="0" max="100" value="55"></label>
         <label class="control-row"><span>色差</span><output id="colorWeightValue">25</output><input id="colorWeight" type="range" min="0" max="100" value="25"></label>
+        <label class="control-row"><span>デンドライト差</span><output id="dendriteWeightValue">20</output><input id="dendriteWeight" type="range" min="0" max="100" value="20"></label>
         <label class="control-row"><span>最小連結サイズ</span><output id="minComponentValue">24</output><input id="minComponent" type="range" min="1" max="300" value="24"></label>
 
         <div class="subpanel">
@@ -143,7 +144,7 @@
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ファイルを書き出す</button>
-        <p class="help">出力: diagnostic.json / preview.jpg / comparison.png / ridge.png / reference.png</p>
+        <p class="help">出力: diagnostic.json / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png</p>
       </section>
 
       <section>
@@ -156,6 +157,7 @@
         <ul class="check-list">
           <li class="done">Multi-scale Dark Ridge</li>
           <li class="done">方向付きLab色差</li>
+          <li class="done">デンドライト方向差（Structure Tensor）</li>
           <li class="done">局所適応正規化</li>
           <li class="done">中心線ベース評価</li>
           <li class="done">評価履歴の保存</li>
