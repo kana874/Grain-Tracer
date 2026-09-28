@@ -112,8 +112,8 @@
 
       <section>
         <h2>お手本比較・自動調整</h2>
-        <label class="control-row"><span>お手本線幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="2" max="16" value="5"></label>
-        <label class="control-row"><span>一致許容幅</span><output id="toleranceValue">4</output><input id="tolerance" type="range" min="1" max="10" value="4"></label>
+        <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
+        <p class="help">黄色のお手本線そのものを一致判定範囲として使います。表示幅と判定幅は常に同じです。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
