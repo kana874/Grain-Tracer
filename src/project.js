@@ -1,6 +1,6 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.4-alpha";
+export const APP_VERSION = "0.3.5-alpha";
 export const ALGORITHM_VERSION = "boundary-v4-dendrite-negref";
 
 export function packBinaryMask(mask) {
@@ -59,6 +59,7 @@ export function createProjectSnapshot(input) {
     negativeMask,
     negativeCenterline,
     exclusionRects,
+    fullEvaluationRois,
     localCalibration,
     history,
   } = input;
@@ -80,6 +81,7 @@ export function createProjectSnapshot(input) {
       centerline: packBinaryMask(negativeCenterline ?? new Uint8Array(referenceMask.length)),
     },
     exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
+    fullEvaluationRois: (fullEvaluationRois ?? []).map(rect => ({ ...rect })),
     localCalibration: localCalibration ?? null,
     history: history ?? [],
   };
@@ -102,6 +104,9 @@ export function restoreReferenceMasks(project) {
     negativeCenterline: unpackBinaryMask(project.nonBoundary?.centerline, length),
     exclusionRects: Array.isArray(project.exclusionRects)
       ? project.exclusionRects.map(rect => ({ ...rect }))
+      : [],
+    fullEvaluationRois: Array.isArray(project.fullEvaluationRois)
+      ? project.fullEvaluationRois.map(rect => ({ ...rect }))
       : [],
   };
 }
