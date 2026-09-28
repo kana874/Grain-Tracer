@@ -1,6 +1,6 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.3-alpha";
+export const APP_VERSION = "0.3.4-alpha";
 export const ALGORITHM_VERSION = "boundary-v4-dendrite";
 
 export function packBinaryMask(mask) {
@@ -50,7 +50,18 @@ export async function fingerprintSource(file, header) {
 }
 
 export function createProjectSnapshot(input) {
-  const { source, preview, settings, referenceMask, referenceCenterline, localCalibration, history } = input;
+  const {
+    source,
+    preview,
+    settings,
+    referenceMask,
+    referenceCenterline,
+    negativeMask,
+    negativeCenterline,
+    exclusionRects,
+    localCalibration,
+    history,
+  } = input;
   return {
     format: PROJECT_FORMAT,
     formatVersion: PROJECT_VERSION,
@@ -64,6 +75,11 @@ export function createProjectSnapshot(input) {
       mask: packBinaryMask(referenceMask),
       centerline: packBinaryMask(referenceCenterline),
     },
+    nonBoundary: {
+      mask: packBinaryMask(negativeMask ?? new Uint8Array(referenceMask.length)),
+      centerline: packBinaryMask(negativeCenterline ?? new Uint8Array(referenceMask.length)),
+    },
+    exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
     localCalibration: localCalibration ?? null,
     history: history ?? [],
   };
@@ -82,6 +98,11 @@ export function restoreReferenceMasks(project) {
   return {
     referenceMask: unpackBinaryMask(project.reference?.mask, length),
     referenceCenterline: unpackBinaryMask(project.reference?.centerline, length),
+    negativeMask: unpackBinaryMask(project.nonBoundary?.mask, length),
+    negativeCenterline: unpackBinaryMask(project.nonBoundary?.centerline, length),
+    exclusionRects: Array.isArray(project.exclusionRects)
+      ? project.exclusionRects.map(rect => ({ ...rect }))
+      : [],
   };
 }
 
