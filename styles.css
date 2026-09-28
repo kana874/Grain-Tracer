@@ -8,149 +8,62 @@
   --text: #eef2f7;
   --muted: #aab4c2;
   --accent: #35d5c4;
-  --accent-2: #17bcae;
   --danger: #ff5e67;
   --warn: #ffd84a;
   --ok: #58e38a;
 }
-
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--text); overflow: hidden; }
 button, input { font: inherit; }
-
-.app-header {
-  height: 68px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 18px;
-  border-bottom: 1px solid var(--line);
-  background: #151920;
-}
-.app-header h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
+.app-header { height: 68px; display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #151920; }
+.app-header h1 { margin: 0; font-size: 20px; }
 .app-header p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 .version { color: var(--muted); font-size: 12px; }
-
-.layout {
-  height: calc(100vh - 68px);
-  display: grid;
-  grid-template-columns: 260px minmax(420px, 1fr) 320px;
-  min-width: 1000px;
-}
-
-.panel {
-  background: var(--panel);
-  padding: 14px;
-  overflow: auto;
-}
+.layout { height: calc(100vh - 68px); display: grid; grid-template-columns: 260px minmax(420px, 1fr) 350px; min-width: 1040px; }
+.panel { background: var(--panel); padding: 14px; overflow: auto; }
 .left-panel { border-right: 1px solid var(--line); }
 .right-panel { border-left: 1px solid var(--line); }
 .panel section + section { margin-top: 22px; }
 h2 { margin: 0 0 10px; font-size: 14px; }
-
 #fileInput { display: none; }
-.file-button,
-button {
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 8px 11px;
-  cursor: pointer;
-}
+.file-button, button { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 6px; padding: 8px 11px; cursor: pointer; }
 .file-button { display: inline-block; width: 100%; text-align: center; }
 button:hover:not(:disabled), .file-button:hover { border-color: #556273; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: #173f3c; border-color: #2c9188; }
+button.full { width: 100%; }
 button.tool-button.active { border-color: var(--accent); background: #173f3c; color: #eafffc; }
-
-.drop-zone {
-  margin-top: 10px;
-  min-height: 76px;
-  border: 1px dashed #536071;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  font-size: 12px;
-  padding: 12px;
-  text-align: center;
-}
+.drop-zone { margin-top: 10px; min-height: 76px; border: 1px dashed #536071; border-radius: 8px; display: grid; place-items: center; color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
 .drop-zone.dragover { border-color: var(--accent); color: var(--accent); background: rgba(53, 213, 196, .08); }
-
-.meta-grid {
-  display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
-  gap: 7px 8px;
-  margin: 0;
-  font-size: 12px;
-}
+.meta-grid { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 7px 8px; margin: 0; font-size: 12px; }
 .meta-grid dt { color: var(--muted); }
 .meta-grid dd { margin: 0; overflow-wrap: anywhere; }
 .guide-list { margin: 0 0 10px; padding-left: 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
-
 .viewer-shell { min-width: 0; min-height: 0; display: grid; grid-template-rows: 44px 1fr 42px; }
-.toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 10px;
-  background: #171b22;
-  border-bottom: 1px solid var(--line);
-}
+.toolbar { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #171b22; border-bottom: 1px solid var(--line); }
 .toolbar button { padding: 6px 9px; font-size: 12px; }
 .toolbar-separator { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
 .zoom-label { margin-left: auto; color: var(--muted); font-size: 12px; }
-
-.viewer {
-  position: relative;
-  overflow: hidden;
-  background-color: #0b0d11;
-  background-image:
-    linear-gradient(45deg, #141820 25%, transparent 25%),
-    linear-gradient(-45deg, #141820 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #141820 75%),
-    linear-gradient(-45deg, transparent 75%, #141820 75%);
-  background-size: 20px 20px;
-  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-  touch-action: none;
-  cursor: grab;
-}
+.viewer { position: relative; overflow: hidden; background-color: #0b0d11; background-image: linear-gradient(45deg, #141820 25%, transparent 25%), linear-gradient(-45deg, #141820 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #141820 75%), linear-gradient(-45deg, transparent 75%, #141820 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; touch-action: none; cursor: grab; }
 .viewer.dragging { cursor: grabbing; }
 .viewer.reference-mode { cursor: crosshair; }
 .canvas-stage { position: absolute; transform-origin: 0 0; display: none; }
 .canvas-stage canvas { position: absolute; inset: 0; image-rendering: auto; }
 #overlayCanvas, #referenceCanvas { pointer-events: none; }
-.empty-state {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  text-align: center;
-  color: var(--muted);
-  gap: 4px;
-}
+.empty-state { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: var(--muted); gap: 4px; }
 .empty-state strong { color: var(--text); }
-
-.status-bar {
-  display: grid;
-  grid-template-columns: 1fr 180px;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 10px;
-  background: #171b22;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 12px;
-}
+.status-bar { display: grid; grid-template-columns: 1fr 180px; align-items: center; gap: 12px; padding: 6px 10px; background: #171b22; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 progress { width: 100%; height: 10px; }
-
 .help { margin: 0 0 12px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.project-status { margin-top: 8px; margin-bottom: 0; }
 .metric-detail { margin-top: 8px; margin-bottom: 0; }
-.control-row { display: grid; grid-template-columns: 1fr 42px; gap: 5px 8px; margin: 12px 0; font-size: 12px; }
+.control-row { display: grid; grid-template-columns: 1fr 48px; gap: 5px 8px; margin: 11px 0; font-size: 12px; }
 .control-row output { text-align: right; color: var(--accent); }
 .control-row input { grid-column: 1 / -1; width: 100%; }
+.check-row { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; margin: 8px 0; }
+.check-row input { accent-color: var(--accent); }
+.subpanel { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: #171b22; }
 .button-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .button-grid button { font-size: 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 11px; }
@@ -163,11 +76,13 @@ progress { width: 100%; height: 10px; }
 .metrics-grid div { background: #151920; border: 1px solid var(--line); border-radius: 6px; padding: 7px; text-align: center; }
 .metrics-grid span { display: block; color: var(--muted); font-size: 10px; }
 .metrics-grid strong { display: block; margin-top: 3px; font-size: 16px; font-variant-numeric: tabular-nums; }
-
+.history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.history-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: #151920; font-size: 11px; }
+.history-list li strong { font-size: 11px; }
+.history-list li span { color: var(--accent); font-variant-numeric: tabular-nums; }
+.history-list li small { grid-column: 1 / -1; color: var(--muted); }
+.history-list .history-empty { color: var(--muted); display: block; }
 .check-list { padding-left: 18px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
 .check-list li.done { color: #cbe7e3; }
 .check-list li.done::marker { color: var(--accent); }
-
-@media (max-width: 1220px) {
-  .layout { grid-template-columns: 220px minmax(420px, 1fr) 290px; }
-}
+@media (max-width: 1260px) { .layout { grid-template-columns: 220px minmax(420px, 1fr) 315px; } }
