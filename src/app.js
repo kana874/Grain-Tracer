@@ -489,12 +489,13 @@ function updateMetrics(metrics = null) {
   }
 
   els.metricPositiveRecall.textContent = `${(metrics.positiveRecall * 100).toFixed(1)}%`;
-  els.metricNegativeLeakage.textContent = `${(metrics.negativeLeakage * 100).toFixed(1)}%`;
+  const balancedLeakage = metrics.macroNegativeLeakage ?? metrics.negativeLeakage;
+  els.metricNegativeLeakage.textContent = `${(balancedLeakage * 100).toFixed(1)}%`;
   const alignment = metrics.alignmentError?.mean;
   els.metricAlignment.textContent = alignment == null ? "-" : `${alignment.toFixed(2)} px`;
 
   const negativeText = metrics.negativePixels
-    ? `　Negative漏れ ${metrics.negativePrediction.toLocaleString()} / ${metrics.negativePixels.toLocaleString()} px`
+    ? `　Negative漏れ ${metrics.negativePrediction.toLocaleString()} / ${metrics.negativePixels.toLocaleString()} px（画素加重 ${(metrics.negativeLeakage * 100).toFixed(1)}% / 4x4均等 ${(balancedLeakage * 100).toFixed(1)}%）`
     : "";
   const unknownText = `　Unknown上の自動線 ${(metrics.unknownPrediction ?? 0).toLocaleString()} px（FPに含めない）`;
   els.metricDetail.textContent =
@@ -534,7 +535,9 @@ function renderHistory() {
     const li = document.createElement("li");
     const date = new Date(item.timestamp);
     const positiveRecall = item.metrics?.positiveRecall ?? item.metrics?.recall;
-    const negativeLeakage = item.metrics?.negativeLeakage ?? item.metrics?.negativeHitRate;
+    const negativeLeakage = item.metrics?.macroNegativeLeakage
+      ?? item.metrics?.negativeLeakage
+      ?? item.metrics?.negativeHitRate;
     const recallText = positiveRecall == null ? "-" : `${(positiveRecall * 100).toFixed(1)}%`;
     const leakText = negativeLeakage == null ? "-" : `${(negativeLeakage * 100).toFixed(1)}%`;
     const label = item.kind === "auto-tune" ? "全体調整" : item.kind === "local-tune" ? "局所調整" : "比較";
@@ -589,6 +592,9 @@ function addHistory(kind, metrics, note = "", tuning = null) {
       evaluationMode: metrics.evaluationMode ?? "partial-label",
       positiveRecall: metrics.positiveRecall ?? metrics.recall,
       negativeLeakage: metrics.negativeLeakage ?? metrics.negativeHitRate ?? 0,
+      macroNegativeLeakage: metrics.macroNegativeLeakage ?? metrics.negativeLeakage ?? metrics.negativeHitRate ?? 0,
+      negativeRegionCount: metrics.negativeRegionCount ?? 0,
+      maxNegativeRegionFraction: metrics.maxNegativeRegionFraction ?? 0,
       alignmentError: metrics.alignmentError ?? null,
       labelPrecisionProxy: metrics.labelPrecision ?? metrics.precision,
       labelF1Proxy: metrics.labelF1 ?? metrics.f1,
@@ -947,6 +953,7 @@ function applyReferenceUndoRedo(direction) {
     rebuildFullRoiLayer();
   }
 
+  if (affectsAnalysis) renderNegativeCanvas();
   target.push(item);
   recalcAnnotationCounts();
   updateMetrics();
@@ -997,6 +1004,7 @@ function clearReference() {
   state.referenceCenterline.fill(0);
   state.referenceMask.fill(0);
   els.referenceCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  if (state.negativeFillSeeds.length) renderNegativeCanvas();
   commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "reference", entry }] });
   recalcAnnotationCounts();
   renderNormalOverlay();
@@ -1039,6 +1047,7 @@ function clearExclusions() {
   state.exclusionRects = [];
   state.selectedExclusionIndex = -1;
   rebuildExclusionLayer();
+  renderNegativeCanvas();
   invalidateAfterReferenceEdit(true);
   commitReferenceHistory(item);
   updateControls();
@@ -1718,6 +1727,7 @@ function setTool(tool) {
   els.panToolButton.classList.toggle("active", tool === "pan");
   els.referenceToolButton.classList.toggle("active", tool === "reference");
   els.negativeToolButton.classList.toggle("active", tool === "negative-reference");
+  els.negativeFillToolButton.classList.toggle("active", tool === "negative-fill");
   els.eraseReferenceToolButton.classList.toggle("active", tool === "erase-reference");
   els.exclusionToolButton.classList.toggle("active", tool === "exclusion");
   els.fullRoiToolButton.classList.toggle("active", tool === "full-roi");
@@ -1737,6 +1747,57 @@ function eventToPreviewPoint(event) {
   return { x, y };
 }
 
+function applyClosedNegativeFill(point) {
+  if (!state.preview || !state.referenceCenterline || !hasReference()) {
+    setStatus("先にお手本線で粒界を閉じてください。");
+    return false;
+  }
+
+  const safetyMargin = Math.max(3, referenceJudgementRadius() + 2);
+  const result = computeClosedNegativeFill(
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    { x: point.x, y: point.y, safetyMargin },
+    {
+      wallRadius: 1,
+      maxAreaFraction: 0.35,
+      minAreaPixels: 12,
+      exclusionMask: state.exclusionMask,
+    },
+  );
+
+  if (!result.ok) {
+    setStatus("閉領域Fill不可: " + result.message);
+    return false;
+  }
+
+  const newPixels = countNewFillPixels(result.fillMask, state.negativeFillMask);
+  if (newPixels < 12) {
+    setStatus("この閉領域はすでに非粒界Fillされています。");
+    return false;
+  }
+
+  if (state.comparisonMode) showNormalView();
+  invalidateAfterReferenceEdit(false);
+
+  const index = state.negativeFillSeeds.length;
+  const seed = { ...result.seed, safetyMargin };
+  state.negativeFillSeeds.push(seed);
+  renderNegativeCanvas();
+  commitReferenceHistory({ kind: "negative-fill-add", index, seed: { ...seed } });
+  recalcAnnotationCounts();
+  updateMetrics();
+  updateControls();
+  setStatus(
+    "閉領域を非粒界化しました: +" + newPixels.toLocaleString()
+      + " px / 安全距離 " + safetyMargin
+      + "px / Fill " + state.negativeFillInfo.validSeeds
+      + "/" + state.negativeFillInfo.seedCount + "領域",
+  );
+  scheduleAutosave();
+  return true;
+}
 function applyLineSegment(layer, tracker, from, to, erase = false) {
   const centerline = layer === "negative" ? state.negativeCenterline : state.referenceCenterline;
   const dirtyBounds = paintReferenceCenterlineSegment(
@@ -1964,6 +2025,7 @@ function endRectInteraction(event) {
     else invalidateEvaluationOnly();
     if (isExclusion) {
       rebuildExclusionLayer();
+      renderNegativeCanvas();
       setStatus("除外領域を更新しました。除外 " + state.exclusionRects.length + "領域。再解析してください。");
     } else {
       rebuildFullRoiLayer();
@@ -1998,6 +2060,7 @@ function deleteSelectedRect(kind) {
   else invalidateEvaluationOnly();
   if (isExclusion) {
     rebuildExclusionLayer();
+    renderNegativeCanvas();
     setStatus("選択した除外矩形を削除しました。再解析してください。Undoで復元できます。");
   } else {
     rebuildFullRoiLayer();
@@ -2029,6 +2092,7 @@ els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.negativeToolButton.addEventListener("click", () => setTool("negative-reference"));
+els.negativeFillToolButton.addEventListener("click", () => setTool("negative-fill"));
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
 els.exclusionToolButton.addEventListener("click", () => setTool("exclusion"));
 els.fullRoiToolButton.addEventListener("click", () => setTool("full-roi"));
@@ -2099,6 +2163,11 @@ els.viewer.addEventListener("pointerdown", event => {
   if (!state.preview || event.button !== 0) return;
   if (state.tool === "exclusion") { beginRectInteraction(event, "exclusion"); return; }
   if (state.tool === "full-roi") { beginRectInteraction(event, "roi"); return; }
+  if (state.tool === "negative-fill") {
+    const point = eventToPreviewPoint(event);
+    if (point) applyClosedNegativeFill(point);
+    return;
+  }
   if (state.tool !== "pan") { beginReferenceDraw(event); return; }
   state.dragging = true;
   state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
