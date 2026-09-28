@@ -1316,7 +1316,9 @@ function setTool(tool) {
   state.tool = tool;
   els.panToolButton.classList.toggle("active", tool === "pan");
   els.referenceToolButton.classList.toggle("active", tool === "reference");
+  els.negativeToolButton.classList.toggle("active", tool === "negative-reference");
   els.eraseReferenceToolButton.classList.toggle("active", tool === "erase-reference");
+  els.exclusionToolButton.classList.toggle("active", tool === "exclusion");
   els.viewer.classList.toggle("reference-mode", tool !== "pan");
 }
 
@@ -1329,24 +1331,42 @@ function eventToPreviewPoint(event) {
   return { x, y };
 }
 
-function applyReferenceSegment(from, to) {
-  if (!state.currentReferenceEdit) return false;
+function applyLineSegment(layer, tracker, from, to, erase = false) {
+  const centerline = layer === "negative" ? state.negativeCenterline : state.referenceCenterline;
   const dirtyBounds = paintReferenceCenterlineSegment(
-    state.referenceCenterline,
+    centerline,
     state.preview.width,
     state.preview.height,
     from,
     to,
     {
-      erase: state.tool === "erase-reference",
+      erase,
       eraseRadius: Math.max(1, referenceJudgementRadius()),
     },
-    state.currentReferenceEdit,
+    tracker,
   );
   if (!dirtyBounds) return false;
-  refreshReferenceDirty(dirtyBounds);
-  if (state.tool !== "erase-reference") state.referenceCount = Math.max(1, state.referenceCount);
+  if (layer === "negative") refreshNegativeDirty(dirtyBounds);
+  else refreshReferenceDirty(dirtyBounds);
   return true;
+}
+
+function applyReferenceSegment(from, to) {
+  if (!state.currentReferenceEdit) return false;
+  let changed = false;
+
+  if (state.tool === "reference") {
+    changed = applyLineSegment("reference", state.currentReferenceEdit.reference, from, to, false) || changed;
+    if (changed) state.referenceCount = Math.max(1, state.referenceCount);
+  } else if (state.tool === "negative-reference") {
+    changed = applyLineSegment("negative", state.currentReferenceEdit.negative, from, to, false) || changed;
+    if (changed) state.negativeCount = Math.max(1, state.negativeCount);
+  } else if (state.tool === "erase-reference") {
+    changed = applyLineSegment("reference", state.currentReferenceEdit.reference, from, to, true) || changed;
+    changed = applyLineSegment("negative", state.currentReferenceEdit.negative, from, to, true) || changed;
+  }
+
+  return changed;
 }
 
 function beginReferenceDraw(event) {
@@ -1354,10 +1374,15 @@ function beginReferenceDraw(event) {
   if (!point) return false;
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
-  state.currentReferenceEdit = createReferenceEditTracker();
+
+  state.currentReferenceEdit = {
+    reference: createReferenceEditTracker(),
+    negative: createReferenceEditTracker(),
+  };
   state.drawingReference = true;
   state.lastReferencePoint = point;
   applyReferenceSegment(point, point);
+  updateAnnotationStatus();
   updateControls();
   els.viewer.setPointerCapture(event.pointerId);
   return true;
@@ -1375,15 +1400,98 @@ function endReferenceDraw(event) {
   if (!state.drawingReference) return;
   state.drawingReference = false;
   state.lastReferencePoint = null;
-  const entry = finalizeReferenceEdit(state.referenceCenterline, state.currentReferenceEdit);
+
+  const parts = [];
+  const referenceEntry = finalizeReferenceEdit(
+    state.referenceCenterline,
+    state.currentReferenceEdit?.reference,
+  );
+  const negativeEntry = finalizeReferenceEdit(
+    state.negativeCenterline,
+    state.currentReferenceEdit?.negative,
+  );
+  if (referenceEntry) parts.push({ layer: "reference", entry: referenceEntry });
+  if (negativeEntry) parts.push({ layer: "negative", entry: negativeEntry });
   state.currentReferenceEdit = null;
-  if (entry) commitReferenceHistory(entry);
-  state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  if (parts.length) commitReferenceHistory({ kind: "mask-edit", parts });
+
+  recalcAnnotationCounts();
   updateMetrics();
   updateControls();
-  setStatus(`お手本を更新しました。中心線: ${state.referenceCount.toLocaleString()} px`);
+  setStatus(
+    `注釈を更新しました。粒界 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px`,
+  );
   scheduleAutosave();
-  if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) els.viewer.releasePointerCapture(event.pointerId);
+  if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
+    els.viewer.releasePointerCapture(event.pointerId);
+  }
+}
+
+function beginExclusionDraw(event) {
+  const point = eventToPreviewPoint(event);
+  if (!point) return false;
+  if (state.comparisonMode) showNormalView();
+  state.drawingExclusion = true;
+  state.exclusionStart = point;
+  state.exclusionPreviewRect = normalizeRect(
+    point,
+    point,
+    state.preview.width,
+    state.preview.height,
+  );
+  renderExclusionCanvas(
+    els.exclusionCanvas,
+    state.exclusionRects,
+    state.preview.width,
+    state.preview.height,
+    state.exclusionPreviewRect,
+  );
+  els.viewer.setPointerCapture(event.pointerId);
+  return true;
+}
+
+function continueExclusionDraw(event) {
+  if (!state.drawingExclusion || !state.exclusionStart) return;
+  const point = eventToPreviewPoint(event);
+  if (!point) return;
+  state.exclusionPreviewRect = normalizeRect(
+    state.exclusionStart,
+    point,
+    state.preview.width,
+    state.preview.height,
+  );
+  renderExclusionCanvas(
+    els.exclusionCanvas,
+    state.exclusionRects,
+    state.preview.width,
+    state.preview.height,
+    state.exclusionPreviewRect,
+  );
+}
+
+function endExclusionDraw(event) {
+  if (!state.drawingExclusion) return;
+  state.drawingExclusion = false;
+  const rect = state.exclusionPreviewRect;
+  state.exclusionStart = null;
+  state.exclusionPreviewRect = null;
+
+  if (rect && rectArea(rect) >= 9) {
+    const index = state.exclusionRects.length;
+    state.exclusionRects.push({ ...rect });
+    rebuildExclusionLayer();
+    invalidateAfterReferenceEdit(true);
+    commitReferenceHistory({ kind: "exclusion-add", index, rect: { ...rect } });
+    setStatus(`除外領域を追加しました。除外 ${state.exclusionRects.length}領域。再解析してください。`);
+    scheduleAutosave();
+  } else {
+    rebuildExclusionLayer();
+  }
+
+  updateControls();
+  if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
+    els.viewer.releasePointerCapture(event.pointerId);
+  }
 }
 
 els.fileInput.addEventListener("change", event => loadBmp(event.target.files?.[0]));
@@ -1397,13 +1505,17 @@ els.autoTuneButton.addEventListener("click", autoTune);
 els.localTuneButton.addEventListener("click", localTune);
 els.clearLocalCalibrationButton.addEventListener("click", () => clearLocalCalibration(false));
 els.clearReferenceButton.addEventListener("click", clearReference);
+els.clearNegativeButton.addEventListener("click", clearNegativeReference);
+els.clearExclusionButton.addEventListener("click", clearExclusions);
 els.showNormalButton.addEventListener("click", showNormalView);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
 els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
+els.negativeToolButton.addEventListener("click", () => setTool("negative-reference"));
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
+els.exclusionToolButton.addEventListener("click", () => setTool("exclusion"));
 els.undoReferenceButton.addEventListener("click", undoReference);
 els.redoReferenceButton.addEventListener("click", redoReference);
 
@@ -1422,6 +1534,7 @@ bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
   clearLocalCalibration(true);
   if (state.preview && state.referenceCenterline) {
     renderReferenceCanvas();
+    renderNegativeCanvas();
     if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent(false);
     else renderNormalOverlay();
     updateMetrics();
@@ -1429,7 +1542,10 @@ bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
   scheduleAutosave();
 });
 bindRange(els.referenceOpacity, $("referenceOpacityValue"), () => {
-  if (state.preview && state.referenceCenterline) renderReferenceCanvas();
+  if (state.preview && state.referenceCenterline) {
+    renderReferenceCanvas();
+    renderNegativeCanvas();
+  }
   scheduleAutosave();
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
@@ -1465,6 +1581,7 @@ els.viewer.addEventListener("wheel", event => {
 
 els.viewer.addEventListener("pointerdown", event => {
   if (!state.preview || event.button !== 0) return;
+  if (state.tool === "exclusion") { beginExclusionDraw(event); return; }
   if (state.tool !== "pan") { beginReferenceDraw(event); return; }
   state.dragging = true;
   state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
@@ -1472,6 +1589,7 @@ els.viewer.addEventListener("pointerdown", event => {
   els.viewer.setPointerCapture(event.pointerId);
 });
 els.viewer.addEventListener("pointermove", event => {
+  if (state.drawingExclusion) { continueExclusionDraw(event); return; }
   if (state.drawingReference) { continueReferenceDraw(event); return; }
   if (!state.dragging || !state.dragOrigin) return;
   state.tx = state.dragOrigin.tx + event.clientX - state.dragOrigin.x;
@@ -1479,6 +1597,7 @@ els.viewer.addEventListener("pointermove", event => {
   applyTransform();
 });
 function endPointer(event) {
+  if (state.drawingExclusion) endExclusionDraw(event);
   if (state.drawingReference) endReferenceDraw(event);
   if (!state.dragging) return;
   state.dragging = false;
@@ -1511,5 +1630,6 @@ window.addEventListener("resize", () => { if (state.preview) fitToViewer(); });
 
 renderHistory();
 els.projectStatus.textContent = `v${APP_VERSION} / ${ALGORITHM_VERSION}`;
+updateAnnotationStatus();
 updateLocalCalibrationStatus();
 updateControls();
