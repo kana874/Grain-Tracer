@@ -825,20 +825,26 @@ async function restoreProject(project, source = "プロジェクト") {
   const masks = restoreReferenceMasks(project);
   state.referenceMask = masks.referenceMask;
   state.referenceCenterline = masks.referenceCenterline;
+  state.negativeMask = masks.negativeMask;
+  state.negativeCenterline = masks.negativeCenterline;
+  state.exclusionRects = masks.exclusionRects;
   state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
+  state.negativeCount = state.negativeCenterline.reduce((sum, value) => sum + value, 0);
   resetReferenceHistory();
   state.history = Array.isArray(project.history) ? project.history : [];
   state.localCalibration = project.localCalibration ?? null;
   applySettings(project.settings ?? {});
   updateLocalCalibrationStatus();
   renderReferenceCanvas();
+  renderNegativeCanvas();
+  rebuildExclusionLayer();
   renderHistory();
   state.analysisMask = null;
   renderNormalOverlay();
   updateMetrics();
   updateControls();
   els.projectStatus.textContent = `${source}を復元しました`;
-  setStatus(`${source}を復元しました。お手本中心線: ${state.referenceCount.toLocaleString()} px`, 100);
+  setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px / 除外 ${state.exclusionRects.length}領域`, 100);
 }
 
 async function saveProjectManual() {
@@ -887,6 +893,10 @@ async function exportDiagnostics() {
       features,
       prediction: state.analysisMask,
       referenceCenterline: state.referenceCenterline,
+      negativeMask: state.negativeMask,
+      negativeCenterline: state.negativeCenterline,
+      exclusionMask: state.exclusionMask,
+      exclusionRects: state.exclusionRects,
       localCalibration: state.localCalibration,
       history: state.history,
       algorithmVersion: ALGORITHM_VERSION,
@@ -898,9 +908,21 @@ async function exportDiagnostics() {
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      currentComparisonOptions(),
+      currentEvaluationOptions(),
     );
     const referenceImage = els.referenceCanvas.getContext("2d").getImageData(
+      0,
+      0,
+      state.preview.width,
+      state.preview.height,
+    );
+    const negativeImage = els.negativeCanvas.getContext("2d").getImageData(
+      0,
+      0,
+      state.preview.width,
+      state.preview.height,
+    );
+    const exclusionImage = els.exclusionCanvas.getContext("2d").getImageData(
       0,
       0,
       state.preview.width,
@@ -947,6 +969,16 @@ async function exportDiagnostics() {
       await imageDataToBlob(referenceImage, "image/png"),
       `${base}.graintracer-reference.png`,
     );
+    await new Promise(resolve => setTimeout(resolve, 120));
+    downloadBlob(
+      await imageDataToBlob(negativeImage, "image/png"),
+      `${base}.graintracer-non-boundary.png`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 120));
+    downloadBlob(
+      await imageDataToBlob(exclusionImage, "image/png"),
+      `${base}.graintracer-exclusion.png`,
+    );
 
     const validationText = report.evaluation.validation
       ? ` / 検証F1 ${(report.evaluation.validation.f1 * 100).toFixed(1)}%`
@@ -975,6 +1007,11 @@ async function loadBmp(file) {
   state.referenceCount = 0;
   state.referenceMask = null;
   state.referenceCenterline = null;
+  state.negativeCount = 0;
+  state.negativeMask = null;
+  state.negativeCenterline = null;
+  state.exclusionRects = [];
+  state.exclusionMask = null;
   resetReferenceHistory();
   state.sourceFingerprint = null;
   state.localCalibration = null;
@@ -1000,10 +1037,17 @@ async function loadBmp(file) {
     state.preview = preview;
     state.referenceMask = new Uint8Array(preview.width * preview.height);
     state.referenceCenterline = new Uint8Array(preview.width * preview.height);
+    state.negativeMask = new Uint8Array(preview.width * preview.height);
+    state.negativeCenterline = new Uint8Array(preview.width * preview.height);
+    state.exclusionMask = new Uint8Array(preview.width * preview.height);
+    state.exclusionRects = [];
     prepareCanvas(preview.width, preview.height);
     els.imageCanvas.getContext("2d").putImageData(preview.imageData, 0, 0);
     els.overlayCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
     els.referenceCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
+    els.negativeCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
+    els.exclusionCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
+    updateAnnotationStatus();
     els.canvasStage.style.display = "block";
     els.emptyState.style.display = "none";
     setTool("pan");
@@ -1035,6 +1079,10 @@ async function loadBmp(file) {
     invalidateFeatures();
     state.referenceMask = null;
     state.referenceCenterline = null;
+    state.negativeMask = null;
+    state.negativeCenterline = null;
+    state.exclusionMask = null;
+    state.exclusionRects = [];
     els.canvasStage.style.display = "none";
     els.emptyState.style.display = "grid";
     const message = error instanceof BmpError ? error.message : `読込エラー: ${error.message}`;
@@ -1088,10 +1136,11 @@ function compareCurrent(record = true) {
     state.referenceCenterline,
     state.preview.width,
     state.preview.height,
-    currentComparisonOptions(),
+    currentEvaluationOptions(),
   );
   els.overlayCanvas.getContext("2d").putImageData(result.imageData, 0, 0);
   els.referenceCanvas.style.visibility = "hidden";
+  els.negativeCanvas.style.visibility = "hidden";
   state.comparisonMode = true;
   updateMetrics(result.metrics);
   updateControls();
@@ -1115,6 +1164,8 @@ async function autoTune() {
     setStatus("調整用お手本でDark/Ridge/Color/デンドライトを自動調整中...", 1);
     const result = await autoTuneBoundary(features, tuningReference, {
       ...currentComparisonOptions(),
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
       current: currentExtractionOptions(),
       onProgress: ratio => setStatus(`自動調整中... ${Math.round(ratio * 100)}%`, ratio * 99),
     });
@@ -1133,10 +1184,11 @@ async function autoTune() {
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      currentComparisonOptions(),
+      currentEvaluationOptions(),
     );
     els.overlayCanvas.getContext("2d").putImageData(comparison.imageData, 0, 0);
     els.referenceCanvas.style.visibility = "hidden";
+    els.negativeCanvas.style.visibility = "hidden";
     state.comparisonMode = true;
     updateMetrics(comparison.metrics);
     const validationMetrics = split.validationPixels >= 40
@@ -1145,7 +1197,7 @@ async function autoTune() {
         split.validationMask,
         state.preview.width,
         state.preview.height,
-        { ...currentComparisonOptions(), cols: 4, rows: 4 },
+        { ...currentComparisonOptions(), negativeMask: state.negativeMask, exclusionMask: state.exclusionMask, cols: 4, rows: 4 },
       )
       : null;
     const validationNote = validationMetrics
@@ -1183,6 +1235,8 @@ async function localTune() {
     setStatus("調整用お手本を使って範囲ごとの感度を調整中...", 1);
     const calibration = await tuneLocalSensitivity(features, tuningReference, {
       ...currentComparisonOptions(),
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
       ...extraction,
       cols: 4,
       rows: 4,
@@ -1196,6 +1250,7 @@ async function localTune() {
     state.analysisMask = await buildBoundaryMask(features, {
       ...extraction,
       localCalibration: calibration,
+      exclusionMask: state.exclusionMask,
       onProgress: ratio => setStatus(`局所補正で再抽出中... ${Math.round(ratio * 100)}%`, 62 + ratio * 36),
     });
 
@@ -1204,10 +1259,11 @@ async function localTune() {
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      currentComparisonOptions(),
+      currentEvaluationOptions(),
     );
     els.overlayCanvas.getContext("2d").putImageData(comparison.imageData, 0, 0);
     els.referenceCanvas.style.visibility = "hidden";
+    els.negativeCanvas.style.visibility = "hidden";
     state.comparisonMode = true;
     updateMetrics(comparison.metrics);
     const validationMetrics = split.validationPixels >= 40
@@ -1216,7 +1272,7 @@ async function localTune() {
         split.validationMask,
         state.preview.width,
         state.preview.height,
-        { ...currentComparisonOptions(), cols: 4, rows: 4 },
+        { ...currentComparisonOptions(), negativeMask: state.negativeMask, exclusionMask: state.exclusionMask, cols: 4, rows: 4 },
       )
       : null;
     addHistory(
