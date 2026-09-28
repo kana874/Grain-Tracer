@@ -77,7 +77,17 @@ Auto-tuning is deliberately split into two stages for company-PC performance:
 1. sensitivity and Dark/Ridge/Color weight profiles are scored only in the user-reviewed area;
 2. the best raw configuration is built once over the preview, then minimum connected-component size is tuned.
 
-## 7. Persistence
+## 7. Reference-guided local calibration
+
+After the global parameters are tuned, GrainTracer can optimise sensitivity independently in a 4×4 grid using only regions that contain enough user reference-centerline pixels.
+
+Each measured region searches a bounded sensitivity delta around the global setting. The local objective uses boundary F1 with a penalty for large deviations, so a tiny F1 gain cannot justify an extreme local threshold.
+
+The measured corrections are spatially smoothed and interpolated per pixel. Unlabelled regions include a zero-correction prior, so one annotated corner does not impose the same correction across the whole image.
+
+The local calibration grid is saved in the project and evaluation history. Changing extraction parameters or editing reference lines invalidates the old calibration.
+
+## 8. Persistence
 
 A `.graintracer.json` project stores:
 
@@ -88,14 +98,15 @@ A `.graintracer.json` project stores:
 - comparison settings
 - reference display mask and centerline
 - evaluation history, including global and regional metrics
+- reference-guided local sensitivity-calibration grid
 
 The 400 MB-class BMP itself is not embedded.
 
 IndexedDB is used for optional autosave and automatic restore when the same BMP fingerprint is opened again.
 
-## 8. Next stages
+## 9. Next stages
 
-- Reference-guided local parameter optimisation.
+- Extend local optimisation from sensitivity to selected Dark/Ridge/Color weights.
 - Local F1 / compensation-map visualisation.
 - Full-resolution overlapping-tile analysis and seam handling.
 - Smart Trace and manual correction workflow.
