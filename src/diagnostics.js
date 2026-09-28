@@ -193,6 +193,7 @@ function compactHistory(history) {
     parameters: item.parameters,
     local: item.local,
     localCalibration: item.localCalibration,
+    tuning: item.tuning ?? null,
     metrics: item.metrics ? {
       evaluationMode: item.metrics.evaluationMode ?? "partial-label",
       positiveRecall: item.metrics.positiveRecall ?? item.metrics.recall ?? 0,
