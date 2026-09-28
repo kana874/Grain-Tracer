@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.6-alpha</div>
+    <div class="version">v0.3.6.1-alpha</div>
   </header>
 
   <main class="layout">
@@ -42,6 +42,7 @@
         <ol class="guide-list">
           <li>「お手本線」で正しい粒界をなぞる</li>
           <li>「非粒界線」で粒内模様・傷など誤検出してほしくない線を教える</li>
+          <li>閉じた粒界の内側をクリックして「閉領域Fill」で粒内をまとめて非粒界化する</li>
           <li>スケールバー・文字などは「除外矩形」で解析対象外にする</li>
           <li>「比較」「自動調整」で判定との差を確認・最適化する</li>
         </ol>
@@ -65,6 +66,7 @@
         <button id="panToolButton" class="tool-button active" type="button" disabled>移動</button>
         <button id="referenceToolButton" class="tool-button" type="button" disabled>お手本線</button>
         <button id="negativeToolButton" class="tool-button negative-tool" type="button" disabled>非粒界線</button>
+        <button id="negativeFillToolButton" class="tool-button negative-fill-tool" type="button" disabled>閉領域Fill</button>
         <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>線消去</button>
         <button id="exclusionToolButton" class="tool-button exclusion-tool" type="button" disabled>除外矩形</button>
         <button id="fullRoiToolButton" class="tool-button roi-tool" type="button" disabled>完全評価ROI</button>
@@ -124,7 +126,7 @@
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
         <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
-        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。未記入領域はUnknownとして誤検出扱いしません。Auto Tune v2はROIがあればTrue F1、なければPartial Label評価を使います。</p>
+        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。未記入領域はUnknownです。「閉領域Fill」は黄色で閉じた粒の内側をクリックすると、境界から安全距離を残して内部を非粒界化します。Auto Tune v2は4×4領域を均等に見たNegative Leakageを使います。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
@@ -152,7 +154,7 @@
         </div>
         <div class="metrics-grid">
           <div><span>Positive Recall</span><strong id="metricPositiveRecall">-</strong></div>
-          <div><span>Negative Leakage</span><strong id="metricNegativeLeakage">-</strong></div>
+          <div><span>Balanced Neg. Leakage</span><strong id="metricNegativeLeakage">-</strong></div>
           <div><span>Alignment</span><strong id="metricAlignment">-</strong></div>
         </div>
         <p id="metricDetail" class="help metric-detail">お手本線を描くとPartial Label評価できます。</p>
@@ -187,6 +189,7 @@
           <li class="done">非粒界お手本 / 解析除外領域</li>
           <li class="done">Partial Label評価 / 完全評価ROI / Multi-Tolerance診断</li>
           <li class="done">Auto Tune v2（Coordinate Descent / feature=0 / Ablation）</li>
+          <li class="done">閉領域Negative Fill / Region-balanced Leakage</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
