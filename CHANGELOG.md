@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.2-alpha - 2026-09-28
+
+### Added
+- ChatGPT-oriented diagnostic export: diagnostic JSON, preview JPG, comparison PNG, Dark Ridge PNG, dendrite-difference PNG, and reference PNG.
+- Diagnostic JSON now includes TP / FP / FN feature statistics, regional metrics, error hotspots, compact tuning history, and Macro Region F1.
+- Deterministic connected-component holdout split for tuning vs. validation reference data.
+- Global and local auto-tuning now use the tuning subset when enough holdout data exists and report validation F1 separately.
+- Structure-Tensor dendrite orientation analysis and cross-boundary dendrite-difference feature.
+- Dendrite difference is now a fourth boundary feature alongside Dark, Dark Ridge, and Lab color difference.
+- Dendrite weight participates in CPU auto-tuning and local sensitivity calibration.
+
+### Changed
+- Algorithm version advanced to `boundary-v4-dendrite`.
+- App version advanced to `0.3.2-alpha`.
+- Diagnostic reports now expose the tuning/validation split so ChatGPT can distinguish fitting gains from generalization.
+
+### Validation
+- JavaScript syntax checks passed for the updated modules.
+- Synthetic Structure-Tensor test produced a strong dendrite-difference response at an artificial orientation boundary and near-zero response within uniform-orientation regions.
+- Synthetic auto-tune/holdout test confirmed that tuning and validation metrics are computed independently.
+
 All notable GrainTracer changes are recorded here.
 
 ## [0.3.0-alpha] - 2026-09-28
