@@ -1,7 +1,7 @@
 import { buildLuminance, computeMultiScaleDarkRidge } from "./ridge.js";
 import { computeDirectionalColorDifference } from "./color.js";
 import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./local-adaptive.js";
-import { compareBoundaryMasks, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
+import { compareBoundaryMasks, computeFullEvaluationRoiMetrics, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
 import { interpolateSensitivityDelta } from "./local-tune.js";
 import { computeDendriteDifference, computeDendriteOrientation } from "./dendrite.js";
 
@@ -228,32 +228,31 @@ export async function buildBoundaryMask(features, options = {}) {
   return result;
 }
 
-function betterScore(candidate, best) {
-  if (!best) return true;
-  if (candidate.f1 !== best.f1) return candidate.f1 > best.f1;
-  if (candidate.recall !== best.recall) return candidate.recall > best.recall;
-  return candidate.precision > best.precision;
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, Math.round(value)));
 }
 
-function weightProfiles(current) {
-  const profiles = [
-    [current.darkWeight, current.ridgeWeight, current.colorWeight, current.dendriteWeight ?? 20],
-    [15, 40, 25, 20],
-    [10, 45, 20, 25],
-    [15, 35, 25, 25],
-    [20, 35, 25, 20],
-    [10, 50, 15, 25],
-    [15, 30, 30, 25],
-    [20, 30, 20, 30],
-    [10, 35, 20, 35],
-  ];
-  const seen = new Set();
-  return profiles.filter(profile => {
-    const key = profile.join("/");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+function uniqueSorted(values, min, max) {
+  return [...new Set(values.map(value => clampInt(value, min, max)))].sort((a, b) => a - b);
+}
+
+function buildCompleteRoiMask(rects, width, height, exclusionMask = null) {
+  if (!rects?.length) return null;
+  const mask = new Uint8Array(width * height);
+  for (const rect of rects) {
+    const x0 = clampInt(Math.min(rect.x0, rect.x1), 0, width - 1);
+    const x1 = clampInt(Math.max(rect.x0, rect.x1), 0, width - 1);
+    const y0 = clampInt(Math.min(rect.y0, rect.y1), 0, height - 1);
+    const y1 = clampInt(Math.max(rect.y0, rect.y1), 0, height - 1);
+    for (let y = y0; y <= y1; y += 1) {
+      const base = y * width;
+      for (let x = x0; x <= x1; x += 1) {
+        const p = base + x;
+        if (!exclusionMask?.[p]) mask[p] = 1;
+      }
+    }
+  }
+  return mask;
 }
 
 function buildFastEvaluationHelpers(
@@ -261,45 +260,75 @@ function buildFastEvaluationHelpers(
   width,
   height,
   tolerance,
-  reviewRadius,
   negativeMask = null,
   exclusionMask = null,
+  fullEvaluationRois = null,
 ) {
   const referenceTolerance = dilateBinaryMask(referenceCenterline, width, height, tolerance);
-  const reviewMask = dilateBinaryMask(referenceCenterline, width, height, reviewRadius);
   const referenceIndices = [];
-  const reviewIndices = [];
+  const positiveBandIndices = [];
+  const negativeIndices = [];
+
   for (let p = 0; p < referenceCenterline.length; p += 1) {
     if (exclusionMask?.[p]) continue;
     if (referenceCenterline[p]) referenceIndices.push(p);
-    if (referenceTolerance[p] || (negativeMask?.[p] && !referenceTolerance[p])) reviewIndices.push(p);
+    if (referenceTolerance[p]) positiveBandIndices.push(p);
+    else if (negativeMask?.[p]) negativeIndices.push(p);
   }
-  return { referenceTolerance, referenceIndices, reviewIndices, tolerance, exclusionMask };
+
+  const roiMask = buildCompleteRoiMask(fullEvaluationRois, width, height, exclusionMask);
+  let roiReferenceTolerance = null;
+  const roiPixelIndices = [];
+  const roiReferenceIndices = [];
+
+  if (roiMask) {
+    const roiReference = new Uint8Array(referenceCenterline.length);
+    for (let p = 0; p < referenceCenterline.length; p += 1) {
+      if (!roiMask[p]) continue;
+      roiPixelIndices.push(p);
+      if (referenceCenterline[p]) {
+        roiReference[p] = 1;
+        roiReferenceIndices.push(p);
+      }
+    }
+    roiReferenceTolerance = dilateBinaryMask(roiReference, width, height, tolerance);
+  }
+
+  return {
+    referenceTolerance,
+    referenceIndices,
+    positiveBandIndices,
+    negativeIndices,
+    tolerance,
+    exclusionMask,
+    roiMask,
+    roiReferenceTolerance,
+    roiPixelIndices,
+    roiReferenceIndices,
+    objectiveMode: roiPixelIndices.length ? "complete-roi-f1" : "partial-label-balanced",
+  };
 }
 
-function evaluateRawConfiguration(features, helpers, config) {
-  const threshold = thresholdFromSensitivity(config.sensitivity);
-  const weights = normalizeWeights(
-    config.darkWeight,
-    config.ridgeWeight,
-    config.colorWeight,
-    config.dendriteWeight ?? 0,
-  );
-  const scoreIsPrediction = p => ((features.dark[p] / 255) * weights.dark
-    + (features.ridge[p] / 255) * weights.ridge
-    + (features.color[p] / 255) * weights.color
-    + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite) >= threshold;
+function partialBalancedScore(positiveRecall, negativeLeakage, hasNegativeLabels) {
+  if (!hasNegativeLabels) return positiveRecall;
+  const negativeSpecificity = Math.max(0, 1 - negativeLeakage);
+  return positiveRecall + negativeSpecificity
+    ? (2 * positiveRecall * negativeSpecificity) / (positiveRecall + negativeSpecificity)
+    : 0;
+}
 
+function scorePredictionFunction(features, helpers, scoreIsPrediction) {
   let matchedPrediction = 0;
-  let falsePositive = 0;
-  for (const p of helpers.reviewIndices) {
-    if (!scoreIsPrediction(p)) continue;
-    if (helpers.referenceTolerance[p]) matchedPrediction += 1;
-    else falsePositive += 1;
+  let negativePrediction = 0;
+
+  for (const p of helpers.positiveBandIndices) {
+    if (scoreIsPrediction(p)) matchedPrediction += 1;
+  }
+  for (const p of helpers.negativeIndices) {
+    if (scoreIsPrediction(p)) negativePrediction += 1;
   }
 
   let matchedReference = 0;
-  let falseNegative = 0;
   const { width, height } = features;
   const tolerance = helpers.tolerance;
   for (const p of helpers.referenceIndices) {
@@ -321,28 +350,258 @@ function evaluateRawConfiguration(features, helpers, config) {
       }
     }
     if (found) matchedReference += 1;
-    else falseNegative += 1;
   }
 
-  const precisionDen = matchedPrediction + falsePositive;
-  const recallDen = matchedReference + falseNegative;
-  const precision = precisionDen ? matchedPrediction / precisionDen : 0;
-  const recall = recallDen ? matchedReference / recallDen : 0;
-  const f1 = precision + recall ? (2 * precision * recall) / (precision + recall) : 0;
-  return { precision, recall, f1 };
+  const positiveRecall = helpers.referenceIndices.length
+    ? matchedReference / helpers.referenceIndices.length
+    : 0;
+  const negativeLeakage = helpers.negativeIndices.length
+    ? negativePrediction / helpers.negativeIndices.length
+    : 0;
+  const labelPrecision = matchedPrediction + negativePrediction
+    ? matchedPrediction / (matchedPrediction + negativePrediction)
+    : 0;
+  const labelF1 = labelPrecision + positiveRecall
+    ? (2 * labelPrecision * positiveRecall) / (labelPrecision + positiveRecall)
+    : 0;
+  const partialScore = partialBalancedScore(
+    positiveRecall,
+    negativeLeakage,
+    helpers.negativeIndices.length > 0,
+  );
+
+  let roiPrecision = null;
+  let roiRecall = null;
+  let roiF1 = null;
+  if (helpers.roiPixelIndices.length) {
+    let roiMatchedPrediction = 0;
+    let roiFalsePositive = 0;
+    for (const p of helpers.roiPixelIndices) {
+      if (!scoreIsPrediction(p)) continue;
+      if (helpers.roiReferenceTolerance[p]) roiMatchedPrediction += 1;
+      else roiFalsePositive += 1;
+    }
+
+    let roiMatchedReference = 0;
+    for (const p of helpers.roiReferenceIndices) {
+      const x = p % width;
+      const y = Math.floor(p / width);
+      let found = false;
+      for (let dy = -tolerance; dy <= tolerance && !found; dy += 1) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -tolerance; dx <= tolerance; dx += 1) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          const np = ny * width + nx;
+          if (!helpers.roiMask[np] || helpers.exclusionMask?.[np]) continue;
+          if (scoreIsPrediction(np)) {
+            found = true;
+            break;
+          }
+        }
+      }
+      if (found) roiMatchedReference += 1;
+    }
+
+    roiPrecision = roiMatchedPrediction + roiFalsePositive
+      ? roiMatchedPrediction / (roiMatchedPrediction + roiFalsePositive)
+      : 0;
+    roiRecall = helpers.roiReferenceIndices.length
+      ? roiMatchedReference / helpers.roiReferenceIndices.length
+      : 0;
+    roiF1 = roiPrecision + roiRecall
+      ? (2 * roiPrecision * roiRecall) / (roiPrecision + roiRecall)
+      : 0;
+  }
+
+  return {
+    objectiveMode: helpers.objectiveMode,
+    score: helpers.objectiveMode === "complete-roi-f1" ? (roiF1 ?? 0) : partialScore,
+    positiveRecall,
+    negativeLeakage,
+    labelPrecision,
+    labelF1,
+    roiPrecision,
+    roiRecall,
+    roiF1,
+  };
+}
+
+function evaluateRawConfiguration(features, helpers, config) {
+  const threshold = thresholdFromSensitivity(config.sensitivity);
+  const weights = normalizeWeights(
+    config.darkWeight,
+    config.ridgeWeight,
+    config.colorWeight,
+    config.dendriteWeight ?? 0,
+  );
+  const scoreIsPrediction = p => ((features.dark[p] / 255) * weights.dark
+    + (features.ridge[p] / 255) * weights.ridge
+    + (features.color[p] / 255) * weights.color
+    + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite) >= threshold;
+  return scorePredictionFunction(features, helpers, scoreIsPrediction);
+}
+
+function betterTuneScore(candidate, best) {
+  if (!best) return true;
+  const epsilon = 1e-9;
+  if (candidate.score > best.score + epsilon) return true;
+  if (candidate.score < best.score - epsilon) return false;
+
+  if (candidate.objectiveMode === "complete-roi-f1") {
+    const candidateRecall = candidate.roiRecall ?? 0;
+    const bestRecall = best.roiRecall ?? 0;
+    if (candidateRecall > bestRecall + epsilon) return true;
+    if (candidateRecall < bestRecall - epsilon) return false;
+  }
+
+  if (candidate.positiveRecall > best.positiveRecall + epsilon) return true;
+  if (candidate.positiveRecall < best.positiveRecall - epsilon) return false;
+  if (candidate.negativeLeakage < best.negativeLeakage - epsilon) return true;
+  return false;
+}
+
+function coordinateCandidates(name, value, round) {
+  if (name === "sensitivity") {
+    const step = [12, 6, 3][Math.min(round, 2)];
+    const broad = round === 0 ? [35, 50, 65, 80, 95] : [];
+    return uniqueSorted(
+      [value - 2 * step, value - step, value, value + step, value + 2 * step, ...broad],
+      1,
+      100,
+    );
+  }
+
+  const step = [25, 10, 5][Math.min(round, 2)];
+  const broad = round === 0 ? [0, 10, 25, 50, 75, 100] : [0];
+  return uniqueSorted(
+    [value - 2 * step, value - step, value, value + step, value + 2 * step, ...broad],
+    0,
+    100,
+  );
+}
+
+function buildMaskFromComponentSizes(supported, sizes, minComponent, exclusionMask) {
+  const mask = new Uint8Array(supported.length);
+  for (let p = 0; p < mask.length; p += 1) {
+    if (supported[p] && sizes[p] >= minComponent && !exclusionMask?.[p]) mask[p] = 1;
+  }
+  return mask;
+}
+
+function scoreProcessedMask(mask, referenceCenterline, features, options, helpers) {
+  const partialMetrics = compareBoundaryMasks(
+    mask,
+    referenceCenterline,
+    features.width,
+    features.height,
+    {
+      tolerance: helpers.tolerance,
+      reviewRadius: options.reviewRadius ?? 18,
+      negativeMask: options.negativeMask ?? null,
+      exclusionMask: options.exclusionMask ?? null,
+    },
+  );
+
+  const partialScore = partialBalancedScore(
+    partialMetrics.positiveRecall,
+    partialMetrics.negativeLeakage,
+    partialMetrics.negativePixels > 0,
+  );
+
+  let roiMetrics = null;
+  if (options.fullEvaluationRois?.length) {
+    roiMetrics = computeFullEvaluationRoiMetrics(
+      mask,
+      referenceCenterline,
+      features.width,
+      features.height,
+      options.fullEvaluationRois,
+      {
+        tolerance: helpers.tolerance,
+        exclusionMask: options.exclusionMask ?? null,
+      },
+    );
+  }
+
+  return {
+    objectiveMode: roiMetrics?.roiCount ? "complete-roi-f1" : "partial-label-balanced",
+    score: roiMetrics?.roiCount ? roiMetrics.f1 : partialScore,
+    positiveRecall: partialMetrics.positiveRecall,
+    negativeLeakage: partialMetrics.negativeLeakage,
+    labelPrecision: partialMetrics.labelPrecision,
+    labelF1: partialMetrics.labelF1,
+    roiPrecision: roiMetrics?.roiCount ? roiMetrics.precision : null,
+    roiRecall: roiMetrics?.roiCount ? roiMetrics.recall : null,
+    roiF1: roiMetrics?.roiCount ? roiMetrics.f1 : null,
+    partialMetrics,
+    roiMetrics,
+  };
+}
+
+async function optimizeMinComponent(features, referenceCenterline, config, options, helpers, progress) {
+  const raw = buildRawBoundaryMask(features, config);
+  applyExclusionInPlace(raw, options.exclusionMask);
+  const supported = neighborSupport(raw, features.width, features.height);
+  const sizes = computeComponentSizeMap(supported, features.width, features.height);
+
+  const minCandidates = uniqueSorted(
+    [1, 4, 8, 16, 24, 40, 64, 96, 128, 192, 256, config.minComponent ?? 24],
+    1,
+    300,
+  );
+  let best = null;
+  let bestMask = null;
+
+  for (let i = 0; i < minCandidates.length; i += 1) {
+    const minComponent = minCandidates[i];
+    const mask = buildMaskFromComponentSizes(
+      supported,
+      sizes,
+      minComponent,
+      options.exclusionMask,
+    );
+    const objective = scoreProcessedMask(mask, referenceCenterline, features, options, helpers);
+    const candidate = {
+      ...objective,
+      parameters: { ...config, minComponent },
+    };
+    if (betterTuneScore(candidate, best)) {
+      best = candidate;
+      bestMask = mask;
+    }
+    progress?.((i + 1) / minCandidates.length);
+    if (i % 2 === 1) await new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  return { ...best, mask: bestMask };
+}
+
+function compactObjective(objective) {
+  return {
+    mode: objective.objectiveMode,
+    score: objective.score,
+    positiveRecall: objective.positiveRecall,
+    negativeLeakage: objective.negativeLeakage,
+    labelF1Proxy: objective.labelF1,
+    roiPrecision: objective.roiPrecision,
+    roiRecall: objective.roiRecall,
+    roiF1: objective.roiF1,
+  };
 }
 
 export async function autoTuneBoundary(features, referenceCenterline, options = {}) {
   const tolerance = options.tolerance ?? 4;
-  const reviewRadius = Math.max(tolerance + 1, options.reviewRadius ?? 18);
   const onProgress = options.onProgress ?? (() => {});
-  const current = options.current ?? {
-    sensitivity: 62,
-    darkWeight: 15,
-    ridgeWeight: 40,
-    colorWeight: 25,
-    dendriteWeight: 20,
-    minComponent: 24,
+  const maxRounds = clampInt(options.maxRounds ?? 3, 1, 3);
+  const current = {
+    sensitivity: clampInt(options.current?.sensitivity ?? 62, 1, 100),
+    darkWeight: clampInt(options.current?.darkWeight ?? 15, 0, 100),
+    ridgeWeight: clampInt(options.current?.ridgeWeight ?? 40, 0, 100),
+    colorWeight: clampInt(options.current?.colorWeight ?? 25, 0, 100),
+    dendriteWeight: clampInt(options.current?.dendriteWeight ?? 20, 0, 100),
+    minComponent: clampInt(options.current?.minComponent ?? 24, 1, 300),
   };
 
   const helpers = buildFastEvaluationHelpers(
@@ -350,113 +609,171 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     features.width,
     features.height,
     tolerance,
-    reviewRadius,
     options.negativeMask ?? null,
     options.exclusionMask ?? null,
+    options.fullEvaluationRois ?? null,
   );
   if (helpers.referenceIndices.length === 0) throw new Error("お手本線がありません。");
-
-  const sensitivityCandidates = [...new Set([
-    current.sensitivity - 16,
-    current.sensitivity - 8,
-    current.sensitivity,
-    current.sensitivity + 8,
-    current.sensitivity + 16,
-    50, 58, 66, 74, 82, 90,
-  ].map(v => Math.max(1, Math.min(100, Math.round(v)))))]
-    .sort((a, b) => a - b);
-  const profiles = weightProfiles(current);
-
-  // Stage 1: tune only against explicitly labelled Positive / Negative pixels.
-  // Unlabelled predictions are Unknown and must not be treated as false positives.
-  let bestRaw = null;
-  let rawStep = 0;
-  const rawTotal = sensitivityCandidates.length * profiles.length;
-  for (const sensitivity of sensitivityCandidates) {
-    for (const [darkWeight, ridgeWeight, colorWeight, dendriteWeight] of profiles) {
-      const metrics = evaluateRawConfiguration(features, helpers, {
-        sensitivity,
-        darkWeight,
-        ridgeWeight,
-        colorWeight,
-        dendriteWeight,
-      });
-      const candidate = { sensitivity, darkWeight, ridgeWeight, colorWeight, dendriteWeight, ...metrics };
-      if (betterScore(candidate, bestRaw)) bestRaw = candidate;
-      rawStep += 1;
-      if (rawStep % 6 === 0 || rawStep === rawTotal) {
-        onProgress((rawStep / rawTotal) * 0.7);
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
-    }
+  if (helpers.objectiveMode === "complete-roi-f1" && helpers.roiReferenceIndices.length === 0) {
+    throw new Error("完全評価ROI内に粒界お手本線がありません。");
   }
 
-  // Stage 2: build morphology/component data once for the best raw configuration,
-  // then only tune the minimum connected component size.
-  const raw = buildRawBoundaryMask(features, bestRaw);
-  applyExclusionInPlace(raw, options.exclusionMask);
-  const supported = neighborSupport(raw, features.width, features.height);
-  const sizes = computeComponentSizeMap(supported, features.width, features.height);
-  onProgress(0.78);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  const search = {
+    version: 2,
+    strategy: "coordinate-descent",
+    objectiveMode: helpers.objectiveMode,
+    rounds: [],
+    ablation: [],
+  };
 
-  const minCandidates = [...new Set([1, 4, 8, 16, 24, 40, 64, 96, 128, current.minComponent])]
-    .filter(v => v >= 1 && v <= 300)
-    .sort((a, b) => a - b);
-  let best = null;
-  let bestMask = null;
+  const totalPhases = 1 + maxRounds * 6 + 1;
+  let completedPhases = 0;
+  const phaseProgress = localRatio => {
+    onProgress(Math.min(0.98, (completedPhases + localRatio) / totalPhases));
+  };
 
-  for (let i = 0; i < minCandidates.length; i += 1) {
-    const minComponent = minCandidates[i];
-    const mask = new Uint8Array(supported.length);
-    for (let p = 0; p < mask.length; p += 1) {
-      if (supported[p] && sizes[p] >= minComponent) mask[p] = 1;
+  let globalBest = await optimizeMinComponent(
+    features,
+    referenceCenterline,
+    current,
+    options,
+    helpers,
+    ratio => phaseProgress(ratio),
+  );
+  completedPhases += 1;
+  search.baseline = {
+    parameters: { ...globalBest.parameters },
+    objective: compactObjective(globalBest),
+  };
+  onProgress(completedPhases / totalPhases);
+
+  let working = { ...globalBest.parameters };
+  const coordinates = ["sensitivity", "darkWeight", "ridgeWeight", "colorWeight", "dendriteWeight"];
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const roundTrace = {
+      round: round + 1,
+      startParameters: { ...working },
+      coordinates: [],
+    };
+    let anyCoordinateChanged = false;
+
+    for (const coordinate of coordinates) {
+      const values = coordinateCandidates(coordinate, working[coordinate], round);
+      let bestRaw = null;
+      const candidates = [];
+
+      for (let i = 0; i < values.length; i += 1) {
+        const candidateConfig = { ...working, [coordinate]: values[i] };
+        const objective = evaluateRawConfiguration(features, helpers, candidateConfig);
+        const candidate = {
+          ...objective,
+          parameters: candidateConfig,
+        };
+        candidates.push({
+          value: values[i],
+          ...compactObjective(candidate),
+        });
+        if (betterTuneScore(candidate, bestRaw)) bestRaw = candidate;
+        phaseProgress((i + 1) / values.length);
+      }
+
+      const previousValue = working[coordinate];
+      working = { ...working, [coordinate]: bestRaw.parameters[coordinate] };
+      if (working[coordinate] !== previousValue) anyCoordinateChanged = true;
+      roundTrace.coordinates.push({
+        name: coordinate,
+        previousValue,
+        selectedValue: working[coordinate],
+        candidates,
+      });
+      completedPhases += 1;
+      onProgress(completedPhases / totalPhases);
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
-    applyExclusionInPlace(mask, options.exclusionMask);
-    const metrics = compareBoundaryMasks(mask, referenceCenterline, features.width, features.height, {
+
+    const processed = await optimizeMinComponent(
+      features,
+      referenceCenterline,
+      working,
+      options,
+      helpers,
+      ratio => phaseProgress(ratio),
+    );
+    completedPhases += 1;
+    roundTrace.processed = {
+      parameters: { ...processed.parameters },
+      objective: compactObjective(processed),
+    };
+
+    if (betterTuneScore(processed, globalBest)) {
+      globalBest = processed;
+      working = { ...processed.parameters };
+      roundTrace.accepted = true;
+    } else {
+      working = { ...globalBest.parameters };
+      roundTrace.accepted = false;
+      roundTrace.revertedTo = { ...working };
+    }
+    search.rounds.push(roundTrace);
+    onProgress(completedPhases / totalPhases);
+
+    if (!anyCoordinateChanged && !roundTrace.accepted) break;
+  }
+
+  const ablations = [
+    ["full", null],
+    ["-Dark", "darkWeight"],
+    ["-Ridge", "ridgeWeight"],
+    ["-Color", "colorWeight"],
+    ["-Dendrite", "dendriteWeight"],
+  ];
+  for (let i = 0; i < ablations.length; i += 1) {
+    const [label, feature] = ablations[i];
+    const config = { ...globalBest.parameters };
+    if (feature) config[feature] = 0;
+    const objective = evaluateRawConfiguration(features, helpers, config);
+    search.ablation.push({
+      label,
+      disabledFeature: feature,
+      parameters: {
+        darkWeight: config.darkWeight,
+        ridgeWeight: config.ridgeWeight,
+        colorWeight: config.colorWeight,
+        dendriteWeight: config.dendriteWeight,
+      },
+      objective: compactObjective(objective),
+    });
+    phaseProgress((i + 1) / ablations.length);
+  }
+  completedPhases += 1;
+
+  const metrics = computeRegionalMetrics(
+    globalBest.mask,
+    referenceCenterline,
+    features.width,
+    features.height,
+    {
       tolerance,
-      reviewRadius,
+      reviewRadius: options.reviewRadius ?? 18,
       negativeMask: options.negativeMask ?? null,
       exclusionMask: options.exclusionMask ?? null,
-    });
-    const candidate = {
-      sensitivity: bestRaw.sensitivity,
-      darkWeight: bestRaw.darkWeight,
-      ridgeWeight: bestRaw.ridgeWeight,
-      colorWeight: bestRaw.colorWeight,
-      dendriteWeight: bestRaw.dendriteWeight,
-      minComponent,
-      precision: metrics.precision,
-      recall: metrics.recall,
-      f1: metrics.f1,
-    };
-    if (betterScore(candidate, best)) {
-      best = candidate;
-      bestMask = mask;
-    }
-    onProgress(0.78 + ((i + 1) / minCandidates.length) * 0.22);
-    await new Promise(resolve => setTimeout(resolve, 0));
-  }
-
-  const metrics = computeRegionalMetrics(bestMask, referenceCenterline, features.width, features.height, {
-    tolerance,
-    reviewRadius,
-    negativeMask: options.negativeMask ?? null,
-    exclusionMask: options.exclusionMask ?? null,
-    cols: 4,
-    rows: 4,
-  });
-  return {
-    parameters: {
-      sensitivity: best.sensitivity,
-      darkWeight: best.darkWeight,
-      ridgeWeight: best.ridgeWeight,
-      colorWeight: best.colorWeight,
-      dendriteWeight: best.dendriteWeight,
-      minComponent: best.minComponent,
+      cols: 4,
+      rows: 4,
     },
+  );
+  search.final = {
+    parameters: { ...globalBest.parameters },
+    objective: compactObjective(globalBest),
+  };
+  onProgress(1);
+
+  return {
+    parameters: { ...globalBest.parameters },
     metrics,
-    mask: bestMask,
+    roiMetrics: globalBest.roiMetrics ?? null,
+    mask: globalBest.mask,
+    search,
   };
 }
 
