@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.3-alpha - 2026-09-28
+
+### Added
+- Reference Editor v2 with canonical centerline-driven rendering.
+- Reference Undo / Redo buttons with Ctrl+Z, Ctrl+Y, and Ctrl+Shift+Z shortcuts.
+- Up to 120 in-session reference-edit history entries using changed pixels only.
+- Adjustable reference-line opacity, stored in GrainTracer project settings.
+- Dirty-rectangle updates while drawing and erasing so only the affected reference area is rebuilt.
+
+### Changed
+- The visible yellow reference line is now generated from the same reference centerline and judgement-width mask used by evaluation.
+- Drawing no longer uses a separate temporary vector stroke, removing the pointer-up visual shift.
+- Reference opacity affects display only and does not change judgement width or evaluation.
+- Clear-all reference editing is Undo-able.
+- App version advanced to `0.3.3-alpha`; boundary algorithm remains `boundary-v4-dendrite`.
+
+### Validation
+- Reference Editor helper module is isolated from boundary analysis so editing changes do not alter the extraction algorithm.
+- Undo / Redo history stores only changed centerline pixels rather than full preview masks.
+
 ## v0.3.2-alpha - 2026-09-28
 
 ### Added
