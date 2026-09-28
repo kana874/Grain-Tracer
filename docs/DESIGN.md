@@ -13,6 +13,8 @@ Source BMP (read only)
   + derived feature maps
   + automatic boundary candidates
   + user reference boundaries
+  + user non-boundary examples
+  + rectangular exclusion regions
   + comparison/evaluation history
   + analysis settings
 ```
@@ -32,14 +34,17 @@ halo: 64 px per side
 
 ## 4. v0.3 boundary model
 
-The v0.3 boundary score uses three features:
+The current preview boundary score uses four features:
 
 ```text
 BoundaryScore =
-  w_dark  * LocalDarkness
-+ w_ridge * MultiScaleDarkRidge
-+ w_color * DirectionalLabDifference
+  w_dark      * LocalDarkness
++ w_ridge     * MultiScaleDarkRidge
++ w_color     * DirectionalLabDifference
++ w_dendrite  * DendriteDifference
 ```
+
+The dendrite feature is based on local Structure-Tensor orientation/coherence and compares tissue-like orientation changes across a candidate boundary.
 
 ### Local darkness
 
@@ -74,7 +79,7 @@ GPU use is not required.
 
 Auto-tuning is deliberately split into two stages for company-PC performance:
 
-1. sensitivity and Dark/Ridge/Color weight profiles are scored only in the user-reviewed area;
+1. sensitivity and Dark/Ridge/Color/Dendrite weight profiles are scored only in the user-reviewed area, including explicit non-boundary examples;
 2. the best raw configuration is built once over the preview, then minimum connected-component size is tuned.
 
 ## 7. Reference-guided local calibration
@@ -87,7 +92,21 @@ The measured corrections are spatially smoothed and interpolated per pixel. Unla
 
 The local calibration grid is saved in the project and evaluation history. Changing extraction parameters or editing reference lines invalidates the old calibration.
 
-## 8. Persistence
+## 8. v0.3.4 annotation model
+
+Three annotation classes are kept separate from the source image:
+
+- positive grain-boundary reference: yellow centerline expanded to the visible/judgement width;
+- non-boundary reference: purple centerline expanded to the same width and used as an explicit negative example during comparison and tuning;
+- exclusion rectangles: grey regions removed from extraction and evaluation, intended for scale bars, labels, and other content that should never participate in analysis.
+
+Positive and non-boundary labels are mutually exclusive while drawing: painting one class removes conflicting centerline pixels from the other class along the same stroke.
+
+Non-boundary examples extend the evaluated area without treating every unlabelled pixel as negative. Exclusion rectangles are also applied before connected-component evaluation so ignored image content cannot support a retained candidate component.
+
+Undo/Redo covers positive/negative line edits and exclusion-region edits.
+
+## 9. Persistence
 
 A `.graintracer.json` project stores:
 
@@ -97,6 +116,8 @@ A `.graintracer.json` project stores:
 - local-adaptation settings
 - comparison settings
 - reference display mask and centerline
+- non-boundary display mask and centerline
+- exclusion rectangles
 - evaluation history, including global and regional metrics
 - reference-guided local sensitivity-calibration grid
 
@@ -104,7 +125,7 @@ The 400 MB-class BMP itself is not embedded.
 
 IndexedDB is used for optional autosave and automatic restore when the same BMP fingerprint is opened again.
 
-## 9. Next stages
+## 10. Next stages
 
 - Extend local optimisation from sensitivity to selected Dark/Ridge/Color weights.
 - Local F1 / compensation-map visualisation.
