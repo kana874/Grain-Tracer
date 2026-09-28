@@ -1,7 +1,7 @@
 import { buildLuminance, computeMultiScaleDarkRidge } from "./ridge.js";
 import { computeDirectionalColorDifference } from "./color.js";
 import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./local-adaptive.js";
-import { compareBoundaryMasks, computeRegionalMetrics } from "./evaluation.js";
+import { compareBoundaryMasks, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -196,6 +196,65 @@ function weightProfiles(current) {
   });
 }
 
+function buildFastEvaluationHelpers(referenceCenterline, width, height, tolerance, reviewRadius) {
+  const referenceTolerance = dilateBinaryMask(referenceCenterline, width, height, tolerance);
+  const reviewMask = dilateBinaryMask(referenceCenterline, width, height, reviewRadius);
+  const referenceIndices = [];
+  const reviewIndices = [];
+  for (let p = 0; p < referenceCenterline.length; p += 1) {
+    if (referenceCenterline[p]) referenceIndices.push(p);
+    if (reviewMask[p]) reviewIndices.push(p);
+  }
+  return { referenceTolerance, referenceIndices, reviewIndices, tolerance };
+}
+
+function evaluateRawConfiguration(features, helpers, config) {
+  const threshold = thresholdFromSensitivity(config.sensitivity);
+  const weights = normalizeWeights(config.darkWeight, config.ridgeWeight, config.colorWeight);
+  const scoreIsPrediction = p => ((features.dark[p] / 255) * weights.dark
+    + (features.ridge[p] / 255) * weights.ridge
+    + (features.color[p] / 255) * weights.color) >= threshold;
+
+  let matchedPrediction = 0;
+  let falsePositive = 0;
+  for (const p of helpers.reviewIndices) {
+    if (!scoreIsPrediction(p)) continue;
+    if (helpers.referenceTolerance[p]) matchedPrediction += 1;
+    else falsePositive += 1;
+  }
+
+  let matchedReference = 0;
+  let falseNegative = 0;
+  const { width, height } = features;
+  const tolerance = helpers.tolerance;
+  for (const p of helpers.referenceIndices) {
+    const x = p % width;
+    const y = Math.floor(p / width);
+    let found = false;
+    for (let dy = -tolerance; dy <= tolerance && !found; dy += 1) {
+      const ny = y + dy;
+      if (ny < 0 || ny >= height) continue;
+      for (let dx = -tolerance; dx <= tolerance; dx += 1) {
+        const nx = x + dx;
+        if (nx < 0 || nx >= width) continue;
+        if (scoreIsPrediction(ny * width + nx)) {
+          found = true;
+          break;
+        }
+      }
+    }
+    if (found) matchedReference += 1;
+    else falseNegative += 1;
+  }
+
+  const precisionDen = matchedPrediction + falsePositive;
+  const recallDen = matchedReference + falseNegative;
+  const precision = precisionDen ? matchedPrediction / precisionDen : 0;
+  const recall = recallDen ? matchedReference / recallDen : 0;
+  const f1 = precision + recall ? (2 * precision * recall) / (precision + recall) : 0;
+  return { precision, recall, f1 };
+}
+
 export async function autoTuneBoundary(features, referenceCenterline, options = {}) {
   const tolerance = options.tolerance ?? 4;
   const reviewRadius = Math.max(tolerance + 1, options.reviewRadius ?? 18);
@@ -207,6 +266,16 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     colorWeight: 25,
     minComponent: 24,
   };
+
+  const helpers = buildFastEvaluationHelpers(
+    referenceCenterline,
+    features.width,
+    features.height,
+    tolerance,
+    reviewRadius,
+  );
+  if (helpers.referenceIndices.length === 0) throw new Error("お手本線がありません。");
+
   const sensitivityCandidates = [...new Set([
     current.sensitivity - 16,
     current.sensitivity - 8,
@@ -217,51 +286,70 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   ].map(v => Math.max(1, Math.min(100, Math.round(v)))))]
     .sort((a, b) => a - b);
   const profiles = weightProfiles(current);
+
+  // Stage 1: tune threshold and feature weights only inside the reviewed region.
+  // This avoids repeatedly allocating full-image masks for every candidate.
+  let bestRaw = null;
+  let rawStep = 0;
+  const rawTotal = sensitivityCandidates.length * profiles.length;
+  for (const sensitivity of sensitivityCandidates) {
+    for (const [darkWeight, ridgeWeight, colorWeight] of profiles) {
+      const metrics = evaluateRawConfiguration(features, helpers, {
+        sensitivity,
+        darkWeight,
+        ridgeWeight,
+        colorWeight,
+      });
+      const candidate = { sensitivity, darkWeight, ridgeWeight, colorWeight, ...metrics };
+      if (betterScore(candidate, bestRaw)) bestRaw = candidate;
+      rawStep += 1;
+      if (rawStep % 6 === 0 || rawStep === rawTotal) {
+        onProgress((rawStep / rawTotal) * 0.7);
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }
+  }
+
+  // Stage 2: build morphology/component data once for the best raw configuration,
+  // then only tune the minimum connected component size.
+  const raw = buildRawBoundaryMask(features, bestRaw);
+  const supported = neighborSupport(raw, features.width, features.height);
+  const sizes = computeComponentSizeMap(supported, features.width, features.height);
+  onProgress(0.78);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
   const minCandidates = [...new Set([1, 4, 8, 16, 24, 40, 64, 96, 128, current.minComponent])]
     .filter(v => v >= 1 && v <= 300)
     .sort((a, b) => a - b);
-
   let best = null;
   let bestMask = null;
-  let step = 0;
-  const total = sensitivityCandidates.length * profiles.length * minCandidates.length;
 
-  for (const sensitivity of sensitivityCandidates) {
-    for (const [darkWeight, ridgeWeight, colorWeight] of profiles) {
-      const raw = buildRawBoundaryMask(features, { sensitivity, darkWeight, ridgeWeight, colorWeight });
-      const supported = neighborSupport(raw, features.width, features.height);
-      const sizes = computeComponentSizeMap(supported, features.width, features.height);
-
-      for (const minComponent of minCandidates) {
-        const mask = new Uint8Array(supported.length);
-        for (let p = 0; p < mask.length; p += 1) {
-          if (supported[p] && sizes[p] >= minComponent) mask[p] = 1;
-        }
-        const metrics = compareBoundaryMasks(mask, referenceCenterline, features.width, features.height, {
-          tolerance,
-          reviewRadius,
-        });
-        const candidate = {
-          sensitivity,
-          darkWeight,
-          ridgeWeight,
-          colorWeight,
-          minComponent,
-          precision: metrics.precision,
-          recall: metrics.recall,
-          f1: metrics.f1,
-        };
-        if (betterScore(candidate, best)) {
-          best = candidate;
-          bestMask = mask;
-        }
-        step += 1;
-        if (step % 8 === 0 || step === total) {
-          onProgress(step / total);
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      }
+  for (let i = 0; i < minCandidates.length; i += 1) {
+    const minComponent = minCandidates[i];
+    const mask = new Uint8Array(supported.length);
+    for (let p = 0; p < mask.length; p += 1) {
+      if (supported[p] && sizes[p] >= minComponent) mask[p] = 1;
     }
+    const metrics = compareBoundaryMasks(mask, referenceCenterline, features.width, features.height, {
+      tolerance,
+      reviewRadius,
+    });
+    const candidate = {
+      sensitivity: bestRaw.sensitivity,
+      darkWeight: bestRaw.darkWeight,
+      ridgeWeight: bestRaw.ridgeWeight,
+      colorWeight: bestRaw.colorWeight,
+      minComponent,
+      precision: metrics.precision,
+      recall: metrics.recall,
+      f1: metrics.f1,
+    };
+    if (betterScore(candidate, best)) {
+      best = candidate;
+      bestMask = mask;
+    }
+    onProgress(0.78 + ((i + 1) / minCandidates.length) * 0.22);
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
 
   const metrics = computeRegionalMetrics(bestMask, referenceCenterline, features.width, features.height, {
