@@ -50,7 +50,7 @@ export async function fingerprintSource(file, header) {
 }
 
 export function createProjectSnapshot(input) {
-  const { source, preview, settings, referenceMask, referenceCenterline, history } = input;
+  const { source, preview, settings, referenceMask, referenceCenterline, localCalibration, history } = input;
   return {
     format: PROJECT_FORMAT,
     formatVersion: PROJECT_VERSION,
@@ -64,6 +64,7 @@ export function createProjectSnapshot(input) {
       mask: packBinaryMask(referenceMask),
       centerline: packBinaryMask(referenceCenterline),
     },
+    localCalibration: localCalibration ?? null,
     history: history ?? [],
   };
 }
