@@ -198,6 +198,12 @@ function compactHistory(history) {
       evaluationMode: item.metrics.evaluationMode ?? "partial-label",
       positiveRecall: item.metrics.positiveRecall ?? item.metrics.recall ?? 0,
       negativeLeakage: item.metrics.negativeLeakage ?? item.metrics.negativeHitRate ?? 0,
+      macroNegativeLeakage: item.metrics.macroNegativeLeakage
+        ?? item.metrics.negativeLeakage
+        ?? item.metrics.negativeHitRate
+        ?? 0,
+      negativeRegionCount: item.metrics.negativeRegionCount ?? 0,
+      maxNegativeRegionFraction: item.metrics.maxNegativeRegionFraction ?? 0,
       alignmentError: item.metrics.alignmentError ?? null,
       labelPrecisionProxy: item.metrics.labelPrecisionProxy ?? item.metrics.precision ?? 0,
       labelF1Proxy: item.metrics.labelF1Proxy ?? item.metrics.f1 ?? 0,
