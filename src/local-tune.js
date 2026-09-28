@@ -94,7 +94,9 @@ function smoothMeasuredGrid(raw, measured, cols, rows) {
     for (let rx = 0; rx < cols; rx += 1) {
       const index = ry * cols + rx;
       let weighted = 0;
-      let weightSum = 0;
+      // Zero is the global-setting prior. This prevents one annotated region from
+      // imposing the same sensitivity correction on the entire image.
+      let weightSum = measured[index] ? 0.35 : 1.8;
       for (let sy = 0; sy < rows; sy += 1) {
         for (let sx = 0; sx < cols; sx += 1) {
           const si = sy * cols + sx;
@@ -226,6 +228,11 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
       onProgress(completed / total);
       await new Promise(resolve => setTimeout(resolve, 0));
     }
+  }
+
+  const measuredCount = measured.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  if (!measuredCount) {
+    throw new Error("局所調整に使えるお手本が不足しています。複数の粒界をもう少し長く描いてください。");
   }
 
   const values = smoothMeasuredGrid(raw, measured, cols, rows);
