@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.5-alpha - 2026-09-28
+
+### Added
+- Partial Label evaluation with explicit Positive, Negative, and Unknown states; predictions in unlabelled Unknown areas are no longer counted as false positives.
+- Whole-image Positive Recall, Negative Leakage, and Alignment Error as the primary Partial Label metrics.
+- Complete-evaluation ROI rectangles. Formal True Precision / Recall / F1 are calculated only inside ROIs that the user declares fully labelled.
+- Automatic Multi-Tolerance diagnostics at 1, 2, 3, and 4 preview pixels.
+- Complete-evaluation ROI project persistence and diagnostic PNG export.
+- Diagnostic JSON v3 with Partial Label metrics, Unknown prediction counts, complete-ROI metrics, and Multi-Tolerance results.
+- Selection handles for exclusion rectangles and complete-evaluation ROIs.
+- Move, four-edge resize, four-corner resize, Delete/Backspace, Undo, and Redo for rectangle annotations.
+
+### Changed
+- Non-boundary annotation colour changed from purple to orange (`#FF8A00`) for visibility on Barker images dominated by purple/magenta.
+- Existing v0.3 auto-tuning now scores only explicitly labelled Positive/Negative areas; unlabelled predictions are ignored instead of being treated as negatives.
+- Whole-image Precision / Recall / F1 are no longer presented as formal evaluation metrics in Partial Label mode.
+- App version advanced to `0.3.5-alpha`; extraction algorithm identifier remains `boundary-v4-dendrite-negref`.
+
+### Validation
+- JavaScript syntax validation passed for evaluation, annotation, project, diagnostics, analysis, and app modules.
+- Synthetic Partial Label test confirmed one Positive hit, one explicit Negative violation, and one Unknown prediction are separated correctly; the Unknown prediction does not increase false positives.
+- Synthetic Multi-Tolerance test confirmed a boundary displaced by two preview pixels fails at 1 px and matches at 2 px.
+- Synthetic complete-ROI test confirmed formal Precision / Recall / F1 calculation inside a fully labelled ROI.
+- Synthetic rectangle-editor tests confirmed corner hit-testing, move, and corner resize geometry.
+
 ## v0.3.4-alpha - 2026-09-28
 
 ### Added
