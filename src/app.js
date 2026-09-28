@@ -1671,71 +1671,172 @@ function endReferenceDraw(event) {
   }
 }
 
-function beginExclusionDraw(event) {
+function getRectCollection(kind) {
+  return kind === "exclusion" ? state.exclusionRects : state.fullEvaluationRois;
+}
+
+function getSelectedRectIndex(kind) {
+  return kind === "exclusion" ? state.selectedExclusionIndex : state.selectedFullRoiIndex;
+}
+
+function setSelectedRectIndex(kind, index) {
+  if (kind === "exclusion") state.selectedExclusionIndex = index;
+  else state.selectedFullRoiIndex = index;
+}
+
+function renderRectLayer(kind, previewRect = null) {
+  if (kind === "exclusion") rebuildExclusionLayer(previewRect);
+  else rebuildFullRoiLayer(previewRect);
+}
+
+function rectsEqual(a, b) {
+  return a && b
+    && a.x0 === b.x0 && a.y0 === b.y0
+    && a.x1 === b.x1 && a.y1 === b.y1;
+}
+
+function beginRectInteraction(event, kind) {
   const point = eventToPreviewPoint(event);
   if (!point) return false;
   if (state.comparisonMode) showNormalView();
-  state.drawingExclusion = true;
-  state.exclusionStart = point;
-  state.exclusionPreviewRect = normalizeRect(
-    point,
-    point,
-    state.preview.width,
-    state.preview.height,
-  );
-  renderExclusionCanvas(
-    els.exclusionCanvas,
-    state.exclusionRects,
-    state.preview.width,
-    state.preview.height,
-    state.exclusionPreviewRect,
-  );
+
+  const rects = getRectCollection(kind);
+  const hit = hitTestRect(rects, point, annotationHitThreshold());
+  if (hit) {
+    setSelectedRectIndex(kind, hit.index);
+    state.rectInteraction = {
+      kind,
+      action: "edit",
+      index: hit.index,
+      mode: hit.mode,
+      start: point,
+      before: { ...rects[hit.index] },
+    };
+    renderRectLayer(kind);
+  } else {
+    setSelectedRectIndex(kind, -1);
+    const previewRect = normalizeRect(point, point, state.preview.width, state.preview.height);
+    state.rectInteraction = {
+      kind,
+      action: "new",
+      start: point,
+      previewRect,
+    };
+    renderRectLayer(kind, previewRect);
+  }
+
   els.viewer.setPointerCapture(event.pointerId);
   return true;
 }
 
-function continueExclusionDraw(event) {
-  if (!state.drawingExclusion || !state.exclusionStart) return;
+function continueRectInteraction(event) {
+  const interaction = state.rectInteraction;
+  if (!interaction) return;
   const point = eventToPreviewPoint(event);
   if (!point) return;
-  state.exclusionPreviewRect = normalizeRect(
-    state.exclusionStart,
+
+  if (interaction.action === "new") {
+    interaction.previewRect = normalizeRect(
+      interaction.start,
+      point,
+      state.preview.width,
+      state.preview.height,
+    );
+    renderRectLayer(interaction.kind, interaction.previewRect);
+    return;
+  }
+
+  const rects = getRectCollection(interaction.kind);
+  rects[interaction.index] = transformRect(
+    interaction.before,
+    interaction.start,
     point,
+    interaction.mode,
     state.preview.width,
     state.preview.height,
   );
-  renderExclusionCanvas(
-    els.exclusionCanvas,
-    state.exclusionRects,
-    state.preview.width,
-    state.preview.height,
-    state.exclusionPreviewRect,
-  );
+  renderRectLayer(interaction.kind);
 }
 
-function endExclusionDraw(event) {
-  if (!state.drawingExclusion) return;
-  state.drawingExclusion = false;
-  const rect = state.exclusionPreviewRect;
-  state.exclusionStart = null;
-  state.exclusionPreviewRect = null;
+function endRectInteraction(event) {
+  const interaction = state.rectInteraction;
+  if (!interaction) return;
+  state.rectInteraction = null;
 
-  if (rect && rectArea(rect) >= 9) {
-    const index = state.exclusionRects.length;
-    state.exclusionRects.push({ ...rect });
-    rebuildExclusionLayer();
-    invalidateAfterReferenceEdit(true);
-    commitReferenceHistory({ kind: "exclusion-add", index, rect: { ...rect } });
-    setStatus(`除外領域を追加しました。除外 ${state.exclusionRects.length}領域。再解析してください。`);
-    scheduleAutosave();
+  const rects = getRectCollection(interaction.kind);
+  const isExclusion = interaction.kind === "exclusion";
+  const historyPrefix = isExclusion ? "exclusion" : "roi";
+  let changed = false;
+
+  if (interaction.action === "new") {
+    const rect = interaction.previewRect;
+    if (rect && rectArea(rect) >= 9) {
+      const index = rects.length;
+      rects.push({ ...rect });
+      setSelectedRectIndex(interaction.kind, index);
+      commitReferenceHistory({ kind: historyPrefix + "-add", index, rect: { ...rect } });
+      changed = true;
+    }
   } else {
-    rebuildExclusionLayer();
+    const after = rects[interaction.index];
+    if (after && !rectsEqual(interaction.before, after)) {
+      commitReferenceHistory({
+        kind: historyPrefix + "-edit",
+        index: interaction.index,
+        before: { ...interaction.before },
+        after: { ...after },
+      });
+      changed = true;
+    }
+  }
+
+  renderRectLayer(interaction.kind);
+
+  if (changed) {
+    invalidateAfterReferenceEdit(isExclusion);
+    if (isExclusion) {
+      rebuildExclusionLayer();
+      setStatus("除外領域を更新しました。除外 " + state.exclusionRects.length + "領域。再解析してください。");
+    } else {
+      rebuildFullRoiLayer();
+      setStatus("完全評価ROIを更新しました。ROI " + state.fullEvaluationRois.length + "領域。比較を実行してください。");
+    }
+    scheduleAutosave();
   }
 
   updateControls();
   if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
     els.viewer.releasePointerCapture(event.pointerId);
   }
+}
+
+function deleteSelectedRect(kind) {
+  if (!state.preview) return false;
+  const rects = getRectCollection(kind);
+  const index = getSelectedRectIndex(kind);
+  if (index < 0 || index >= rects.length) return false;
+  if (state.comparisonMode) showNormalView();
+
+  const [rect] = rects.splice(index, 1);
+  setSelectedRectIndex(kind, -1);
+  const isExclusion = kind === "exclusion";
+  commitReferenceHistory({
+    kind: (isExclusion ? "exclusion" : "roi") + "-delete",
+    index,
+    rect: { ...rect },
+  });
+  renderRectLayer(kind);
+  invalidateAfterReferenceEdit(isExclusion);
+  if (isExclusion) {
+    rebuildExclusionLayer();
+    setStatus("選択した除外矩形を削除しました。再解析してください。Undoで復元できます。");
+  } else {
+    rebuildFullRoiLayer();
+    setStatus("選択した完全評価ROIを削除しました。Undoで復元できます。");
+  }
+  scheduleAutosave();
+  updateControls();
+  return true;
 }
 
 els.fileInput.addEventListener("change", event => loadBmp(event.target.files?.[0]));
