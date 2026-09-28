@@ -87,14 +87,53 @@ Formal Precision / Recall / F1 are calculated only inside complete-evaluation RO
 
 Regional Partial Label metrics are calculated on a 4×4 grid and stored with diagnostic/evaluation data.
 
-## 6. CPU auto-tuning
+## 6. Auto Tune v2
 
 GPU use is not required.
 
-Auto-tuning is deliberately split into two stages for company-PC performance:
+v0.3.6 replaces the fixed weight-profile search with CPU coordinate descent over:
 
-1. sensitivity and Dark/Ridge/Color/Dendrite weight profiles are scored only in the user-reviewed area, including explicit non-boundary examples;
-2. the best raw configuration is built once over the preview, then minimum connected-component size is tuned.
+```text
+Sensitivity
+Dark
+Ridge
+Color
+Dendrite
+MinComponent
+```
+
+Each feature weight may reach `0`, so a feature that is harmful on the current image can be disabled rather than being forced to retain a minimum contribution.
+
+The coordinate order is:
+
+```text
+Sensitivity
+-> Dark
+-> Ridge
+-> Color
+-> Dendrite
+-> MinComponent
+-> repeat with finer steps
+```
+
+The search uses coarse-to-fine steps over up to three rounds. Weight/sensitivity candidates are scored on labelled data without allocating a full preview mask for every candidate; MinComponent is then optimised on the processed full-preview mask.
+
+Objective selection follows the v0.3.5 evaluation model:
+
+- when complete-evaluation ROIs exist, formal ROI True F1 is the primary tuning objective;
+- otherwise the tuner uses a Partial Label balance of Positive Recall and explicit Negative leakage, while Unknown pixels remain outside false-positive scoring.
+
+The tuner records an ablation summary for:
+
+```text
+Full
+-Dark
+-Ridge
+-Color
+-Dendrite
+```
+
+The full search summary is compacted before project/history persistence so repeated Auto Tune runs do not excessively inflate project JSON.
 
 ## 7. Reference-guided local calibration
 
