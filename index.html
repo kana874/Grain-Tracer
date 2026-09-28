@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.0-alpha</div>
+    <div class="version">v0.3.1-alpha</div>
   </header>
 
   <main class="layout">
@@ -140,6 +140,13 @@
       </section>
 
       <section>
+        <h2>診断出力</h2>
+        <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
+        <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ファイルを書き出す</button>
+        <p class="help">出力: diagnostic.json / preview.jpg / comparison.png / ridge.png / reference.png</p>
+      </section>
+
+      <section>
         <h2>評価履歴</h2>
         <ol id="historyList" class="history-list"></ol>
       </section>
@@ -154,6 +161,7 @@
           <li class="done">評価履歴の保存</li>
           <li class="done">JSON / IndexedDBプロジェクト保存</li>
           <li class="done">お手本による局所感度最適化</li>
+          <li class="done">ChatGPT向け診断JSON / 画像出力</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
         </ul>
