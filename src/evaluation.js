@@ -31,6 +31,96 @@ export function dilateBinaryMask(mask, width, height, radius) {
   return output;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function countMask(mask) {
+  let count = 0;
+  for (let p = 0; p < mask.length; p += 1) count += mask[p] ? 1 : 0;
+  return count;
+}
+
+function buildRectMask(rects, width, height) {
+  const mask = new Uint8Array(width * height);
+  for (const rect of rects ?? []) {
+    const x0 = clamp(Math.round(Math.min(rect.x0, rect.x1)), 0, width - 1);
+    const x1 = clamp(Math.round(Math.max(rect.x0, rect.x1)), 0, width - 1);
+    const y0 = clamp(Math.round(Math.min(rect.y0, rect.y1)), 0, height - 1);
+    const y1 = clamp(Math.round(Math.max(rect.y0, rect.y1)), 0, height - 1);
+    for (let y = y0; y <= y1; y += 1) {
+      mask.fill(1, y * width + x0, y * width + x1 + 1);
+    }
+  }
+  return mask;
+}
+
+export function computeChebyshevDistanceToMask(mask, width, height, exclusionMask = null) {
+  const maxDistance = width + height + 1;
+  const distance = new Uint32Array(mask.length);
+  for (let p = 0; p < distance.length; p += 1) {
+    distance[p] = mask[p] && !exclusionMask?.[p] ? 0 : maxDistance;
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const p = y * width + x;
+      if (distance[p] === 0 || exclusionMask?.[p]) continue;
+      let best = distance[p];
+      if (x > 0) best = Math.min(best, distance[p - 1] + 1);
+      if (y > 0) {
+        best = Math.min(best, distance[p - width] + 1);
+        if (x > 0) best = Math.min(best, distance[p - width - 1] + 1);
+        if (x + 1 < width) best = Math.min(best, distance[p - width + 1] + 1);
+      }
+      distance[p] = best;
+    }
+  }
+
+  for (let y = height - 1; y >= 0; y -= 1) {
+    for (let x = width - 1; x >= 0; x -= 1) {
+      const p = y * width + x;
+      if (distance[p] === 0 || exclusionMask?.[p]) continue;
+      let best = distance[p];
+      if (x + 1 < width) best = Math.min(best, distance[p + 1] + 1);
+      if (y + 1 < height) {
+        best = Math.min(best, distance[p + width] + 1);
+        if (x > 0) best = Math.min(best, distance[p + width - 1] + 1);
+        if (x + 1 < width) best = Math.min(best, distance[p + width + 1] + 1);
+      }
+      distance[p] = best;
+    }
+  }
+  return distance;
+}
+
+function summarizeAlignment(referenceCenterline, distance, exclusionMask, maxDistance) {
+  const values = [];
+  let unmatched = 0;
+  for (let p = 0; p < referenceCenterline.length; p += 1) {
+    if (!referenceCenterline[p] || exclusionMask?.[p]) continue;
+    const d = distance[p];
+    if (d <= maxDistance) values.push(d);
+    else unmatched += 1;
+  }
+  values.sort((a, b) => a - b);
+  const count = values.length;
+  const sum = values.reduce((total, value) => total + value, 0);
+  const percentile = q => {
+    if (!count) return null;
+    const index = Math.min(count - 1, Math.max(0, Math.round((count - 1) * q)));
+    return values[index];
+  };
+  return {
+    mean: count ? sum / count : null,
+    median: percentile(0.5),
+    p90: percentile(0.9),
+    matchedPixels: count,
+    unmatchedPixels: unmatched,
+    maxDistance,
+  };
+}
+
 export function compareBoundaryMasks(prediction, referenceCenterline, width, height, options = {}) {
   const tolerance = options.tolerance ?? 4;
   const reviewRadius = Math.max(tolerance + 1, options.reviewRadius ?? 18);
@@ -40,6 +130,7 @@ export function compareBoundaryMasks(prediction, referenceCenterline, width, hei
   const referenceTolerance = dilateBinaryMask(referenceCenterline, width, height, tolerance);
   const reviewMask = dilateBinaryMask(referenceCenterline, width, height, reviewRadius);
   const evaluationMask = new Uint8Array(prediction.length);
+  const unknownMask = new Uint8Array(prediction.length);
   const cleanPrediction = exclusionMask ? prediction.slice() : prediction;
 
   if (exclusionMask) {
@@ -51,6 +142,7 @@ export function compareBoundaryMasks(prediction, referenceCenterline, width, hei
 
   let matchedPrediction = 0;
   let falsePositive = 0;
+  let unknownPrediction = 0;
   let matchedReference = 0;
   let falseNegative = 0;
   let negativePrediction = 0;
@@ -65,16 +157,21 @@ export function compareBoundaryMasks(prediction, referenceCenterline, width, hei
       continue;
     }
 
-    const isNegative = Boolean(negativeMask?.[p] && !referenceTolerance[p]);
-    if (isNegative) negativePixels += 1;
-    if (reviewMask[p] || isNegative) evaluationMask[p] = 1;
+    const isPositive = Boolean(referenceTolerance[p]);
+    const isNegative = Boolean(negativeMask?.[p] && !isPositive);
+    if (isPositive || isNegative) evaluationMask[p] = 1;
+    else unknownMask[p] = 1;
 
-    if (cleanPrediction[p] && evaluationMask[p]) {
-      if (referenceTolerance[p]) {
+    if (isNegative) negativePixels += 1;
+
+    if (cleanPrediction[p]) {
+      if (isPositive) {
         matchedPrediction += 1;
-      } else {
+      } else if (isNegative) {
         falsePositive += 1;
-        if (isNegative) negativePrediction += 1;
+        negativePrediction += 1;
+      } else {
+        unknownPrediction += 1;
       }
     }
 
@@ -84,31 +181,53 @@ export function compareBoundaryMasks(prediction, referenceCenterline, width, hei
     }
   }
 
-  const precisionDen = matchedPrediction + falsePositive;
-  const recallDen = matchedReference + falseNegative;
-  const precision = precisionDen ? matchedPrediction / precisionDen : 0;
-  const recall = recallDen ? matchedReference / recallDen : 0;
-  const f1 = precision + recall ? (2 * precision * recall) / (precision + recall) : 0;
-  const negativeHitRate = negativePixels ? negativePrediction / negativePixels : 0;
+  const positiveDen = matchedReference + falseNegative;
+  const positiveRecall = positiveDen ? matchedReference / positiveDen : 0;
+  const negativeLeakage = negativePixels ? negativePrediction / negativePixels : 0;
+
+  // Compatibility proxy used by the current v0.3.x tuning code only.
+  // It is not a true whole-image Precision/F1 because Unknown pixels are deliberately ignored.
+  const labelPrecisionDen = matchedPrediction + falsePositive;
+  const labelPrecision = labelPrecisionDen ? matchedPrediction / labelPrecisionDen : 0;
+  const labelF1 = labelPrecision + positiveRecall
+    ? (2 * labelPrecision * positiveRecall) / (labelPrecision + positiveRecall)
+    : 0;
+
+  const alignmentDistance = options.skipAlignment
+    ? null
+    : computeChebyshevDistanceToMask(cleanPrediction, width, height, exclusionMask);
+  const alignmentError = alignmentDistance
+    ? summarizeAlignment(referenceCenterline, alignmentDistance, exclusionMask, reviewRadius)
+    : null;
 
   return {
-    precision,
-    recall,
-    f1,
+    evaluationMode: "partial-label",
+    positiveRecall,
+    negativeLeakage,
+    alignmentError,
+    labelPrecision,
+    labelF1,
+    // Legacy aliases retained for the current tuning/history code.
+    precision: labelPrecision,
+    recall: positiveRecall,
+    f1: labelF1,
     matchedPrediction,
     falsePositive,
+    unknownPrediction,
     matchedReference,
     falseNegative,
     negativePrediction,
     negativePixels,
-    negativeHitRate,
+    negativeHitRate: negativeLeakage,
     excludedPixels,
     referencePixels: matchedReference + falseNegative,
     reviewedPredictionPixels: matchedPrediction + falsePositive,
     referenceTolerance,
     reviewMask,
     evaluationMask,
+    unknownMask,
     predictionTolerance,
+    alignmentDistance,
     negativeMask,
     exclusionMask,
   };
@@ -133,8 +252,16 @@ export function computeRegionalMetrics(prediction, referenceCenterline, width, h
       const x1 = Math.floor((rx + 1) * width / cols);
       const y0 = Math.floor(ry * height / rows);
       const y1 = Math.floor((ry + 1) * height / rows);
-      let tp = 0; let fp = 0; let tr = 0; let fn = 0;
-      let negativePrediction = 0; let negativePixels = 0; let excludedPixels = 0;
+      let matchedPrediction = 0;
+      let falsePositive = 0;
+      let unknownPrediction = 0;
+      let matchedReference = 0;
+      let falseNegative = 0;
+      let negativePrediction = 0;
+      let negativePixels = 0;
+      let excludedPixels = 0;
+      let alignmentSum = 0;
+      let alignmentMatched = 0;
 
       for (let y = y0; y < y1; y += 1) {
         const base = y * width;
@@ -145,39 +272,183 @@ export function computeRegionalMetrics(prediction, referenceCenterline, width, h
             continue;
           }
 
-          const isNegative = Boolean(global.negativeMask?.[p] && !global.referenceTolerance[p]);
+          const isPositive = Boolean(global.referenceTolerance[p]);
+          const isNegative = Boolean(global.negativeMask?.[p] && !isPositive);
           if (isNegative) negativePixels += 1;
 
-          if (global.evaluationMask[p] && prediction[p]) {
-            if (global.referenceTolerance[p]) {
-              tp += 1;
+          if (prediction[p]) {
+            if (isPositive) matchedPrediction += 1;
+            else if (isNegative) {
+              falsePositive += 1;
+              negativePrediction += 1;
             } else {
-              fp += 1;
-              if (isNegative) negativePrediction += 1;
+              unknownPrediction += 1;
             }
           }
+
           if (referenceCenterline[p]) {
-            if (global.predictionTolerance[p]) tr += 1;
-            else fn += 1;
+            if (global.predictionTolerance[p]) matchedReference += 1;
+            else falseNegative += 1;
+            const d = global.alignmentDistance?.[p];
+            if (d != null && d <= reviewRadius) {
+              alignmentSum += d;
+              alignmentMatched += 1;
+            }
           }
         }
       }
 
-      const precision = tp + fp ? tp / (tp + fp) : 0;
-      const recall = tr + fn ? tr / (tr + fn) : 0;
-      const f1 = precision + recall ? (2 * precision * recall) / (precision + recall) : 0;
+      const labelPrecision = matchedPrediction + falsePositive
+        ? matchedPrediction / (matchedPrediction + falsePositive)
+        : 0;
+      const positiveRecall = matchedReference + falseNegative
+        ? matchedReference / (matchedReference + falseNegative)
+        : 0;
+      const labelF1 = labelPrecision + positiveRecall
+        ? (2 * labelPrecision * positiveRecall) / (labelPrecision + positiveRecall)
+        : 0;
       regions.push({
         rx, ry, x0, y0, x1, y1,
-        precision, recall, f1,
-        referencePixels: tr + fn,
+        evaluationMode: "partial-label",
+        positiveRecall,
+        negativeLeakage: negativePixels ? negativePrediction / negativePixels : 0,
+        alignmentError: alignmentMatched ? alignmentSum / alignmentMatched : null,
+        labelPrecision,
+        labelF1,
+        precision: labelPrecision,
+        recall: positiveRecall,
+        f1: labelF1,
+        referencePixels: matchedReference + falseNegative,
+        matchedReference,
+        falseNegative,
         negativePixels,
         negativePrediction,
         negativeHitRate: negativePixels ? negativePrediction / negativePixels : 0,
+        unknownPrediction,
         excludedPixels,
       });
     }
   }
   return { ...global, regions, cols, rows };
+}
+
+export function computeMultiToleranceMetrics(prediction, referenceCenterline, width, height, options = {}) {
+  const tolerances = options.tolerances ?? [1, 2, 3, 4];
+  return tolerances.map(tolerance => {
+    const metrics = compareBoundaryMasks(prediction, referenceCenterline, width, height, {
+      ...options,
+      tolerance,
+      skipAlignment: true,
+    });
+    return {
+      tolerance,
+      positiveRecall: metrics.positiveRecall,
+      negativeLeakage: metrics.negativeLeakage,
+      labelPrecision: metrics.labelPrecision,
+      labelF1: metrics.labelF1,
+      matchedReference: metrics.matchedReference,
+      falseNegative: metrics.falseNegative,
+      negativePrediction: metrics.negativePrediction,
+      negativePixels: metrics.negativePixels,
+      unknownPrediction: metrics.unknownPrediction,
+    };
+  });
+}
+
+function computeFullMetricsForMask(prediction, referenceCenterline, roiMask, width, height, options = {}) {
+  const tolerance = options.tolerance ?? 1;
+  const exclusionMask = options.exclusionMask ?? null;
+  const reference = new Uint8Array(referenceCenterline.length);
+  const roiPrediction = new Uint8Array(prediction.length);
+
+  for (let p = 0; p < reference.length; p += 1) {
+    if (!roiMask[p] || exclusionMask?.[p]) continue;
+    if (referenceCenterline[p]) reference[p] = 1;
+    if (prediction[p]) roiPrediction[p] = 1;
+  }
+
+  const referenceTolerance = dilateBinaryMask(reference, width, height, tolerance);
+  const predictionTolerance = dilateBinaryMask(roiPrediction, width, height, tolerance);
+
+  let truePositivePrediction = 0;
+  let falsePositive = 0;
+  let matchedReference = 0;
+  let falseNegative = 0;
+  let evaluatedPixels = 0;
+
+  for (let p = 0; p < roiMask.length; p += 1) {
+    if (!roiMask[p] || exclusionMask?.[p]) continue;
+    evaluatedPixels += 1;
+    if (roiPrediction[p]) {
+      if (referenceTolerance[p]) truePositivePrediction += 1;
+      else falsePositive += 1;
+    }
+    if (reference[p]) {
+      if (predictionTolerance[p]) matchedReference += 1;
+      else falseNegative += 1;
+    }
+  }
+
+  const precision = truePositivePrediction + falsePositive
+    ? truePositivePrediction / (truePositivePrediction + falsePositive)
+    : 0;
+  const recall = matchedReference + falseNegative
+    ? matchedReference / (matchedReference + falseNegative)
+    : 0;
+  const f1 = precision + recall ? (2 * precision * recall) / (precision + recall) : 0;
+  return {
+    precision,
+    recall,
+    f1,
+    truePositivePrediction,
+    falsePositive,
+    matchedReference,
+    falseNegative,
+    referencePixels: matchedReference + falseNegative,
+    predictionPixels: truePositivePrediction + falsePositive,
+    evaluatedPixels,
+  };
+}
+
+export function computeFullEvaluationRoiMetrics(
+  prediction,
+  referenceCenterline,
+  width,
+  height,
+  rects,
+  options = {},
+) {
+  const cleanRects = (rects ?? []).map(rect => ({
+    x0: clamp(Math.round(Math.min(rect.x0, rect.x1)), 0, width - 1),
+    y0: clamp(Math.round(Math.min(rect.y0, rect.y1)), 0, height - 1),
+    x1: clamp(Math.round(Math.max(rect.x0, rect.x1)), 0, width - 1),
+    y1: clamp(Math.round(Math.max(rect.y0, rect.y1)), 0, height - 1),
+  }));
+  const unionMask = buildRectMask(cleanRects, width, height);
+  const aggregate = computeFullMetricsForMask(
+    prediction,
+    referenceCenterline,
+    unionMask,
+    width,
+    height,
+    options,
+  );
+  const regions = cleanRects.map((rect, index) => {
+    const mask = buildRectMask([rect], width, height);
+    return {
+      index,
+      rect,
+      ...computeFullMetricsForMask(prediction, referenceCenterline, mask, width, height, options),
+    };
+  });
+  return {
+    mode: "complete-label-roi",
+    roiCount: cleanRects.length,
+    roiPixels: countMask(unionMask),
+    tolerance: options.tolerance ?? 1,
+    ...aggregate,
+    regions,
+  };
 }
 
 export function splitReferenceCenterline(referenceCenterline, width, height, options = {}) {
@@ -222,7 +493,6 @@ export function splitReferenceCenterline(referenceCenterline, width, height, opt
       const pixels = Array.from(queue.subarray(0, tail));
       const cx = sx / tail;
       const cy = sy / tail;
-      // Stable spatial hash so the same reference always produces the same split.
       const hash = (
         (Math.round(cx) * 73856093)
         ^ (Math.round(cy) * 19349663)
@@ -266,7 +536,6 @@ export function splitReferenceCenterline(referenceCenterline, width, height, opt
     for (const p of component.pixels) destination[p] = 1;
   }
 
-  // Preserve tiny discarded reference fragments as tuning data rather than losing them.
   for (let p = 0; p < referenceCenterline.length; p += 1) {
     if (referenceCenterline[p] && !tuneMask[p] && !validationMask[p]) tuneMask[p] = 1;
   }
