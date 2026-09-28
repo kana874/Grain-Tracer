@@ -62,6 +62,7 @@ const els = {
   darkWeight: $("darkWeight"),
   ridgeWeight: $("ridgeWeight"),
   colorWeight: $("colorWeight"),
+  dendriteWeight: $("dendriteWeight"),
   minComponent: $("minComponent"),
   overlayOpacity: $("overlayOpacity"),
   localEnabled: $("localEnabled"),
@@ -223,6 +224,7 @@ function currentExtractionOptions() {
     darkWeight: Number(els.darkWeight.value),
     ridgeWeight: Number(els.ridgeWeight.value),
     colorWeight: Number(els.colorWeight.value),
+    dendriteWeight: Number(els.dendriteWeight.value),
     minComponent: Number(els.minComponent.value),
   };
 }
@@ -298,6 +300,7 @@ function applySettings(settings = {}) {
   if (extraction.darkWeight != null) setRangeValue(els.darkWeight, extraction.darkWeight);
   if (extraction.ridgeWeight != null) setRangeValue(els.ridgeWeight, extraction.ridgeWeight);
   if (extraction.colorWeight != null) setRangeValue(els.colorWeight, extraction.colorWeight);
+  if (extraction.dendriteWeight != null) setRangeValue(els.dendriteWeight, extraction.dendriteWeight);
   if (extraction.minComponent != null) setRangeValue(els.minComponent, extraction.minComponent);
   if (local.enabled != null) els.localEnabled.checked = Boolean(local.enabled);
   if (local.localEnabled != null) els.localEnabled.checked = Boolean(local.localEnabled);
@@ -609,6 +612,11 @@ async function exportDiagnostics() {
       state.preview.width,
       state.preview.height,
     );
+    const dendriteImage = featureMapImageData(
+      features.dendrite,
+      state.preview.width,
+      state.preview.height,
+    );
     const base = (state.file?.name ?? "graintracer").replace(/\.bmp$/i, "");
 
     setStatus("診断JSONを作成中...", 82);
@@ -629,6 +637,11 @@ async function exportDiagnostics() {
     downloadBlob(
       await imageDataToBlob(ridgeImage, "image/png"),
       `${base}.graintracer-ridge.png`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 120));
+    downloadBlob(
+      await imageDataToBlob(dendriteImage, "image/png"),
+      `${base}.graintracer-dendrite.png`,
     );
     await new Promise(resolve => setTimeout(resolve, 120));
     downloadBlob(
@@ -734,7 +747,7 @@ async function ensureFeatures() {
   const options = currentFeatureOptions();
   const key = JSON.stringify(options);
   if (state.features && state.featuresKey === key) return state.features;
-  setStatus(`特徴量を計算中... Dark Ridge + ${options.localEnabled ? "局所適応" : "全体基準"}`, 1);
+  setStatus(`特徴量を計算中... Dark Ridge + 色差 + デンドライト + ${options.localEnabled ? "局所適応" : "全体基準"}`, 1);
   state.features = await computeBoundaryFeatures(state.preview.imageData, {
     ...options,
     onProgress: ratio => setStatus(`特徴量を計算中... ${Math.round(ratio * 100)}%`, ratio * 70),
@@ -799,6 +812,7 @@ async function autoTune() {
     setRangeValue(els.darkWeight, result.parameters.darkWeight);
     setRangeValue(els.ridgeWeight, result.parameters.ridgeWeight);
     setRangeValue(els.colorWeight, result.parameters.colorWeight);
+    setRangeValue(els.dendriteWeight, result.parameters.dendriteWeight ?? Number(els.dendriteWeight.value));
     setRangeValue(els.minComponent, result.parameters.minComponent);
     state.localCalibration = null;
     updateLocalCalibrationStatus();
@@ -816,7 +830,7 @@ async function autoTune() {
     state.comparisonMode = true;
     updateMetrics(comparison.metrics);
     addHistory("auto-tune", comparison.metrics, "global ridge-weight tuning");
-    setStatus(`自動調整完了: F1 ${(comparison.metrics.f1 * 100).toFixed(1)}% / 感度 ${result.parameters.sensitivity} / 暗さ ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / 色差 ${result.parameters.colorWeight}`, 100);
+    setStatus(`自動調整完了: F1 ${(comparison.metrics.f1 * 100).toFixed(1)}% / 感度 ${result.parameters.sensitivity} / 暗さ ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / 色差 ${result.parameters.colorWeight} / デンドライト ${result.parameters.dendriteWeight ?? 0}`, 100);
   } catch (error) {
     console.error(error);
     setStatus(`自動調整エラー: ${error.message}`, 0);
@@ -1024,6 +1038,7 @@ bindRange(els.sensitivity, $("sensitivityValue"), extractionSettingChanged);
 bindRange(els.darkWeight, $("darkWeightValue"), extractionSettingChanged);
 bindRange(els.ridgeWeight, $("ridgeWeightValue"), extractionSettingChanged);
 bindRange(els.colorWeight, $("colorWeightValue"), extractionSettingChanged);
+bindRange(els.dendriteWeight, $("dendriteWeightValue"), extractionSettingChanged);
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), () => { rerenderOverlayOpacity(); scheduleAutosave(); });
 bindRange(els.localStrength, $("localStrengthValue"), featureSettingChanged);
