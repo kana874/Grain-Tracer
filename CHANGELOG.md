@@ -19,7 +19,7 @@
 - App version advanced to `0.3.5-alpha`; extraction algorithm identifier remains `boundary-v4-dendrite-negref`.
 
 ### Validation
-- JavaScript syntax validation passed for evaluation, annotation, project, diagnostics, analysis, and app modules.
+- JavaScript syntax validation passed for evaluation, annotation, project, diagnostics, analysis, local-tune, and app modules.
 - Synthetic Partial Label test confirmed one Positive hit, one explicit Negative violation, and one Unknown prediction are separated correctly; the Unknown prediction does not increase false positives.
 - Synthetic Multi-Tolerance test confirmed a boundary displaced by two preview pixels fails at 1 px and matches at 2 px.
 - Synthetic complete-ROI test confirmed formal Precision / Recall / F1 calculation inside a fully labelled ROI.
