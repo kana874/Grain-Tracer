@@ -15,6 +15,7 @@ Source BMP (read only)
   + user reference boundaries
   + user non-boundary examples
   + rectangular exclusion regions
+  + complete-evaluation ROI regions
   + comparison/evaluation history
   + analysis settings
 ```
@@ -62,16 +63,29 @@ The ridge detector supplies an estimated boundary normal. Colour samples are tak
 
 Local adaptation can be enabled/disabled and has adjustable strength/window size. Ridge and colour features are normalised against their local neighbourhood so that one global absolute threshold is not the only criterion across a spatially uneven image.
 
-## 5. Reference evaluation
+## 5. Partial Label evaluation
 
-The visible reference stroke can be thick for usability, but evaluation uses a separate thin centerline.
+The visible positive reference stroke can be thick for usability, but evaluation uses a separate thin centerline.
 
-Prediction and reference matching use a configurable spatial tolerance. Precision and Recall use separate denominators:
+The normal whole-image evaluation model is three-state:
 
-- Precision: matched predicted boundary pixels / predicted pixels in the reviewed zone.
-- Recall: matched reference-centerline pixels / all reference-centerline pixels.
+- Positive: user-labelled grain boundary.
+- Negative: user-labelled non-boundary.
+- Unknown: unlabelled image area.
 
-Regional metrics are currently calculated on a 4×4 grid and stored with each evaluation-history entry.
+Unknown is not equivalent to Negative. Automatic boundary pixels in Unknown areas are reported as unknown predictions and are not counted as false positives.
+
+The primary Partial Label metrics are:
+
+- Positive Recall: fraction of positive reference-centerline pixels matched within the spatial tolerance.
+- Negative Leakage: fraction of explicit negative-mask pixels containing an automatic prediction.
+- Alignment Error: preview-pixel distance from positive reference centerline to the nearest prediction.
+
+Multi-Tolerance diagnostics automatically recalculate labelled performance at 1, 2, 3, and 4 preview pixels to distinguish positional offset from a missing boundary.
+
+Formal Precision / Recall / F1 are calculated only inside complete-evaluation ROIs. A complete-evaluation ROI is a rectangle where the user declares that every grain boundary has been labelled; therefore unlabelled pixels inside that ROI can legitimately act as negative background.
+
+Regional Partial Label metrics are calculated on a 4×4 grid and stored with diagnostic/evaluation data.
 
 ## 6. CPU auto-tuning
 
@@ -92,19 +106,20 @@ The measured corrections are spatially smoothed and interpolated per pixel. Unla
 
 The local calibration grid is saved in the project and evaluation history. Changing extraction parameters or editing reference lines invalidates the old calibration.
 
-## 8. v0.3.4 annotation model
+## 8. v0.3.5 annotation model
 
 Three annotation classes are kept separate from the source image:
 
 - positive grain-boundary reference: yellow centerline expanded to the visible/judgement width;
-- non-boundary reference: purple centerline expanded to the same width and used as an explicit negative example during comparison and tuning;
-- exclusion rectangles: grey regions removed from extraction and evaluation, intended for scale bars, labels, and other content that should never participate in analysis.
+- non-boundary reference: orange (`#FF8A00`) centerline expanded to the same width and used as an explicit negative example during comparison and tuning;
+- exclusion rectangles: grey regions removed from extraction and evaluation, intended for scale bars, labels, and other content that should never participate in analysis;
+- complete-evaluation ROIs: blue rectangles declaring local areas where all grain boundaries have been labelled, enabling formal Precision / Recall / F1.
 
 Positive and non-boundary labels are mutually exclusive while drawing: painting one class removes conflicting centerline pixels from the other class along the same stroke.
 
 Non-boundary examples extend the evaluated area without treating every unlabelled pixel as negative. Exclusion rectangles are also applied before connected-component evaluation so ignored image content cannot support a retained candidate component.
 
-Undo/Redo covers positive/negative line edits and exclusion-region edits.
+Undo/Redo covers positive/negative line edits, exclusion-region edits, and complete-evaluation ROI edits. Exclusion and ROI rectangles can be selected, moved, resized from all four sides/corners, and deleted after creation or project reload.
 
 ## 9. Persistence
 
@@ -118,7 +133,8 @@ A `.graintracer.json` project stores:
 - reference display mask and centerline
 - non-boundary display mask and centerline
 - exclusion rectangles
-- evaluation history, including global and regional metrics
+- complete-evaluation ROI rectangles
+- evaluation history, including Partial Label and regional metrics
 - reference-guided local sensitivity-calibration grid
 
 The 400 MB-class BMP itself is not embedded.
