@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.2.0-alpha</div>
+    <div class="version">v0.3.0-alpha</div>
   </header>
 
   <main class="layout">
@@ -40,11 +40,22 @@
       <section>
         <h2>お手本の使い方</h2>
         <ol class="guide-list">
-          <li>「お手本線」で正しい粒界を数本なぞる</li>
-          <li>「比較」で自動判定との差を見る</li>
-          <li>「自動調整」でF1が高い設定を探索する</li>
+          <li>「お手本線」で正しい粒界をなぞる</li>
+          <li>「比較」で自動判定との差を確認</li>
+          <li>「自動調整」でF1が高い設定を探索</li>
         </ol>
-        <p class="help">比較は、お手本線の周囲だけを評価します。画像全体を正解として描く必要はありません。</p>
+        <p class="help">v0.3では、お手本の中心線を評価に使うため、ブラシの太さによるRecallのズレを抑えています。</p>
+      </section>
+
+      <section>
+        <h2>プロジェクト</h2>
+        <input id="projectInput" type="file" accept=".json,application/json" hidden>
+        <div class="button-grid">
+          <button id="saveProjectButton" type="button" disabled>保存</button>
+          <button id="loadProjectButton" type="button" disabled>読込</button>
+        </div>
+        <label class="check-row"><input id="autosaveEnabled" type="checkbox" checked> 自動保存（IndexedDB）</label>
+        <p id="projectStatus" class="help project-status">-</p>
       </section>
     </aside>
 
@@ -81,61 +92,29 @@
     <aside class="panel right-panel">
       <section>
         <h2>粒界候補抽出</h2>
-        <p class="help">低解像度プレビュー上で候補を抽出します。元画像は変更しません。</p>
+        <p class="help">Dark Ridge・方向付き色差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。</p>
 
-        <label class="control-row">
-          <span>境界感度</span>
-          <output id="sensitivityValue">58</output>
-          <input id="sensitivity" type="range" min="1" max="100" value="58">
-        </label>
+        <label class="control-row"><span>境界感度</span><output id="sensitivityValue">62</output><input id="sensitivity" type="range" min="1" max="100" value="62"></label>
+        <label class="control-row"><span>暗さ</span><output id="darkWeightValue">20</output><input id="darkWeight" type="range" min="0" max="100" value="20"></label>
+        <label class="control-row"><span>Dark Ridge</span><output id="ridgeWeightValue">55</output><input id="ridgeWeight" type="range" min="0" max="100" value="55"></label>
+        <label class="control-row"><span>色差</span><output id="colorWeightValue">25</output><input id="colorWeight" type="range" min="0" max="100" value="25"></label>
+        <label class="control-row"><span>最小連結サイズ</span><output id="minComponentValue">24</output><input id="minComponent" type="range" min="1" max="300" value="24"></label>
 
-        <label class="control-row">
-          <span>暗線重視</span>
-          <output id="darkWeightValue">65</output>
-          <input id="darkWeight" type="range" min="0" max="100" value="65">
-        </label>
+        <div class="subpanel">
+          <label class="check-row"><input id="localEnabled" type="checkbox" checked> 局所適応を有効</label>
+          <label class="control-row"><span>局所補正強度</span><output id="localStrengthValue">70</output><input id="localStrength" type="range" min="0" max="100" value="70"></label>
+          <label class="control-row"><span>局所窓サイズ</span><output id="localWindowValue">320</output><input id="localWindow" type="range" min="96" max="640" step="32" value="320"></label>
+        </div>
 
-        <label class="control-row">
-          <span>色差重視</span>
-          <output id="colorWeightValue">35</output>
-          <input id="colorWeight" type="range" min="0" max="100" value="35">
-        </label>
-
-        <label class="control-row">
-          <span>最小連結サイズ</span>
-          <output id="minComponentValue">24</output>
-          <input id="minComponent" type="range" min="1" max="300" value="24">
-        </label>
-
-        <label class="control-row">
-          <span>線の不透明度</span>
-          <output id="overlayOpacityValue">90</output>
-          <input id="overlayOpacity" type="range" min="10" max="100" value="90">
-        </label>
-
-        <button id="analyzeButton" class="primary" type="button" disabled>プレビュー粒界抽出</button>
+        <label class="control-row"><span>線の不透明度</span><output id="overlayOpacityValue">90</output><input id="overlayOpacity" type="range" min="10" max="100" value="90"></label>
+        <button id="analyzeButton" class="primary full" type="button" disabled>プレビュー粒界抽出</button>
       </section>
 
       <section>
         <h2>お手本比較・自動調整</h2>
-
-        <label class="control-row">
-          <span>お手本線幅</span>
-          <output id="referenceBrushValue">5</output>
-          <input id="referenceBrush" type="range" min="2" max="16" value="5">
-        </label>
-
-        <label class="control-row">
-          <span>一致許容幅</span>
-          <output id="toleranceValue">4</output>
-          <input id="tolerance" type="range" min="1" max="10" value="4">
-        </label>
-
-        <label class="control-row">
-          <span>比較範囲</span>
-          <output id="reviewRadiusValue">18</output>
-          <input id="reviewRadius" type="range" min="6" max="40" value="18">
-        </label>
+        <label class="control-row"><span>お手本線幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="2" max="16" value="5"></label>
+        <label class="control-row"><span>一致許容幅</span><output id="toleranceValue">4</output><input id="tolerance" type="range" min="1" max="10" value="4"></label>
+        <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
           <button id="compareButton" type="button" disabled>比較</button>
@@ -149,7 +128,6 @@
           <span><i class="swatch fp"></i>誤検出</span>
           <span><i class="swatch fn"></i>見逃し</span>
         </div>
-
         <div class="metrics-grid">
           <div><span>Precision</span><strong id="metricPrecision">-</strong></div>
           <div><span>Recall</span><strong id="metricRecall">-</strong></div>
@@ -159,17 +137,22 @@
       </section>
 
       <section>
-        <h2>v0.2 状態</h2>
+        <h2>評価履歴</h2>
+        <ol id="historyList" class="history-list"></ol>
+      </section>
+
+      <section>
+        <h2>v0.3 状態</h2>
         <ul class="check-list">
-          <li class="done">巨大BMPの直接読込</li>
-          <li class="done">全展開しない縮小プレビュー</li>
-          <li class="done">粒界候補オーバーレイ</li>
-          <li class="done">お手本粒界の描画・消去</li>
-          <li class="done">Precision / Recall / F1比較</li>
-          <li class="done">CPU自動パラメータ調整</li>
+          <li class="done">Multi-scale Dark Ridge</li>
+          <li class="done">方向付きLab色差</li>
+          <li class="done">局所適応正規化</li>
+          <li class="done">中心線ベース評価</li>
+          <li class="done">評価履歴の保存</li>
+          <li class="done">JSON / IndexedDBプロジェクト保存</li>
+          <li>お手本による局所パラメータ最適化</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
-          <li>PNG / Mask / SVG出力</li>
         </ul>
       </section>
     </aside>
