@@ -764,6 +764,15 @@ function invalidateAfterReferenceEdit(affectsAnalysis = false) {
   updateMetrics();
 }
 
+function invalidateEvaluationOnly() {
+  state.comparisonMode = false;
+  els.referenceCanvas.style.visibility = "visible";
+  els.negativeCanvas.style.visibility = "visible";
+  els.exclusionCanvas.style.visibility = "visible";
+  els.fullRoiCanvas.style.visibility = "visible";
+  updateMetrics();
+}
+
 function recalcAnnotationCounts() {
   state.referenceCount = state.referenceCenterline
     ? state.referenceCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0)
@@ -789,7 +798,8 @@ function applyReferenceUndoRedo(direction) {
   if (state.comparisonMode) showNormalView();
   const item = source.pop();
   const affectsAnalysis = item.kind.startsWith("exclusion-");
-  invalidateAfterReferenceEdit(affectsAnalysis);
+  if (item.kind.startsWith("roi-")) invalidateEvaluationOnly();
+  else invalidateAfterReferenceEdit(affectsAnalysis);
 
   if (item.kind === "mask-edit") {
     for (const part of item.parts) applyMaskHistoryPart(part, direction);
@@ -942,7 +952,7 @@ function clearFullEvaluationRois() {
   state.fullEvaluationRois = [];
   state.selectedFullRoiIndex = -1;
   rebuildFullRoiLayer();
-  invalidateAfterReferenceEdit(false);
+  invalidateEvaluationOnly();
   commitReferenceHistory(item);
   updateControls();
   setStatus("完全評価ROIを全消去しました。Undoで復元できます。");
@@ -1793,7 +1803,8 @@ function endRectInteraction(event) {
   renderRectLayer(interaction.kind);
 
   if (changed) {
-    invalidateAfterReferenceEdit(isExclusion);
+    if (isExclusion) invalidateAfterReferenceEdit(true);
+    else invalidateEvaluationOnly();
     if (isExclusion) {
       rebuildExclusionLayer();
       setStatus("除外領域を更新しました。除外 " + state.exclusionRects.length + "領域。再解析してください。");
@@ -1826,7 +1837,8 @@ function deleteSelectedRect(kind) {
     rect: { ...rect },
   });
   renderRectLayer(kind);
-  invalidateAfterReferenceEdit(isExclusion);
+  if (isExclusion) invalidateAfterReferenceEdit(true);
+  else invalidateEvaluationOnly();
   if (isExclusion) {
     rebuildExclusionLayer();
     setStatus("選択した除外矩形を削除しました。再解析してください。Undoで復元できます。");
