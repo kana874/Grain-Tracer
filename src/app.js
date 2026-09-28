@@ -542,6 +542,30 @@ function renderHistory() {
   }
 }
 
+function compactAutoTuneSearch(search) {
+  if (!search) return null;
+  return {
+    version: search.version ?? 2,
+    strategy: search.strategy ?? "coordinate-descent",
+    objectiveMode: search.objectiveMode ?? null,
+    baseline: search.baseline ?? null,
+    final: search.final ?? null,
+    rounds: (search.rounds ?? []).map(round => ({
+      round: round.round,
+      startParameters: round.startParameters,
+      accepted: round.accepted,
+      revertedTo: round.revertedTo ?? null,
+      processed: round.processed ?? null,
+      coordinates: (round.coordinates ?? []).map(item => ({
+        name: item.name,
+        previousValue: item.previousValue,
+        selectedValue: item.selectedValue,
+      })),
+    })),
+    ablation: search.ablation ?? [],
+  };
+}
+
 function addHistory(kind, metrics, note = "", tuning = null) {
   const cleanRegions = (metrics.regions ?? []).map(region => ({
     rx: region.rx, ry: region.ry, precision: region.precision, recall: region.recall,
@@ -1479,7 +1503,7 @@ async function autoTune() {
       objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%`;
     }
 
-    addHistory("auto-tune", comparison.metrics, note, result.search);
+    addHistory("auto-tune", comparison.metrics, note, compactAutoTuneSearch(result.search));
     setStatus(
       `Auto Tune v2完了: ${objectiveStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent}`,
       100,
