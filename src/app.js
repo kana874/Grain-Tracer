@@ -643,7 +643,15 @@ function renderNegativeCanvas() {
   );
 }
 
-function rebuildExclusionLayer(previewRect = null) {
+function annotationHandleSize() {
+  return state.scale > 0 ? Math.max(6, Math.min(22, 9 / state.scale)) : 9;
+}
+
+function annotationHitThreshold() {
+  return state.scale > 0 ? Math.max(4, Math.min(18, 7 / state.scale)) : 7;
+}
+
+function rebuildExclusionLayer(previewRect = null, showSelection = true) {
   if (!state.preview) return;
   state.exclusionMask = buildExclusionMask(
     state.exclusionRects,
@@ -656,6 +664,22 @@ function rebuildExclusionLayer(previewRect = null) {
     state.preview.width,
     state.preview.height,
     previewRect,
+    showSelection && state.tool === "exclusion" ? state.selectedExclusionIndex : -1,
+    annotationHandleSize(),
+  );
+  updateAnnotationStatus();
+}
+
+function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
+  if (!state.preview) return;
+  renderFullEvaluationRoiCanvas(
+    els.fullRoiCanvas,
+    state.fullEvaluationRois,
+    state.preview.width,
+    state.preview.height,
+    previewRect,
+    showSelection && state.tool === "full-roi" ? state.selectedFullRoiIndex : -1,
+    annotationHandleSize(),
   );
   updateAnnotationStatus();
 }
@@ -664,7 +688,7 @@ function updateAnnotationStatus() {
   const negative = state.negativeCount ?? 0;
   const excluded = state.exclusionMask ? countMaskPixels(state.exclusionMask) : 0;
   els.annotationStatus.textContent =
-    `非粒界: ${negative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px)`;
+    `非粒界: ${negative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${state.fullEvaluationRois.length}領域`;
 }
 
 function resetReferenceHistory() {
@@ -732,6 +756,7 @@ function invalidateAfterReferenceEdit(affectsAnalysis = false) {
   els.referenceCanvas.style.visibility = "visible";
   els.negativeCanvas.style.visibility = "visible";
   els.exclusionCanvas.style.visibility = "visible";
+  els.fullRoiCanvas.style.visibility = "visible";
   if (affectsAnalysis) {
     state.analysisMask = null;
     els.overlayCanvas.getContext("2d").clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
@@ -763,23 +788,51 @@ function applyReferenceUndoRedo(direction) {
 
   if (state.comparisonMode) showNormalView();
   const item = source.pop();
-  const affectsAnalysis = item.kind === "exclusion-add" || item.kind === "exclusion-clear";
+  const affectsAnalysis = item.kind.startsWith("exclusion-");
   invalidateAfterReferenceEdit(affectsAnalysis);
 
   if (item.kind === "mask-edit") {
     for (const part of item.parts) applyMaskHistoryPart(part, direction);
   } else if (item.kind === "exclusion-add") {
-    if (direction === "undo") {
-      state.exclusionRects.splice(item.index, 1);
-    } else {
-      state.exclusionRects.splice(item.index, 0, { ...item.rect });
-    }
+    if (direction === "undo") state.exclusionRects.splice(item.index, 1);
+    else state.exclusionRects.splice(item.index, 0, { ...item.rect });
+    state.selectedExclusionIndex = -1;
+    rebuildExclusionLayer();
+  } else if (item.kind === "exclusion-edit") {
+    state.exclusionRects[item.index] = { ...(direction === "undo" ? item.before : item.after) };
+    state.selectedExclusionIndex = item.index;
+    rebuildExclusionLayer();
+  } else if (item.kind === "exclusion-delete") {
+    if (direction === "undo") state.exclusionRects.splice(item.index, 0, { ...item.rect });
+    else state.exclusionRects.splice(item.index, 1);
+    state.selectedExclusionIndex = direction === "undo" ? item.index : -1;
     rebuildExclusionLayer();
   } else if (item.kind === "exclusion-clear") {
     state.exclusionRects = direction === "undo"
       ? item.rects.map(rect => ({ ...rect }))
       : [];
+    state.selectedExclusionIndex = -1;
     rebuildExclusionLayer();
+  } else if (item.kind === "roi-add") {
+    if (direction === "undo") state.fullEvaluationRois.splice(item.index, 1);
+    else state.fullEvaluationRois.splice(item.index, 0, { ...item.rect });
+    state.selectedFullRoiIndex = -1;
+    rebuildFullRoiLayer();
+  } else if (item.kind === "roi-edit") {
+    state.fullEvaluationRois[item.index] = { ...(direction === "undo" ? item.before : item.after) };
+    state.selectedFullRoiIndex = item.index;
+    rebuildFullRoiLayer();
+  } else if (item.kind === "roi-delete") {
+    if (direction === "undo") state.fullEvaluationRois.splice(item.index, 0, { ...item.rect });
+    else state.fullEvaluationRois.splice(item.index, 1);
+    state.selectedFullRoiIndex = direction === "undo" ? item.index : -1;
+    rebuildFullRoiLayer();
+  } else if (item.kind === "roi-clear") {
+    state.fullEvaluationRois = direction === "undo"
+      ? item.rects.map(rect => ({ ...rect }))
+      : [];
+    state.selectedFullRoiIndex = -1;
+    rebuildFullRoiLayer();
   }
 
   target.push(item);
@@ -810,6 +863,7 @@ function clearOverlay() {
   els.referenceCanvas.style.visibility = "visible";
   els.negativeCanvas.style.visibility = "visible";
   els.exclusionCanvas.style.visibility = "visible";
+  els.fullRoiCanvas.style.visibility = "visible";
   updateMetrics();
   updateControls();
   setStatus("粒界オーバーレイを消去しました。");
@@ -869,11 +923,29 @@ function clearExclusions() {
     rects: state.exclusionRects.map(rect => ({ ...rect })),
   };
   state.exclusionRects = [];
+  state.selectedExclusionIndex = -1;
   rebuildExclusionLayer();
   invalidateAfterReferenceEdit(true);
   commitReferenceHistory(item);
   updateControls();
   setStatus("除外領域を全消去しました。再解析してください。Undoで復元できます。");
+  scheduleAutosave();
+}
+
+function clearFullEvaluationRois() {
+  if (!state.preview || !hasFullEvaluationRois()) return;
+  if (state.comparisonMode) showNormalView();
+  const item = {
+    kind: "roi-clear",
+    rects: state.fullEvaluationRois.map(rect => ({ ...rect })),
+  };
+  state.fullEvaluationRois = [];
+  state.selectedFullRoiIndex = -1;
+  rebuildFullRoiLayer();
+  invalidateAfterReferenceEdit(false);
+  commitReferenceHistory(item);
+  updateControls();
+  setStatus("完全評価ROIを全消去しました。Undoで復元できます。");
   scheduleAutosave();
 }
 
