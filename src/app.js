@@ -197,7 +197,7 @@ function hasReference() {
 }
 
 function hasNegativeReference() {
-  return state.negativeCount > 0;
+  return state.negativeCount > 0 || state.negativeFillSeeds.length > 0;
 }
 
 function hasExclusions() {
