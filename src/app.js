@@ -887,7 +887,24 @@ function applyReferenceUndoRedo(direction) {
   else invalidateAfterReferenceEdit(affectsAnalysis);
 
   if (item.kind === "mask-edit") {
-    for (const part of item.parts) applyMaskHistoryPart(part, direction);
+    let referenceChanged = false;
+    for (const part of item.parts) {
+      applyMaskHistoryPart(part, direction);
+      if (part.layer === "reference") referenceChanged = true;
+    }
+    if (referenceChanged && state.negativeFillSeeds.length) renderNegativeCanvas();
+  } else if (item.kind === "negative-fill-add") {
+    if (direction === "undo") state.negativeFillSeeds.splice(item.index, 1);
+    else state.negativeFillSeeds.splice(item.index, 0, { ...item.seed });
+    renderNegativeCanvas();
+  } else if (item.kind === "negative-clear") {
+    if (item.lineEntry) {
+      applyReferenceHistoryEntry(state.negativeCenterline, item.lineEntry, direction);
+    }
+    state.negativeFillSeeds = direction === "undo"
+      ? item.fillSeeds.map(seed => ({ ...seed }))
+      : [];
+    renderNegativeCanvas();
   } else if (item.kind === "exclusion-add") {
     if (direction === "undo") state.exclusionRects.splice(item.index, 1);
     else state.exclusionRects.splice(item.index, 0, { ...item.rect });
@@ -993,21 +1010,22 @@ function clearNegativeReference() {
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
 
-  const entry = buildClearReferenceEntry(
+  const lineEntry = buildClearReferenceEntry(
     state.negativeCenterline,
     state.preview.width,
     state.preview.height,
   );
-  if (!entry) return;
+  const fillSeeds = state.negativeFillSeeds.map(seed => ({ ...seed }));
+  if (!lineEntry && !fillSeeds.length) return;
 
   state.negativeCenterline.fill(0);
-  state.negativeMask.fill(0);
-  els.negativeCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
-  commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "negative", entry }] });
+  state.negativeFillSeeds = [];
+  renderNegativeCanvas();
+  commitReferenceHistory({ kind: "negative-clear", lineEntry, fillSeeds });
   recalcAnnotationCounts();
   renderNormalOverlay();
   updateControls();
-  setStatus("非粒界お手本を全消去しました。Undoで復元できます。");
+  setStatus("非粒界お手本（線＋閉領域Fill）を全消去しました。Undoで復元できます。");
   scheduleAutosave();
 }
 
@@ -1062,6 +1080,7 @@ function buildProject() {
     referenceCenterline: state.referenceCenterline,
     negativeMask: state.negativeMask,
     negativeCenterline: state.negativeCenterline,
+    negativeFillSeeds: state.negativeFillSeeds,
     exclusionRects: state.exclusionRects,
     fullEvaluationRois: state.fullEvaluationRois,
     localCalibration: state.localCalibration,
@@ -1096,13 +1115,17 @@ async function restoreProject(project, source = "プロジェクト") {
   state.referenceMask = masks.referenceMask;
   state.referenceCenterline = masks.referenceCenterline;
   state.negativeMask = masks.negativeMask;
+  state.negativeLineMask = new Uint8Array(state.preview.width * state.preview.height);
   state.negativeCenterline = masks.negativeCenterline;
+  state.negativeFillSeeds = masks.negativeFillSeeds ?? [];
+  state.negativeFillMask = new Uint8Array(state.preview.width * state.preview.height);
+  state.negativeFillInfo = { seedCount: 0, validSeeds: 0, invalidSeeds: 0, fillPixels: 0, results: [] };
   state.exclusionRects = masks.exclusionRects;
   state.fullEvaluationRois = masks.fullEvaluationRois;
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
   state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
-  state.negativeCount = state.negativeCenterline.reduce((sum, value) => sum + value, 0);
+  state.negativeCount = 0;
   resetReferenceHistory();
   state.history = Array.isArray(project.history) ? project.history : [];
   state.localCalibration = project.localCalibration ?? null;
@@ -1169,6 +1192,8 @@ async function exportDiagnostics() {
       referenceCenterline: state.referenceCenterline,
       negativeMask: state.negativeMask,
       negativeCenterline: state.negativeCenterline,
+      negativeFillSeeds: state.negativeFillSeeds,
+      negativeFillInfo: state.negativeFillInfo,
       exclusionMask: state.exclusionMask,
       exclusionRects: state.exclusionRects,
       fullEvaluationRois: state.fullEvaluationRois,
@@ -1299,7 +1324,11 @@ async function loadBmp(file) {
   state.referenceCenterline = null;
   state.negativeCount = 0;
   state.negativeMask = null;
+  state.negativeLineMask = null;
   state.negativeCenterline = null;
+  state.negativeFillMask = null;
+  state.negativeFillSeeds = [];
+  state.negativeFillInfo = { seedCount: 0, validSeeds: 0, invalidSeeds: 0, fillPixels: 0, results: [] };
   state.exclusionRects = [];
   state.exclusionMask = null;
   state.fullEvaluationRois = [];
@@ -1332,7 +1361,11 @@ async function loadBmp(file) {
     state.referenceMask = new Uint8Array(preview.width * preview.height);
     state.referenceCenterline = new Uint8Array(preview.width * preview.height);
     state.negativeMask = new Uint8Array(preview.width * preview.height);
+    state.negativeLineMask = new Uint8Array(preview.width * preview.height);
     state.negativeCenterline = new Uint8Array(preview.width * preview.height);
+    state.negativeFillMask = new Uint8Array(preview.width * preview.height);
+    state.negativeFillSeeds = [];
+    state.negativeFillInfo = { seedCount: 0, validSeeds: 0, invalidSeeds: 0, fillPixels: 0, results: [] };
     state.exclusionMask = new Uint8Array(preview.width * preview.height);
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
@@ -1376,7 +1409,11 @@ async function loadBmp(file) {
     state.referenceMask = null;
     state.referenceCenterline = null;
     state.negativeMask = null;
+    state.negativeLineMask = null;
     state.negativeCenterline = null;
+    state.negativeFillMask = null;
+    state.negativeFillSeeds = [];
+    state.negativeFillInfo = { seedCount: 0, validSeeds: 0, invalidSeeds: 0, fillPixels: 0, results: [] };
     state.exclusionMask = null;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
@@ -1787,6 +1824,7 @@ function endReferenceDraw(event) {
   if (negativeEntry) parts.push({ layer: "negative", entry: negativeEntry });
   state.currentReferenceEdit = null;
   if (parts.length) commitReferenceHistory({ kind: "mask-edit", parts });
+  if (referenceEntry && state.negativeFillSeeds.length) renderNegativeCanvas();
 
   recalcAnnotationCounts();
   updateMetrics();
