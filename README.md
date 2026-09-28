@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.0-alpha / boundary-v3**
+**v0.3.3-alpha / boundary-v4-dendrite**
 
 Current capabilities:
 
@@ -14,9 +14,11 @@ Current capabilities:
 - multi-scale Dark Ridge feature for suppressing dot-like intragranular structures
 - direction-aware Lab color difference across the estimated boundary normal
 - local adaptive normalization for illumination and colour unevenness
-- user-drawn reference boundaries
+- user-drawn reference boundaries with canonical display/judgement geometry
+- adjustable semi-transparent reference display
+- reference Undo / Redo with keyboard shortcuts and changed-pixel history
 - tolerant Precision / Recall / F1 comparison
-- CPU-only automatic tuning of sensitivity and Dark / Ridge / Color weights
+- CPU-only automatic tuning of sensitivity and Dark / Ridge / Color / dendrite weights
 - reference-guided 4×4 local sensitivity calibration with smooth interpolation
 - 4×4 regional evaluation data
 - evaluation history
@@ -53,6 +55,7 @@ Original BMP
   -> local normalization
   -> multi-scale Dark Ridge
   -> directional Lab colour difference
+  -> dendrite orientation-difference feature
   -> boundary score
   -> reference comparison
   -> CPU global auto-tune
