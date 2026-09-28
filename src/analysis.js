@@ -274,7 +274,7 @@ function buildFastEvaluationHelpers(
     if (referenceCenterline[p]) referenceIndices.push(p);
     if (reviewMask[p] || (negativeMask?.[p] && !referenceTolerance[p])) reviewIndices.push(p);
   }
-  return { referenceTolerance, referenceIndices, reviewIndices, tolerance };
+  return { referenceTolerance, referenceIndices, reviewIndices, tolerance, exclusionMask };
 }
 
 function evaluateRawConfiguration(features, helpers, config) {
@@ -312,7 +312,9 @@ function evaluateRawConfiguration(features, helpers, config) {
       for (let dx = -tolerance; dx <= tolerance; dx += 1) {
         const nx = x + dx;
         if (nx < 0 || nx >= width) continue;
-        if (scoreIsPrediction(ny * width + nx)) {
+        const np = ny * width + nx;
+        if (helpers.exclusionMask?.[np]) continue;
+        if (scoreIsPrediction(np)) {
           found = true;
           break;
         }
