@@ -625,7 +625,7 @@ function setOverlayPeekHidden(hidden) {
 
 function invalidateTopology() {
   state.lastTopology = null;
-  if (els.topologyStatus) els.topologyStatus.textContent = "Topology: 未実行";
+  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2: 未実行";
 }
 
 function topologyRateText(value) {
@@ -2016,7 +2016,10 @@ async function autoTune() {
         ? `, holdoutMacroNegativeLeakage=${(validationMetrics.macroNegativeLeakage ?? validationMetrics.negativeLeakage).toFixed(4)}`
         : ", negativeHoldout=omitted";
       note = `auto-tune-v2 coordinate-descent; objective=partial-label-region-balanced; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}${negativeHoldoutNote}`;
-      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((comparison.metrics.macroNegativeLeakage ?? comparison.metrics.negativeLeakage) * 100).toFixed(1)}% / 検証Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`;
+      const holdoutLeakText = negativeHoldout.validationMask
+        ? ` / 検証Macro Leak ${((validationMetrics.macroNegativeLeakage ?? validationMetrics.negativeLeakage) * 100).toFixed(1)}%`
+        : "";
+      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((comparison.metrics.macroNegativeLeakage ?? comparison.metrics.negativeLeakage) * 100).toFixed(1)}% / 検証Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%${holdoutLeakText}`;
     } else {
       note = "auto-tune-v2 coordinate-descent; objective=partial-label-region-balanced; validation holdout unavailable";
       objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((comparison.metrics.macroNegativeLeakage ?? comparison.metrics.negativeLeakage) * 100).toFixed(1)}%`;
@@ -2110,7 +2113,7 @@ async function localTune() {
     );
     const measured = calibration.measured.reduce((sum, value) => sum + (value ? 1 : 0), 0);
     const validationNote = validationMetrics
-      ? ` / 検証 Positive Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`
+      ? ` / 検証 Positive Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%${negativeHoldout.validationMask ? ` / Macro Leak ${((validationMetrics.macroNegativeLeakage ?? validationMetrics.negativeLeakage) * 100).toFixed(1)}%` : ""}`
       : "";
     setStatus(
       `局所調整完了: Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%${validationNote} / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
