@@ -201,34 +201,49 @@ export function applyDirectionalNonMaximumSuppression(mask, score, features, opt
       }
 
       const orientation = features.orientation?.[p] ?? 0;
-      let offset = 1;
-      if (orientation === 1) offset = width + 1;
-      else if (orientation === 2) offset = width;
-      else if (orientation === 3) offset = width - 1;
+      let dx = 1;
+      let dy = 0;
+      if (orientation === 1) {
+        dx = 1;
+        dy = 1;
+      } else if (orientation === 2) {
+        dx = 0;
+        dy = 1;
+      } else if (orientation === 3) {
+        dx = -1;
+        dy = 1;
+      }
 
       const center = score[p];
       const epsilon = 1e-7;
       const maxPlateauSteps = 8;
       let beforeSteps = 0;
       let afterSteps = 0;
-      let before = p - offset;
-      let after = p + offset;
+      let bx = x - dx;
+      let by = y - dy;
+      let ax = x + dx;
+      let ay = y + dy;
 
-      while (beforeSteps < maxPlateauSteps
-        && mask[before]
-        && Math.abs(score[before] - center) <= epsilon) {
+      const inBounds = (sx, sy) => sx >= 0 && sy >= 0 && sx < width && sy < height;
+      while (beforeSteps < maxPlateauSteps && inBounds(bx, by)) {
+        const bp = by * width + bx;
+        if (!mask[bp] || Math.abs(score[bp] - center) > epsilon) break;
         beforeSteps += 1;
-        before -= offset;
+        bx -= dx;
+        by -= dy;
       }
-      while (afterSteps < maxPlateauSteps
-        && mask[after]
-        && Math.abs(score[after] - center) <= epsilon) {
+      while (afterSteps < maxPlateauSteps && inBounds(ax, ay)) {
+        const ap = ay * width + ax;
+        if (!mask[ap] || Math.abs(score[ap] - center) > epsilon) break;
         afterSteps += 1;
-        after += offset;
+        ax += dx;
+        ay += dy;
       }
 
-      const beforeScore = mask[before] ? score[before] : -1;
-      const afterScore = mask[after] ? score[after] : -1;
+      const before = inBounds(bx, by) ? by * width + bx : -1;
+      const after = inBounds(ax, ay) ? ay * width + ax : -1;
+      const beforeScore = before >= 0 && mask[before] ? score[before] : -1;
+      const afterScore = after >= 0 && mask[after] ? score[after] : -1;
       if (beforeScore > center + epsilon || afterScore > center + epsilon) continue;
 
       // A flat response plateau has no unique maximum. Keep its midpoint rather
