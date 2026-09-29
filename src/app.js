@@ -890,7 +890,22 @@ function applyReferenceUndoRedo(direction) {
   else invalidateAfterReferenceEdit(affectsAnalysis);
 
   if (item.kind === "mask-edit") {
-    for (const part of item.parts) applyMaskHistoryPart(part, direction);
+    let referenceChanged = false;
+    for (const part of item.parts) {
+      applyMaskHistoryPart(part, direction);
+      if (part.layer === "reference") referenceChanged = true;
+    }
+    if (referenceChanged) renderNegativeCanvas(true);
+  } else if (item.kind === "closed-fill-add") {
+    if (direction === "undo") state.closedNegativeSeeds.splice(item.index, 1);
+    else state.closedNegativeSeeds.splice(item.index, 0, { ...item.seed });
+    renderNegativeCanvas(true);
+  } else if (item.kind === "negative-clear") {
+    if (item.manualEntry) applyMaskHistoryPart({ layer: "negative", entry: item.manualEntry }, direction);
+    state.closedNegativeSeeds = direction === "undo"
+      ? item.closedNegativeSeeds.map(seed => ({ ...seed }))
+      : [];
+    renderNegativeCanvas(true);
   } else if (item.kind === "exclusion-add") {
     if (direction === "undo") state.exclusionRects.splice(item.index, 1);
     else state.exclusionRects.splice(item.index, 0, { ...item.rect });
