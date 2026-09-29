@@ -664,14 +664,48 @@ function renderReferenceCanvas() {
   els.referenceCanvas.getContext("2d").putImageData(new ImageData(rgba, state.preview.width, state.preview.height), 0, 0);
 }
 
-function renderNegativeCanvas() {
+function closedNegativeFillOptions() {
+  return {
+    safetyRadius: 3,
+    maxAreaFraction: 0.35,
+    minPixels: 12,
+  };
+}
+
+function rebuildClosedNegativeState() {
+  if (!state.preview || !state.referenceMask) return;
+  const rebuilt = rebuildClosedNegativeMask(
+    state.referenceMask,
+    state.preview.width,
+    state.preview.height,
+    state.closedNegativeSeeds,
+    closedNegativeFillOptions(),
+  );
+  state.closedNegativeMask = rebuilt.mask;
+  state.closedNegativeCount = countMaskPixels(rebuilt.mask);
+  state.closedNegativeValidCount = rebuilt.validCount;
+  state.closedNegativeInvalidCount = rebuilt.invalidCount;
+}
+
+function rebuildCombinedNegativeMask() {
+  if (!state.preview) return;
+  state.negativeMask = combineNegativeMasks(
+    state.manualNegativeMask,
+    state.closedNegativeMask,
+    state.referenceMask,
+  );
+}
+
+function renderNegativeCanvas(rebuildClosed = true) {
   if (!state.preview || !state.negativeCenterline) return;
-  state.negativeMask = dilateBinaryMask(
+  state.manualNegativeMask = dilateBinaryMask(
     state.negativeCenterline,
     state.preview.width,
     state.preview.height,
     referenceJudgementRadius(),
   );
+  if (rebuildClosed) rebuildClosedNegativeState();
+  rebuildCombinedNegativeMask();
   renderBinaryMaskCanvas(
     els.negativeCanvas,
     state.negativeMask,
@@ -724,10 +758,15 @@ function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
 }
 
 function updateAnnotationStatus() {
-  const negative = state.negativeCount ?? 0;
+  const manualNegative = state.negativeCount ?? 0;
+  const closedNegative = state.closedNegativeCount ?? 0;
+  const combinedNegative = state.negativeMask ? countMaskPixels(state.negativeMask) : 0;
   const excluded = state.exclusionMask ? countMaskPixels(state.exclusionMask) : 0;
+  const invalidFillText = state.closedNegativeInvalidCount
+    ? ` / 無効seed ${state.closedNegativeInvalidCount}`
+    : "";
   els.annotationStatus.textContent =
-    `非粒界: ${negative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${state.fullEvaluationRois.length}領域`;
+    `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${state.fullEvaluationRois.length}領域`;
 }
 
 function resetReferenceHistory() {
@@ -762,15 +801,25 @@ function refreshReferenceDirty(changedBounds) {
 }
 
 function refreshNegativeDirty(changedBounds) {
-  if (!state.preview || !state.negativeCenterline || !state.negativeMask || !changedBounds) return;
+  if (!state.preview || !state.negativeCenterline || !state.manualNegativeMask || !state.negativeMask || !changedBounds) return;
   const dirty = rebuildReferenceMaskRegion(
     state.negativeCenterline,
-    state.negativeMask,
+    state.manualNegativeMask,
     state.preview.width,
     state.preview.height,
     referenceJudgementRadius(),
     changedBounds,
   );
+  if (!dirty) return;
+  for (let y = dirty.y0; y <= dirty.y1; y += 1) {
+    const base = y * state.preview.width;
+    for (let x = dirty.x0; x <= dirty.x1; x += 1) {
+      const p = base + x;
+      state.negativeMask[p] = state.referenceMask?.[p]
+        ? 0
+        : (state.manualNegativeMask[p] || state.closedNegativeMask?.[p] ? 1 : 0);
+    }
+  }
   renderReferenceMaskRegion(
     els.negativeCanvas,
     state.negativeMask,
