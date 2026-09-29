@@ -200,7 +200,7 @@ function hasReference() {
 }
 
 function hasNegativeReference() {
-  return state.negativeCount > 0 || state.closedNegativeCount > 0;
+  return state.negativeCount > 0 || state.closedNegativeSeeds.length > 0;
 }
 
 function hasExclusions() {
