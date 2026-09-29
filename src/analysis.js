@@ -206,15 +206,36 @@ export function applyDirectionalNonMaximumSuppression(mask, score, features, opt
       else if (orientation === 2) offset = width;
       else if (orientation === 3) offset = width - 1;
 
-      const before = p - offset;
-      const after = p + offset;
+      const center = score[p];
+      const epsilon = 1e-7;
+      const maxPlateauSteps = 8;
+      let beforeSteps = 0;
+      let afterSteps = 0;
+      let before = p - offset;
+      let after = p + offset;
+
+      while (beforeSteps < maxPlateauSteps
+        && mask[before]
+        && Math.abs(score[before] - center) <= epsilon) {
+        beforeSteps += 1;
+        before -= offset;
+      }
+      while (afterSteps < maxPlateauSteps
+        && mask[after]
+        && Math.abs(score[after] - center) <= epsilon) {
+        afterSteps += 1;
+        after += offset;
+      }
+
       const beforeScore = mask[before] ? score[before] : -1;
       const afterScore = mask[after] ? score[after] : -1;
-      const center = score[p];
+      if (beforeScore > center + epsilon || afterScore > center + epsilon) continue;
 
-      // Deterministic tie-break keeps one side of a flat 2-3 px plateau instead
-      // of retaining both edges of the same thick response band.
-      if (center > beforeScore && center >= afterScore) out[p] = 1;
+      // A flat response plateau has no unique maximum. Keep its midpoint rather
+      // than consistently choosing one side, which would introduce a position bias.
+      const plateauSpan = beforeSteps + afterSteps;
+      const midpointFromBefore = Math.floor(plateauSpan / 2);
+      if (beforeSteps === midpointFromBefore) out[p] = 1;
     }
   }
 
