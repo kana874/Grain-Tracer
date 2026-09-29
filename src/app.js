@@ -1537,7 +1537,7 @@ function compareCurrent(record = true) {
   const toleranceText = tol1 && tol4
     ? ` / Recall@1px ${(tol1.positiveRecall * 100).toFixed(1)}% → @4px ${(tol4.positiveRecall * 100).toFixed(1)}%`
     : "";
-  setStatus(`比較完了: Positive Recall ${(result.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(result.metrics.negativeLeakage * 100).toFixed(1)}%${toleranceText}`, 100);
+  setStatus(`比較完了: Positive Recall ${(result.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(result.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((result.metrics.macroNegativeLeakage ?? result.metrics.negativeLeakage) * 100).toFixed(1)}%${toleranceText}`, 100);
   return result;
 }
 
@@ -1564,7 +1564,7 @@ async function autoTune() {
       : negativeHoldout.tuningMask;
     const objectiveText = useCompleteRoi
       ? "完全評価ROIのTrue F1"
-      : "Positive Recall / Negative Leakage";
+      : "Positive Recall / Macro Negative Leakage";
     setStatus(`Auto Tune v2: ${objectiveText}を基準にCoordinate Descentで調整中...`, 1);
     const result = await autoTuneBoundary(features, tuningReference, {
       ...currentComparisonOptions(),
@@ -1631,11 +1631,11 @@ async function autoTune() {
       note = `auto-tune-v2 coordinate-descent; objective=complete-roi-f1; roiF1=${roiMetrics.f1.toFixed(4)}`;
       objectiveStatus = `ROI True F1 ${(roiMetrics.f1 * 100).toFixed(1)}% / P ${(roiMetrics.precision * 100).toFixed(1)}% / R ${(roiMetrics.recall * 100).toFixed(1)}%`;
     } else if (validationMetrics) {
-      note = `auto-tune-v2 coordinate-descent; objective=partial-label-balanced; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}, negativeLeakage=${validationMetrics.negativeLeakage.toFixed(4)}`;
-      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / 検証Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`;
+      note = `auto-tune-v2 coordinate-descent; objective=partial-label-region-balanced; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}, macroNegativeLeakage=${(validationMetrics.macroNegativeLeakage ?? validationMetrics.negativeLeakage).toFixed(4)}`;
+      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((comparison.metrics.macroNegativeLeakage ?? comparison.metrics.negativeLeakage) * 100).toFixed(1)}% / 検証Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`;
     } else {
-      note = "auto-tune-v2 coordinate-descent; objective=partial-label-balanced; validation holdout unavailable";
-      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%`;
+      note = "auto-tune-v2 coordinate-descent; objective=partial-label-region-balanced; validation holdout unavailable";
+      objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((comparison.metrics.macroNegativeLeakage ?? comparison.metrics.negativeLeakage) * 100).toFixed(1)}%`;
     }
 
     addHistory("auto-tune", comparison.metrics, note, compactAutoTuneSearch(result.search));
