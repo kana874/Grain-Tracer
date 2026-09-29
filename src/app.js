@@ -1444,6 +1444,7 @@ async function restoreProject(project, source = "プロジェクト") {
   rebuildFullRoiLayer();
   renderHistory();
   state.analysisMask = null;
+  invalidateTopology();
   renderNormalOverlay();
   updateMetrics();
   updateControls();
@@ -1523,8 +1524,6 @@ async function exportDiagnostics() {
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
     });
-
-    invalidateTopology();
 
     const comparison = renderComparisonOverlay(
       state.analysisMask,
@@ -2010,6 +2009,7 @@ async function localTune() {
       exclusionMask: state.exclusionMask,
       onProgress: ratio => setStatus(`局所補正で再抽出中... ${Math.round(ratio * 100)}%`, 62 + ratio * 36),
     });
+    invalidateTopology();
 
     const comparison = renderComparisonOverlay(
       state.analysisMask,
@@ -2677,7 +2677,7 @@ window.addEventListener("keydown", event => {
     event.preventDefault();
     return;
   }
-  if (!editingControl && plainKey && keyLower === "v" && !event.repeat) {
+  if (!editingControl && plainKey && keyLower === "v" && !event.repeat && state.analysisMask) {
     toggleAnnotationAssist();
     event.preventDefault();
     return;
