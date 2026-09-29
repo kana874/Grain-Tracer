@@ -1633,7 +1633,10 @@ async function autoTune() {
       note = `auto-tune-v2 coordinate-descent; objective=complete-roi-f1; roiF1=${roiMetrics.f1.toFixed(4)}`;
       objectiveStatus = `ROI True F1 ${(roiMetrics.f1 * 100).toFixed(1)}% / P ${(roiMetrics.precision * 100).toFixed(1)}% / R ${(roiMetrics.recall * 100).toFixed(1)}%`;
     } else if (validationMetrics) {
-      note = `auto-tune-v2 coordinate-descent; objective=partial-label-region-balanced; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}, macroNegativeLeakage=${(validationMetrics.macroNegativeLeakage ?? validationMetrics.negativeLeakage).toFixed(4)}`;
+      const negativeHoldoutNote = negativeHoldout.validationMask
+        ? `, holdoutMacroNegativeLeakage=${(validationMetrics.macroNegativeLeakage ?? validationMetrics.negativeLeakage).toFixed(4)}`
+        : ", negativeHoldout=omitted";
+      note = `auto-tune-v2 coordinate-descent; objective=partial-label-region-balanced; holdout positiveRecall=${validationMetrics.positiveRecall.toFixed(4)}${negativeHoldoutNote}`;
       objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((comparison.metrics.macroNegativeLeakage ?? comparison.metrics.negativeLeakage) * 100).toFixed(1)}% / 検証Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%`;
     } else {
       note = "auto-tune-v2 coordinate-descent; objective=partial-label-region-balanced; validation holdout unavailable";
