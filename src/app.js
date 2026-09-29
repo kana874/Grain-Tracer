@@ -1175,8 +1175,9 @@ function buildProject() {
 function cancelScheduledAutosave() {
   clearTimeout(state.autosaveTimer);
   state.autosaveTimer = null;
-  if (state.autosaveIdleHandle != null && "cancelIdleCallback" in window) {
-    window.cancelIdleCallback(state.autosaveIdleHandle);
+  if (state.autosaveIdleHandle != null) {
+    if ("cancelIdleCallback" in window) window.cancelIdleCallback(state.autosaveIdleHandle);
+    else clearTimeout(state.autosaveIdleHandle);
   }
   state.autosaveIdleHandle = null;
 }
@@ -1448,8 +1449,10 @@ async function loadBmp(file) {
   state.closedNegativeCount = 0;
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
+  state.combinedNegativeCount = 0;
   state.exclusionRects = [];
   state.exclusionMask = null;
+  state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -1487,7 +1490,9 @@ async function loadBmp(file) {
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
+    state.combinedNegativeCount = 0;
     state.exclusionMask = new Uint8Array(preview.width * preview.height);
+    state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
     prepareCanvas(preview.width, preview.height);
@@ -1537,7 +1542,9 @@ async function loadBmp(file) {
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
+    state.combinedNegativeCount = 0;
     state.exclusionMask = null;
+    state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
     state.selectedExclusionIndex = -1;
@@ -1882,6 +1889,7 @@ function closedFillFailureMessage(reason) {
 
 function addClosedNegativeFill(event) {
   if (!state.preview || !state.referenceMask || !hasReference()) return false;
+  const annotationStartedAt = nowMs();
   const point = eventToPreviewPoint(event);
   if (!point) return false;
   const seed = { x: Math.round(point.x), y: Math.round(point.y) };
@@ -1938,8 +1946,9 @@ function addClosedNegativeFill(event) {
   recalcAnnotationCounts();
   updateMetrics();
   updateControls();
+  recordPerformance("annotationCommitMs", annotationStartedAt);
   setStatus(
-    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域 / rebuild ${state.performance.closedFillRebuildMs?.toFixed(0) ?? "-"} ms。Undoで取り消せます。`,
+    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域 / rebuild ${state.performance.closedFillRebuildMs?.toFixed(0) ?? "-"} ms / total ${state.performance.annotationCommitMs?.toFixed(0) ?? "-"} ms。Undoで取り消せます。`,
   );
   scheduleAutosave();
   return true;
@@ -1990,6 +1999,7 @@ function applyReferenceSegment(from, to) {
 function beginReferenceDraw(event) {
   const point = eventToPreviewPoint(event);
   if (!point) return false;
+  state.annotationStartedAt = nowMs();
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
 
@@ -2037,8 +2047,12 @@ function endReferenceDraw(event) {
   recalcAnnotationCounts();
   updateMetrics();
   updateControls();
+  if (state.annotationStartedAt != null) {
+    recordPerformance("annotationCommitMs", state.annotationStartedAt);
+    state.annotationStartedAt = null;
+  }
   setStatus(
-    `注釈を更新しました。粒界 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px`,
+    `注釈を更新しました。粒界 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px / ${state.performance.annotationCommitMs?.toFixed(0) ?? "-"} ms`,
   );
   scheduleAutosave();
   if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
