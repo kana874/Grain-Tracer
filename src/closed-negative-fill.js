@@ -61,6 +61,9 @@ export function buildClosedNegativeRegionIndex(referenceMask, width, height, opt
   const queue = new Int32Array(totalPixels);
   const componentSizes = [0];
   const componentTouchesEdge = [false];
+  const componentEdgeMasks = [0];
+  const componentEdgePixels = [0];
+  const componentReferenceContactPixels = [0];
   let componentCount = 0;
 
   for (let start = 0; start < totalPixels; start += 1) {
@@ -69,6 +72,9 @@ export function buildClosedNegativeRegionIndex(referenceMask, width, height, opt
     let head = 0;
     let tail = 0;
     let touchesEdge = false;
+    let edgeMask = 0;
+    let edgePixels = 0;
+    let referenceContactPixels = 0;
     queue[tail++] = start;
     labels[start] = componentCount;
 
@@ -76,32 +82,57 @@ export function buildClosedNegativeRegionIndex(referenceMask, width, height, opt
       const p = queue[head++];
       const x = p % width;
       const y = Math.floor(p / width);
-      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) touchesEdge = true;
+      let isEdgePixel = false;
+      if (x === 0) {
+        touchesEdge = true;
+        edgeMask |= 1;
+        isEdgePixel = true;
+      }
+      if (y === 0) {
+        touchesEdge = true;
+        edgeMask |= 2;
+        isEdgePixel = true;
+      }
+      if (x === width - 1) {
+        touchesEdge = true;
+        edgeMask |= 4;
+        isEdgePixel = true;
+      }
+      if (y === height - 1) {
+        touchesEdge = true;
+        edgeMask |= 8;
+        isEdgePixel = true;
+      }
+      if (isEdgePixel) edgePixels += 1;
 
       if (x > 0) {
         const np = p - 1;
-        if (!referenceMask[np] && !labels[np]) {
+        if (referenceMask[np]) referenceContactPixels += 1;
+        else if (!labels[np]) {
           labels[np] = componentCount;
           queue[tail++] = np;
         }
       }
       if (x + 1 < width) {
         const np = p + 1;
-        if (!referenceMask[np] && !labels[np]) {
+        if (referenceMask[np]) referenceContactPixels += 1;
+        else if (!labels[np]) {
           labels[np] = componentCount;
           queue[tail++] = np;
         }
       }
       if (y > 0) {
         const np = p - width;
-        if (!referenceMask[np] && !labels[np]) {
+        if (referenceMask[np]) referenceContactPixels += 1;
+        else if (!labels[np]) {
           labels[np] = componentCount;
           queue[tail++] = np;
         }
       }
       if (y + 1 < height) {
         const np = p + width;
-        if (!referenceMask[np] && !labels[np]) {
+        if (referenceMask[np]) referenceContactPixels += 1;
+        else if (!labels[np]) {
           labels[np] = componentCount;
           queue[tail++] = np;
         }
@@ -110,6 +141,9 @@ export function buildClosedNegativeRegionIndex(referenceMask, width, height, opt
 
     componentSizes[componentCount] = tail;
     componentTouchesEdge[componentCount] = touchesEdge;
+    componentEdgeMasks[componentCount] = edgeMask;
+    componentEdgePixels[componentCount] = edgePixels;
+    componentReferenceContactPixels[componentCount] = referenceContactPixels;
   }
 
   const safetyMask = safetyRadius ? dilateSquare(referenceMask, width, height, safetyRadius) : referenceMask.slice();
@@ -124,6 +158,9 @@ export function buildClosedNegativeRegionIndex(referenceMask, width, height, opt
     safetyMask,
     componentSizes,
     componentTouchesEdge,
+    componentEdgeMasks,
+    componentEdgePixels,
+    componentReferenceContactPixels,
     safeComponentSizes,
     componentCount,
     safetyRadius,
@@ -132,17 +169,28 @@ export function buildClosedNegativeRegionIndex(referenceMask, width, height, opt
   };
 }
 
+function edgeSideCount(edgeMask) {
+  let count = 0;
+  for (const bit of [1, 2, 4, 8]) if (edgeMask & bit) count += 1;
+  return count;
+}
+
+function hasOppositeEdgePair(edgeMask) {
+  return Boolean(((edgeMask & 1) && (edgeMask & 4)) || ((edgeMask & 2) && (edgeMask & 8)));
+}
+
 function classifySeed(index, width, height, seed, options = {}, selectedLabels = null) {
   const x = clampInt(seed?.x ?? -1, -1, width);
   const y = clampInt(seed?.y ?? -1, -1, height);
+  const borderAssistedRequested = Boolean(seed?.borderAssisted ?? options.allowBorderClosure ?? false);
   if (x < 0 || y < 0 || x >= width || y >= height) {
-    return { accepted: false, reason: "seed-outside", seed: { x, y }, label: 0, regionPixels: 0, fillPixels: 0 };
+    return { accepted: false, reason: "seed-outside", seed: { x, y, borderAssisted: borderAssistedRequested }, label: 0, regionPixels: 0, fillPixels: 0 };
   }
 
   const p = y * width + x;
   const label = index.labels[p];
   if (!label) {
-    return { accepted: false, reason: "seed-on-boundary", seed: { x, y }, label: 0, regionPixels: 0, fillPixels: 0 };
+    return { accepted: false, reason: "seed-on-boundary", seed: { x, y, borderAssisted: borderAssistedRequested }, label: 0, regionPixels: 0, fillPixels: 0 };
   }
 
   const totalPixels = width * height;
@@ -151,31 +199,128 @@ function classifySeed(index, width, height, seed, options = {}, selectedLabels =
   const minPixels = Math.max(1, Math.round(options.minPixels ?? 12));
   const regionPixels = index.componentSizes[label] ?? 0;
   const fillPixels = index.safeComponentSizes[label] ?? 0;
+  const touchesEdge = Boolean(index.componentTouchesEdge[label]);
+  const edgeMask = index.componentEdgeMasks?.[label] ?? 0;
+  const edgeSides = edgeSideCount(edgeMask);
+  const edgePixels = index.componentEdgePixels?.[label] ?? 0;
+  const referenceContactPixels = index.componentReferenceContactPixels?.[label] ?? 0;
 
-  if (index.componentTouchesEdge[label]) {
-    return { accepted: false, reason: "open-region", seed: { x, y }, label, regionPixels, fillPixels: 0 };
-  }
   if (regionPixels > maxPixels) {
-    return { accepted: false, reason: "region-too-large", seed: { x, y }, label, regionPixels, fillPixels: 0, maxPixels };
+    return {
+      accepted: false,
+      reason: "region-too-large",
+      seed: { x, y, borderAssisted: borderAssistedRequested },
+      label,
+      regionPixels,
+      fillPixels: 0,
+      maxPixels,
+      touchesEdge,
+      edgeMask,
+    };
   }
+
+  if (touchesEdge) {
+    if (!borderAssistedRequested) {
+      return {
+        accepted: false,
+        reason: "open-region",
+        seed: { x, y, borderAssisted: false },
+        label,
+        regionPixels,
+        fillPixels: 0,
+        edgeMask,
+        edgeSides,
+      };
+    }
+
+    const borderMaxAreaFraction = Math.max(
+      0.005,
+      Math.min(maxAreaFraction, Number(options.borderMaxAreaFraction ?? 0.12)),
+    );
+    const borderMaxPixels = Math.max(1, Math.floor(totalPixels * borderMaxAreaFraction));
+    const maxBorderSides = Math.max(1, Math.min(2, Math.round(options.maxBorderSides ?? 2)));
+    const minReferenceContactPixels = Math.max(1, Math.round(options.minBorderReferenceContactPixels ?? 8));
+
+    if (regionPixels > borderMaxPixels) {
+      return {
+        accepted: false,
+        reason: "border-region-too-large",
+        seed: { x, y, borderAssisted: true },
+        label,
+        regionPixels,
+        fillPixels: 0,
+        borderMaxPixels,
+        edgeMask,
+        edgeSides,
+      };
+    }
+    if (edgeSides > maxBorderSides || hasOppositeEdgePair(edgeMask)) {
+      return {
+        accepted: false,
+        reason: "border-too-many-sides",
+        seed: { x, y, borderAssisted: true },
+        label,
+        regionPixels,
+        fillPixels: 0,
+        edgeMask,
+        edgeSides,
+      };
+    }
+    if (referenceContactPixels < minReferenceContactPixels) {
+      return {
+        accepted: false,
+        reason: "border-insufficient-reference",
+        seed: { x, y, borderAssisted: true },
+        label,
+        regionPixels,
+        fillPixels: 0,
+        edgeMask,
+        edgeSides,
+        referenceContactPixels,
+      };
+    }
+  }
+
   if (fillPixels < minPixels) {
-    return { accepted: false, reason: "region-too-small", seed: { x, y }, label, regionPixels, fillPixels };
+    return {
+      accepted: false,
+      reason: "region-too-small",
+      seed: { x, y, borderAssisted: borderAssistedRequested },
+      label,
+      regionPixels,
+      fillPixels,
+      touchesEdge,
+      edgeMask,
+    };
   }
   if (selectedLabels?.has(label)) {
-    return { accepted: false, reason: "duplicate-region", seed: { x, y }, label, regionPixels, fillPixels: 0 };
+    return {
+      accepted: false,
+      reason: "duplicate-region",
+      seed: { x, y, borderAssisted: borderAssistedRequested },
+      label,
+      regionPixels,
+      fillPixels: 0,
+      touchesEdge,
+      edgeMask,
+    };
   }
 
   return {
     accepted: true,
     reason: null,
-    seed: { x, y },
+    seed: { x, y, borderAssisted: borderAssistedRequested },
     label,
     regionPixels,
     fillPixels,
     safetyRadius: index.safetyRadius,
+    usesImageBorder: touchesEdge,
+    edgeMask,
+    edgeSides,
+    edgePixels,
+    referenceContactPixels,
   };
 }
-
 export function fillClosedNegativeRegion(referenceMask, width, height, seed, options = {}) {
   const index = buildClosedNegativeRegionIndex(referenceMask, width, height, options);
   const result = classifySeed(index, width, height, seed, options);
@@ -200,12 +345,14 @@ export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = 
   const mask = new Uint8Array(width * height);
   const results = [];
   const selectedLabels = new Set();
+  const borderSelectedLabels = new Set();
   const seenSeeds = new Set();
 
   for (const rawSeed of seeds ?? []) {
     const seed = {
       x: clampInt(rawSeed?.x ?? -1, -1, width),
       y: clampInt(rawSeed?.y ?? -1, -1, height),
+      borderAssisted: Boolean(rawSeed?.borderAssisted),
     };
     const key = `${seed.x},${seed.y}`;
     if (seenSeeds.has(key)) {
@@ -216,17 +363,29 @@ export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = 
 
     const result = classifySeed(index, width, height, seed, options, selectedLabels);
     results.push(result);
-    if (result.accepted) selectedLabels.add(result.label);
+    if (result.accepted) {
+      selectedLabels.add(result.label);
+      if (result.usesImageBorder) borderSelectedLabels.add(result.label);
+    }
   }
 
+  const borderAssistedMask = new Uint8Array(width * height);
   let fillPixels = 0;
+  let borderAssistedPixels = 0;
   if (selectedLabels.size) {
     const selectedFlags = new Uint8Array(index.componentCount + 1);
+    const borderFlags = new Uint8Array(index.componentCount + 1);
     for (const label of selectedLabels) selectedFlags[label] = 1;
+    for (const label of borderSelectedLabels) borderFlags[label] = 1;
     for (let p = 0; p < mask.length; p += 1) {
-      if (!index.safetyMask[p] && selectedFlags[index.labels[p]]) {
+      const label = index.labels[p];
+      if (!index.safetyMask[p] && selectedFlags[label]) {
         mask[p] = 1;
         fillPixels += 1;
+        if (borderFlags[label]) {
+          borderAssistedMask[p] = 1;
+          borderAssistedPixels += 1;
+        }
       }
     }
   }
@@ -234,10 +393,13 @@ export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = 
   const finishedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   return {
     mask,
+    borderAssistedMask,
     results,
     validCount: results.filter(item => item.accepted).length,
+    borderAssistedCount: results.filter(item => item.accepted && item.usesImageBorder).length,
     invalidCount: results.filter(item => !item.accepted).length,
     fillPixels,
+    borderAssistedPixels,
     componentCount: index.componentCount,
     elapsedMs: Math.max(0, finishedAt - startedAt),
     regionIndex: index,
