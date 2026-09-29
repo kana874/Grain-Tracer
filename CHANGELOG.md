@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.3.6.5-alpha - 2026-09-29
+
+### Added
+- Continuous Ridge-normal orientation for Centerline NMS. The existing four Ridge direction responses are combined as an axial doubled-angle estimate, and boundary scores are bilinearly sampled at ±1 preview pixel along that normal.
+- Spatially balanced Positive holdout. Positive reference pixels are divided by a deterministic 4×4 grid and validation cells are selected to keep the labelled validation-pixel share close to 20%.
+- Border-assisted Closed Negative Fill. When explicitly enabled for a new seed, the image frame may form part of a grain-interior closure together with the yellow reference line.
+- Border-assisted Fill safety checks for maximum area, maximum/adjacent frame-side usage, and minimum positive-reference contact.
+- Per-seed persistence of the border-assisted flag in project JSON/autosave.
+- Topology v2.1 support for border-assisted Closed Fill cores.
+- Direction-consistent short-gap candidate diagnostics using endpoint distance/facing checks. Candidates are reported only; no automatic boundary bridging is performed.
+- Diagnostic JSON v8 fields for continuous NMS, Positive spatial holdout, border-assisted annotations, and Topology v2.1.
+
+### Changed
+- Centerline NMS now uses continuous-angle bilinear comparisons rather than only the four sampled Ridge bins; flat plateaus retain midpoint handling.
+- Positive Auto Tune/local-tune holdout uses spatial pixel balancing instead of connected-component sizing.
+- Topology core erosion was corrected and now preserves the intended interior core geometry.
+- App version advanced to `0.3.6.5-alpha`; extraction identifier advanced to `boundary-v7-continuous-nms-border-negref`.
+
+### Safety / behaviour
+- Existing Closed Fill seeds remain ordinary closed-loop seeds after project restore. Border-assisted behaviour is used only by seeds explicitly created with the option enabled.
+- Border-assisted regions that are too large, touch opposite image sides, touch too many frame sides, or lack sufficient yellow-reference contact are rejected.
+- Topology bridge probes and short-gap candidates remain diagnostic-only and do not alter the extraction mask.
+
+### Validation
+- JavaScript syntax validation and DOM-ID consistency passed after the v0.3.6.5 changes.
+- Synthetic top-edge grain test: ordinary fill was rejected as open, while the same region with border-assisted mode was accepted; a large exterior region remained rejected.
+- Synthetic Positive reference test produced a 20.4% validation share despite a strongly uneven connected reference.
+- Synthetic continuous-angle NMS reduced a broad diagonal Ridge response substantially while retaining the centre response.
+- Synthetic 3-pixel missing boundary segment produced exactly one aligned short-gap candidate.
+- Border-assisted Topology v2.1 preserved an eroded high-confidence core and classified the annotated top-edge grain as closed.
+
 ## v0.3.6.4-alpha - 2026-09-29
 
 ### Added
