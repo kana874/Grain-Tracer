@@ -1558,12 +1558,14 @@ async function ensureFeatures() {
   const options = currentFeatureOptions();
   const key = JSON.stringify(options);
   if (state.features && state.featuresKey === key) return state.features;
+  const startedAt = nowMs();
   setStatus(`特徴量を計算中... Dark Ridge + 色差 + デンドライト + ${options.localEnabled ? "局所適応" : "全体基準"}`, 1);
   state.features = await computeBoundaryFeatures(state.preview.imageData, {
     ...options,
     onProgress: ratio => setStatus(`特徴量を計算中... ${Math.round(ratio * 100)}%`, ratio * 70),
   });
   state.featuresKey = key;
+  recordPerformance("featureComputeMs", startedAt);
   return state.features;
 }
 
@@ -1573,14 +1575,16 @@ async function analyzePreview() {
   try {
     const features = await ensureFeatures();
     setStatus("粒界候補を解析中...", 72);
+    const analysisStartedAt = nowMs();
     state.analysisMask = await buildBoundaryMask(features, {
       ...currentBoundaryOptions(),
       onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, 72 + ratio * 27),
     });
+    recordPerformance("boundaryAnalysisMs", analysisStartedAt);
     renderNormalOverlay();
     updateMetrics();
     const count = state.analysisMask.reduce((sum, value) => sum + value, 0);
-    setStatus(`粒界候補を表示しました。候補画素: ${count.toLocaleString()}`, 100);
+    setStatus(`粒界候補を表示しました。候補画素: ${count.toLocaleString()} / 解析 ${state.performance.boundaryAnalysisMs.toFixed(0)} ms`, 100);
   } catch (error) {
     console.error(error);
     setStatus(`解析エラー: ${error.message}`, 0);
@@ -1591,6 +1595,7 @@ async function analyzePreview() {
 
 function compareCurrent(record = true) {
   if (!state.preview || !state.analysisMask || !hasReference()) return null;
+  const comparisonStartedAt = nowMs();
   const result = renderComparisonOverlay(
     state.analysisMask,
     state.referenceCenterline,
@@ -1622,7 +1627,8 @@ function compareCurrent(record = true) {
   const toleranceText = tol1 && tol4
     ? ` / Recall@1px ${(tol1.positiveRecall * 100).toFixed(1)}% → @4px ${(tol4.positiveRecall * 100).toFixed(1)}%`
     : "";
-  setStatus(`比較完了: Positive Recall ${(result.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(result.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((result.metrics.macroNegativeLeakage ?? result.metrics.negativeLeakage) * 100).toFixed(1)}%${toleranceText}`, 100);
+  recordPerformance("comparisonMs", comparisonStartedAt);
+  setStatus(`比較完了: Positive Recall ${(result.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(result.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((result.metrics.macroNegativeLeakage ?? result.metrics.negativeLeakage) * 100).toFixed(1)}%${toleranceText} / 比較 ${state.performance.comparisonMs.toFixed(0)} ms`, 100);
   return result;
 }
 
@@ -1651,6 +1657,7 @@ async function autoTune() {
       ? "完全評価ROIのTrue F1"
       : "Positive Recall / Macro Negative Leakage";
     setStatus(`Auto Tune v2: ${objectiveText}を基準にCoordinate Descentで調整中...`, 1);
+    const autoTuneStartedAt = nowMs();
     const result = await autoTuneBoundary(features, tuningReference, {
       ...currentComparisonOptions(),
       negativeMask: tuningNegative,
@@ -1659,6 +1666,7 @@ async function autoTune() {
       current: currentExtractionOptions(),
       onProgress: ratio => setStatus(`Auto Tune v2実行中... ${Math.round(ratio * 100)}%`, ratio * 99),
     });
+    recordPerformance("autoTuneMs", autoTuneStartedAt);
     setRangeValue(els.sensitivity, result.parameters.sensitivity);
     setRangeValue(els.darkWeight, result.parameters.darkWeight);
     setRangeValue(els.ridgeWeight, result.parameters.ridgeWeight);
@@ -1728,7 +1736,7 @@ async function autoTune() {
 
     addHistory("auto-tune", comparison.metrics, note, compactAutoTuneSearch(result.search));
     setStatus(
-      `Auto Tune v2完了: ${objectiveStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent}`,
+      `Auto Tune v2完了: ${objectiveStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent} / ${(state.performance.autoTuneMs / 1000).toFixed(1)} s`,
       100,
     );
   } catch (error) {
