@@ -29,6 +29,10 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
   const localStrength = localEnabled ? (options.localStrength ?? 0.7) : 0;
   const localWindow = Math.max(48, Math.round(options.localWindow ?? 320));
   const localRadius = Math.max(24, Math.round(localWindow / 2));
+  const ridgeScales = options.ridgeScales ?? [1, 2, 4];
+  const colorDistances = options.colorDistances ?? [2, 4, 6];
+  const dendriteRadius = options.dendriteRadius ?? 7;
+  const dendriteDistances = options.dendriteDistances ?? [5, 9, 13];
   const { width, height } = imageData;
 
   onProgress(0.02);
@@ -41,17 +45,17 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
   });
 
   const ridgeResult = await computeMultiScaleDarkRidge(luma, width, height, {
-    scales: options.ridgeScales ?? [1, 2, 4],
+    scales: ridgeScales,
     onProgress: ratio => onProgress(0.22 + ratio * 0.31),
   });
 
   const directionalColor = await computeDirectionalColorDifference(imageData, ridgeResult.orientation, {
-    distances: options.colorDistances ?? [2, 4, 6],
+    distances: colorDistances,
     onProgress: ratio => onProgress(0.53 + ratio * 0.17),
   });
 
   const dendriteOrientation = await computeDendriteOrientation(luma, width, height, {
-    radius: options.dendriteRadius ?? 7,
+    radius: dendriteRadius,
     onProgress: ratio => onProgress(0.70 + ratio * 0.14),
   });
   const dendrite = await computeDendriteDifference(
@@ -61,7 +65,7 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
     width,
     height,
     {
-      distances: options.dendriteDistances ?? [5, 9, 13],
+      distances: dendriteDistances,
       onProgress: ratio => onProgress(0.84 + ratio * 0.14),
     },
   );
@@ -85,6 +89,12 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
     dendriteCoherence: dendriteOrientation.coherence,
     orientation: ridgeResult.orientation,
     ridgeScale: ridgeResult.bestScale,
+    featureMargins: {
+      dark: 0,
+      ridge: Math.max(...ridgeScales) + 1,
+      color: Math.max(...colorDistances) + 1,
+      dendrite: Math.max(...dendriteDistances) + 1,
+    },
     local: {
       enabled: localEnabled,
       strength: localStrength,
@@ -95,61 +105,85 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
 
 export function buildRawBoundaryMask(features, options = {}) {
   const sensitivity = options.sensitivity ?? 62;
-  const weights = normalizeWeights(
-    options.darkWeight ?? 15,
-    options.ridgeWeight ?? 40,
-    options.colorWeight ?? 25,
-    options.dendriteWeight ?? 20,
-  );
+  const rawWeights = {
+    dark: Math.max(0, Number(options.darkWeight ?? 15)),
+    ridge: Math.max(0, Number(options.ridgeWeight ?? 40)),
+    color: Math.max(0, Number(options.colorWeight ?? 25)),
+    dendrite: Math.max(0, Number(options.dendriteWeight ?? 20)),
+  };
   const calibration = options.localCalibration ?? null;
   const mask = new Uint8Array(features.width * features.height);
+  const margins = features.featureMargins ?? {
+    dark: 0,
+    ridge: 5,
+    color: 7,
+    dendrite: 14,
+  };
+  const frameGuard = Math.max(0, Math.round(options.edgeFrameGuard ?? 1));
 
-  if (!calibration?.values?.length) {
-    const threshold = thresholdFromSensitivity(sensitivity);
-    for (let p = 0; p < mask.length; p += 1) {
-      const score = (features.dark[p] / 255) * weights.dark
-        + (features.ridge[p] / 255) * weights.ridge
-        + (features.color[p] / 255) * weights.color
-        + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite;
-      if (score >= threshold) mask[p] = 1;
+  const available = (margin, x, y) =>
+    x >= margin && y >= margin
+    && x < features.width - margin
+    && y < features.height - margin;
+
+  const scoreAt = (p, x, y) => {
+    let scoreSum = 0;
+    let weightSum = 0;
+
+    if (rawWeights.dark > 0) {
+      scoreSum += (features.dark[p] / 255) * rawWeights.dark;
+      weightSum += rawWeights.dark;
     }
-    return mask;
-  }
+    if (rawWeights.ridge > 0 && available(margins.ridge ?? 0, x, y)) {
+      scoreSum += (features.ridge[p] / 255) * rawWeights.ridge;
+      weightSum += rawWeights.ridge;
+    }
+    if (rawWeights.color > 0 && available(margins.color ?? 0, x, y)) {
+      scoreSum += (features.color[p] / 255) * rawWeights.color;
+      weightSum += rawWeights.color;
+    }
+    if (rawWeights.dendrite > 0 && available(margins.dendrite ?? 0, x, y)) {
+      scoreSum += ((features.dendrite?.[p] ?? 0) / 255) * rawWeights.dendrite;
+      weightSum += rawWeights.dendrite;
+    }
 
-  for (let y = 0; y < features.height; y += 1) {
+    return weightSum > 0 ? scoreSum / weightSum : 0;
+  };
+
+  for (let y = frameGuard; y < features.height - frameGuard; y += 1) {
     const base = y * features.width;
-    for (let x = 0; x < features.width; x += 1) {
+    for (let x = frameGuard; x < features.width - frameGuard; x += 1) {
       const p = base + x;
-      const delta = interpolateSensitivityDelta(
-        calibration,
-        x,
-        y,
-        features.width,
-        features.height,
-      );
-      const localSensitivity = Math.max(1, Math.min(100, sensitivity + delta));
+      const localSensitivity = calibration?.values?.length
+        ? Math.max(1, Math.min(100, sensitivity + interpolateSensitivityDelta(
+          calibration,
+          x,
+          y,
+          features.width,
+          features.height,
+        )))
+        : sensitivity;
       const threshold = thresholdFromSensitivity(localSensitivity);
-      const score = (features.dark[p] / 255) * weights.dark
-        + (features.ridge[p] / 255) * weights.ridge
-        + (features.color[p] / 255) * weights.color
-        + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite;
-      if (score >= threshold) mask[p] = 1;
+      if (scoreAt(p, x, y) >= threshold) mask[p] = 1;
     }
   }
   return mask;
 }
-
 function neighborSupport(mask, width, height) {
   const out = new Uint8Array(mask.length);
-  for (let y = 1; y < height - 1; y += 1) {
-    for (let x = 1; x < width - 1; x += 1) {
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
       const p = y * width + x;
       if (!mask[p]) continue;
       let count = 0;
       for (let dy = -1; dy <= 1; dy += 1) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
         for (let dx = -1; dx <= 1; dx += 1) {
           if (dx === 0 && dy === 0) continue;
-          count += mask[(y + dy) * width + (x + dx)] ? 1 : 0;
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          count += mask[ny * width + nx] ? 1 : 0;
         }
       }
       if (count >= 2) out[p] = 1;
@@ -454,16 +488,63 @@ function scorePredictionFunction(features, helpers, scoreIsPrediction) {
 
 function evaluateRawConfiguration(features, helpers, config) {
   const threshold = thresholdFromSensitivity(config.sensitivity);
-  const weights = normalizeWeights(
-    config.darkWeight,
-    config.ridgeWeight,
-    config.colorWeight,
-    config.dendriteWeight ?? 0,
+  const rawWeights = {
+    dark: Math.max(0, Number(config.darkWeight ?? 0)),
+    ridge: Math.max(0, Number(config.ridgeWeight ?? 0)),
+    color: Math.max(0, Number(config.colorWeight ?? 0)),
+    dendrite: Math.max(0, Number(config.dendriteWeight ?? 0)),
+  };
+  const interiorWeights = normalizeWeights(
+    rawWeights.dark,
+    rawWeights.ridge,
+    rawWeights.color,
+    rawWeights.dendrite,
   );
-  const scoreIsPrediction = p => ((features.dark[p] / 255) * weights.dark
-    + (features.ridge[p] / 255) * weights.ridge
-    + (features.color[p] / 255) * weights.color
-    + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite) >= threshold;
+  const margins = features.featureMargins ?? { dark: 0, ridge: 5, color: 7, dendrite: 14 };
+  const maxMargin = Math.max(margins.ridge ?? 0, margins.color ?? 0, margins.dendrite ?? 0);
+  const scoreIsPrediction = p => {
+    const x = p % features.width;
+    const y = Math.floor(p / features.width);
+    if (x < 1 || y < 1 || x >= features.width - 1 || y >= features.height - 1) return false;
+
+    if (x >= maxMargin && y >= maxMargin
+      && x < features.width - maxMargin
+      && y < features.height - maxMargin) {
+      return ((features.dark[p] / 255) * interiorWeights.dark
+        + (features.ridge[p] / 255) * interiorWeights.ridge
+        + (features.color[p] / 255) * interiorWeights.color
+        + ((features.dendrite?.[p] ?? 0) / 255) * interiorWeights.dendrite) >= threshold;
+    }
+
+    let scoreSum = 0;
+    let weightSum = 0;
+    if (rawWeights.dark > 0) {
+      scoreSum += (features.dark[p] / 255) * rawWeights.dark;
+      weightSum += rawWeights.dark;
+    }
+    if (rawWeights.ridge > 0
+      && x >= (margins.ridge ?? 0) && y >= (margins.ridge ?? 0)
+      && x < features.width - (margins.ridge ?? 0)
+      && y < features.height - (margins.ridge ?? 0)) {
+      scoreSum += (features.ridge[p] / 255) * rawWeights.ridge;
+      weightSum += rawWeights.ridge;
+    }
+    if (rawWeights.color > 0
+      && x >= (margins.color ?? 0) && y >= (margins.color ?? 0)
+      && x < features.width - (margins.color ?? 0)
+      && y < features.height - (margins.color ?? 0)) {
+      scoreSum += (features.color[p] / 255) * rawWeights.color;
+      weightSum += rawWeights.color;
+    }
+    if (rawWeights.dendrite > 0
+      && x >= (margins.dendrite ?? 0) && y >= (margins.dendrite ?? 0)
+      && x < features.width - (margins.dendrite ?? 0)
+      && y < features.height - (margins.dendrite ?? 0)) {
+      scoreSum += ((features.dendrite?.[p] ?? 0) / 255) * rawWeights.dendrite;
+      weightSum += rawWeights.dendrite;
+    }
+    return weightSum > 0 && scoreSum / weightSum >= threshold;
+  };
   return scorePredictionFunction(features, helpers, scoreIsPrediction);
 }
 

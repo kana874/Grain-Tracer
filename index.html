@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.6.2-alpha</div>
+    <div class="version">v0.3.6.3-alpha</div>
   </header>
 
   <main class="layout">
@@ -46,6 +46,7 @@
           <li>スケールバー・文字などは「除外矩形」で解析対象外にする</li>
           <li>「比較」「Auto Tune v2」で判定との差を確認・最適化する</li>
           <li>注釈ツール中も中ボタンドラッグで画面移動できる</li>
+          <li>「お手本作成表示」または V で自動境界を薄くし、Hを押している間だけ自動境界を隠せる</li>
         </ol>
         <p class="help">v0.3では、お手本の中心線を評価に使うため、ブラシの太さによるRecallのズレを抑えています。</p>
       </section>
@@ -77,6 +78,7 @@
         <button id="fitButton" type="button" disabled>全体表示</button>
         <button id="actualButton" type="button" disabled>100%</button>
         <button id="clearOverlayButton" type="button" disabled>粒界表示を消去</button>
+        <button id="annotationAssistButton" class="view-button" type="button" title="自動抽出線を薄くしてお手本を描きやすくします (V)" disabled>お手本作成表示</button>
         <span id="zoomLabel" class="zoom-label">-</span>
       </div>
 
@@ -104,7 +106,7 @@
     <aside class="panel right-panel">
       <section>
         <h2>粒界候補抽出</h2>
-        <p class="help">Dark Ridge・方向付き色差・デンドライト方向差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。</p>
+        <p class="help">Dark Ridge・方向付き色差・デンドライト方向差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。画像端では利用可能な特徴量だけでスコアを再正規化し、最外周1pxだけは画像枠誤検出を抑えるため保護します。</p>
 
         <label class="control-row"><span>境界感度</span><output id="sensitivityValue">62</output><input id="sensitivity" type="range" min="1" max="100" value="62"></label>
         <label class="control-row"><span>暗さ</span><output id="darkWeightValue">20</output><input id="darkWeight" type="range" min="0" max="100" value="20"></label>
@@ -140,9 +142,11 @@
           <button id="clearExclusionButton" type="button" disabled>除外全消去</button>
           <button id="clearFullRoiButton" type="button" disabled>ROI全消去</button>
           <button id="showNormalButton" type="button" disabled>通常表示</button>
+          <button id="topologyButton" type="button" disabled>Topology診断</button>
         </div>
         <p id="annotationStatus" class="help metric-detail">非粒界線: 0 px / 閉領域Fill: 0領域 / Negative合計: 0 px / 除外: 0領域 / 完全評価ROI: 0領域</p>
         <p id="localCalibrationStatus" class="help metric-detail">局所補正: 未作成</p>
+        <p id="topologyStatus" class="help metric-detail">Topology: 未実行</p>
 
         <div class="legend">
           <span><i class="swatch tp"></i>一致</span>
@@ -167,7 +171,7 @@
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ファイルを書き出す</button>
-        <p class="help">出力: diagnostic.json v5 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">出力: diagnostic.json v6 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
       </section>
 
       <section>
@@ -196,6 +200,9 @@
           <li class="done">閉領域Fill高速化（1回の領域分割＋キャッシュ）</li>
           <li class="done">中ボタンドラッグによる一時パン</li>
           <li class="done">Idle Autosave / Performance診断</li>
+          <li class="done">お手本作成表示 / H一時非表示</li>
+          <li class="done">Edge-aware端部抽出</li>
+          <li class="done">Topology診断（Seed Closure / Endpoint Proxy）</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
