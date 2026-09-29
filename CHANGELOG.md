@@ -10,7 +10,8 @@
 ### Changed
 - Closed-region Negative Fill rebuild now labels the preview once and resolves all seeds against that shared connected-component index instead of flood-filling the full preview once per seed.
 - The 3 px closed-fill safety dilation now uses an O(N) separable sliding-window pass and is computed once per region index.
-- Tool switching no longer rebuilds the full exclusion mask only to change selection handles.
+- Tool switching and exclusion-rectangle drag previews no longer rebuild the full exclusion mask only to update selection geometry.
+- Positive-reference strokes defer expensive closed-fill topology rebuilds to browser idle time; comparison/tuning/export forces a fresh rebuild when required.
 - Viewer pan transforms are coalesced with `requestAnimationFrame`.
 - Autosave snapshot creation and IndexedDB writes are deferred to browser idle time after the existing debounce.
 - Reference/overlay opacity sliders defer full-preview redraws until slider release.
