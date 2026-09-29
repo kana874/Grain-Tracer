@@ -297,7 +297,7 @@ export function buildDiagnosticReport(input) {
     referenceCenterline,
     preview.width,
     preview.height,
-    { validationFraction: 0.20, minComponentPixels: 8 },
+    { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
   );
   const negativeSplit = negativeHoldout ?? null;
   const tuningNegativeMask = negativeSplit?.tuningMask ?? negativeMask;
