@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6.4-alpha / boundary-v6-nms-edge-negref**
+**v0.3.6.5-alpha / boundary-v7-continuous-nms-border-negref**
 
 Current capabilities:
 
@@ -25,9 +25,11 @@ Current capabilities:
 - idle-time IndexedDB autosave and diagnostic performance timings for feature extraction, analysis, comparison, Auto Tune, annotation, fill rebuild, and autosave
 - annotation-assist view that visually attenuates automatic boundaries and Negative overlays without changing analysis data; `H` temporarily hides the automatic overlay and `V` toggles assist view
 - edge-aware scoring that renormalizes the boundary score over geometrically available features near image borders while guarding the outermost 1 preview pixel against frame artifacts
-- optional Ridge-normal non-maximum suppression (NMS) that reduces thick/double boundary responses to a centerline before connected-component filtering
-- diagnostic-only Topology v2: interior endpoint proxy plus closed-fill core closure rates at 0/1/2/3 px bridge probes, with separate core-coverage diagnostics
+- optional continuous Ridge-normal non-maximum suppression (NMS): an axial continuous normal is estimated from the four sampled Ridge directions and the boundary score is bilinearly sampled across that normal to reduce thick/double responses to a centreline
+- diagnostic-only Topology v2.1: interior endpoint proxy, closed-fill core closure rates at 0/1/2/3 px bridge probes, explicit image-border-assisted cores, core-coverage diagnostics, and direction-consistent short-gap candidates
 - independent Negative validation holdout: whole Closed Negative Fill regions are split between tuning and validation so one grain interior never leaks into both sets
+- deterministic Positive validation holdout using a 4×4 spatial grid and pixel-balanced cell selection to keep the validation share close to 20% even when one connected reference component is very large
+- optional border-assisted Closed Negative Fill: a user-selected grain may use one image edge or two adjacent image edges as part of its closure, with area/contact safety checks and explicit seed persistence
 - Partial Label evaluation: Positive / Negative / Unknown, with unlabelled predictions excluded from false-positive counts
 - whole-image Positive Recall / Negative Leakage / Alignment Error metrics
 - 4x4 region-balanced Macro Negative Leakage for spatially balanced Partial Label tuning
@@ -74,7 +76,7 @@ Original BMP
   -> directional Lab colour difference
   -> dendrite orientation-difference feature
   -> edge-aware boundary score (available-feature renormalization near borders)
-  -> optional Ridge-normal NMS centerline suppression
+  -> optional continuous Ridge-normal NMS centreline suppression
   -> Positive / Negative / Unknown Partial Label comparison
   -> exclusion-mask filtering
   -> complete-evaluation ROI + Multi-Tolerance diagnostics
@@ -83,6 +85,6 @@ Original BMP
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware tuning/bridging, Smart Trace, and final PNG / mask / SVG export remain planned. Topology v2 remains diagnostic-only until its behaviour is validated on several real micrographs.
+Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware tuning/bridging, Smart Trace, and final PNG / mask / SVG export remain planned. Topology v2.1 and short-gap candidates remain diagnostic-only until their behaviour is validated on several real micrographs.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
