@@ -1226,6 +1226,7 @@ async function exportDiagnostics() {
       referenceCenterline: state.referenceCenterline,
       negativeMask: state.negativeMask,
       negativeCenterline: state.negativeCenterline,
+      closedNegativeSeeds: state.closedNegativeSeeds,
       exclusionMask: state.exclusionMask,
       exclusionRects: state.exclusionRects,
       fullEvaluationRois: state.fullEvaluationRois,
