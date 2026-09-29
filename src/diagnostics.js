@@ -224,6 +224,7 @@ export function buildDiagnosticReport(input) {
     negativeMask,
     negativeCenterline,
     closedNegativeMask,
+    borderAssistedNegativeMask,
     closedNegativeSeeds,
     negativeHoldout,
     exclusionMask,
@@ -356,7 +357,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v7",
+    schema: "graintracer-diagnostic-v8",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -376,7 +377,8 @@ export function buildDiagnosticReport(input) {
       edgeAwareFeatureRenormalization: true,
       edgeFrameGuard: 1,
       centerlineNms: settings.extraction?.centerlineNms !== false,
-      centerlineNmsMode: "ridge-normal-non-maximum-suppression",
+      centerlineNmsMode: "continuous-ridge-normal-bilinear-non-maximum-suppression",
+      ridgeOrientationMode: "axial-double-angle-interpolated",
       featureMargins: features.featureMargins ?? {
         dark: 0,
         ridge: 5,
@@ -398,6 +400,8 @@ export function buildDiagnosticReport(input) {
       topologyMs: performance?.topologyMs ?? null,
       previewPixels: performance?.previewPixels ?? (preview.width * preview.height),
       closedFillSeedCount: performance?.closedFillSeedCount ?? (closedNegativeSeeds ?? []).length,
+      borderAssistedFillSeedCount: performance?.borderAssistedFillSeedCount
+        ?? (closedNegativeSeeds ?? []).filter(seed => seed?.borderAssisted).length,
       note: "Latest measured duration per operation in this browser session; null means not measured yet.",
     },
     evaluation: {
@@ -448,6 +452,10 @@ export function buildDiagnosticReport(input) {
       tuningPixels: split.tuningPixels,
       validationPixels: split.validationPixels,
       validationFraction: split.validationFraction,
+      requestedValidationFraction: split.requestedValidationFraction ?? 0.20,
+      grid: split.cols && split.rows ? { cols: split.cols, rows: split.rows } : null,
+      tuningCellCount: split.tuningCellCount ?? null,
+      validationCellCount: split.validationCellCount ?? null,
       negative: negativeSplit ? {
         mode: negativeSplit.mode ?? "independent-region-holdout",
         tuningPixels: negativeSplit.tuningPixels ?? 0,
@@ -496,6 +504,10 @@ export function buildDiagnosticReport(input) {
       closedNegativeFillPixels: closedNegativeMask
         ? closedNegativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
+      borderAssistedFillSeedCount: (closedNegativeSeeds ?? []).filter(seed => seed?.borderAssisted).length,
+      borderAssistedFillPixels: borderAssistedNegativeMask
+        ? borderAssistedNegativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
+        : 0,
       nonBoundaryMaskPixels: negativeMask
         ? negativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
@@ -515,15 +527,16 @@ export function buildDiagnosticReport(input) {
     notes: [
       "Feature values are normalized to 0..1.",
       "Near image edges, extraction renormalizes the score over feature channels that are geometrically available; the outermost 1 px remains guarded to suppress image-frame artifacts.",
-      "Topology v2 uses eroded Closed Negative Fill cores; closure is monotonic with increasing diagnostic bridge radius and core coverage is reported separately. It remains diagnostic-only and is not part of Auto Tune v2.",
+      "Topology v2.1 uses eroded Closed Negative Fill cores, supports explicitly marked border-assisted cores, and reports direction-consistent short-gap candidates. Closure and gap candidates remain diagnostic-only and are not part of Auto Tune v2.",
       "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",
       "Predictions in Unknown areas are not counted as false positives.",
       "Positive Recall measures how much of the user-labelled boundary centerline is recovered.",
+      "Positive tuning/validation holdout uses a deterministic 4x4 spatial grid and selects validation cells to keep labelled-pixel fraction close to 20%, reducing oversized connected-component bias.",
       "Negative Leakage is pixel-weighted over explicit non-boundary labels.",
       "Macro Negative Leakage is the unweighted mean leakage across 4x4 regions that contain Negative labels and is used by Auto Tune v2 in Partial Label mode.",
-      "Closed-region Negative Fill is regenerated from saved seed coordinates and the current positive reference geometry.",
+      "Closed-region Negative Fill is regenerated from saved seed coordinates and the current positive reference geometry. Seeds may explicitly preserve border-assisted image-frame closure.",
       "Closed-region Negative Fill holdout is split by whole connected grain-interior regions; a region never contributes pixels to both tuning and validation.",
-      "Centerline NMS suppresses non-maximal boundary responses along the Ridge-estimated normal before connected-component filtering when enabled.",
+      "Centerline NMS uses a continuous axial Ridge-normal estimate and bilinear score samples to suppress non-maximal responses before connected-component filtering when enabled.",
       "Performance timings are the latest browser-session measurements in milliseconds and are intended for regression diagnosis rather than cross-device benchmarking.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
       "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",
