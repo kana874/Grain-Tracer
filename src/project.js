@@ -1,6 +1,6 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.6-alpha";
+export const APP_VERSION = "0.3.6.1-alpha";
 export const ALGORITHM_VERSION = "boundary-v4-dendrite-negref";
 
 export function packBinaryMask(mask) {
@@ -58,6 +58,7 @@ export function createProjectSnapshot(input) {
     referenceCenterline,
     negativeMask,
     negativeCenterline,
+    closedNegativeSeeds,
     exclusionRects,
     fullEvaluationRois,
     localCalibration,
@@ -79,6 +80,10 @@ export function createProjectSnapshot(input) {
     nonBoundary: {
       mask: packBinaryMask(negativeMask ?? new Uint8Array(referenceMask.length)),
       centerline: packBinaryMask(negativeCenterline ?? new Uint8Array(referenceMask.length)),
+      closedFillSeeds: (closedNegativeSeeds ?? []).map(seed => ({
+        x: Math.round(seed.x),
+        y: Math.round(seed.y),
+      })),
     },
     exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
     fullEvaluationRois: (fullEvaluationRois ?? []).map(rect => ({ ...rect })),
@@ -102,6 +107,12 @@ export function restoreReferenceMasks(project) {
     referenceCenterline: unpackBinaryMask(project.reference?.centerline, length),
     negativeMask: unpackBinaryMask(project.nonBoundary?.mask, length),
     negativeCenterline: unpackBinaryMask(project.nonBoundary?.centerline, length),
+    closedNegativeSeeds: Array.isArray(project.nonBoundary?.closedFillSeeds)
+      ? project.nonBoundary.closedFillSeeds.map(seed => ({
+        x: Math.round(Number(seed.x)),
+        y: Math.round(Number(seed.y)),
+      })).filter(seed => Number.isFinite(seed.x) && Number.isFinite(seed.y))
+      : [],
     exclusionRects: Array.isArray(project.exclusionRects)
       ? project.exclusionRects.map(rect => ({ ...rect }))
       : [],
