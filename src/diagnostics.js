@@ -2,7 +2,6 @@ import {
   computeFullEvaluationRoiMetrics,
   computeMultiToleranceMetrics,
   computeRegionalMetrics,
-  dilateBinaryMask,
   splitReferenceCenterline,
 } from "./evaluation.js";
 
