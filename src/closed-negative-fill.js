@@ -43,7 +43,7 @@ function validateInputs(referenceMask, width, height) {
   if (width <= 0 || height <= 0) throw new Error("プレビュー寸法が不正です。");
 }
 
-function buildRegionIndex(referenceMask, width, height, options = {}) {
+export function buildClosedNegativeRegionIndex(referenceMask, width, height, options = {}) {
   validateInputs(referenceMask, width, height);
   const totalPixels = width * height;
   const safetyRadius = Math.max(0, Math.round(options.safetyRadius ?? 3));
@@ -117,6 +117,8 @@ function buildRegionIndex(referenceMask, width, height, options = {}) {
     safeComponentSizes,
     componentCount,
     safetyRadius,
+    width,
+    height,
   };
 }
 
@@ -165,7 +167,7 @@ function classifySeed(index, width, height, seed, options = {}, selectedLabels =
 }
 
 export function fillClosedNegativeRegion(referenceMask, width, height, seed, options = {}) {
-  const index = buildRegionIndex(referenceMask, width, height, options);
+  const index = buildClosedNegativeRegionIndex(referenceMask, width, height, options);
   const result = classifySeed(index, width, height, seed, options);
   if (!result.accepted) return { ...result, mask: null };
 
@@ -176,9 +178,13 @@ export function fillClosedNegativeRegion(referenceMask, width, height, seed, opt
   return { ...result, mask };
 }
 
-export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = [], options = {}) {
+export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = [], options = {}, regionIndex = null) {
   const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
-  const index = buildRegionIndex(referenceMask, width, height, options);
+  const index = regionIndex
+    && regionIndex.width === width
+    && regionIndex.height === height
+    ? regionIndex
+    : buildClosedNegativeRegionIndex(referenceMask, width, height, options);
   const mask = new Uint8Array(width * height);
   const results = [];
   const selectedLabels = new Set();
@@ -220,6 +226,7 @@ export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = 
     fillPixels,
     componentCount: index.componentCount,
     elapsedMs: Math.max(0, finishedAt - startedAt),
+    regionIndex: index,
   };
 }
 
