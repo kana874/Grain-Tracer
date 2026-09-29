@@ -55,6 +55,7 @@ import {
   combineNegativeMasks,
   rebuildClosedNegativeMask,
 } from "./closed-negative-fill.js";
+import { computeBoundaryTopology } from "./topology.js";
 
 const $ = id => document.getElementById(id);
 
@@ -83,6 +84,7 @@ const els = {
   fitButton: $("fitButton"),
   actualButton: $("actualButton"),
   clearOverlayButton: $("clearOverlayButton"),
+  annotationAssistButton: $("annotationAssistButton"),
   analyzeButton: $("analyzeButton"),
   compareButton: $("compareButton"),
   autoTuneButton: $("autoTuneButton"),
@@ -93,6 +95,7 @@ const els = {
   clearExclusionButton: $("clearExclusionButton"),
   clearFullRoiButton: $("clearFullRoiButton"),
   showNormalButton: $("showNormalButton"),
+  topologyButton: $("topologyButton"),
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
   exportDiagnosticsButton: $("exportDiagnosticsButton"),
@@ -121,6 +124,7 @@ const els = {
   fullRoiMetrics: $("fullRoiMetrics"),
   annotationStatus: $("annotationStatus"),
   localCalibrationStatus: $("localCalibrationStatus"),
+  topologyStatus: $("topologyStatus"),
   historyList: $("historyList"),
   projectStatus: $("projectStatus"),
   metaName: $("metaName"),
@@ -178,7 +182,10 @@ const state = {
   exclusionPixelCount: 0,
   fullEvaluationRois: [],
   comparisonMode: false,
+  annotationAssist: false,
+  overlayPeekHidden: false,
   lastMetrics: null,
+  lastTopology: null,
   localCalibration: null,
   history: [],
   busy: false,
@@ -195,6 +202,7 @@ const state = {
     annotationCommitMs: null,
     autosaveSerializeMs: null,
     autosaveWriteMs: null,
+    topologyMs: null,
   },
 };
 
@@ -265,6 +273,8 @@ function updateControls() {
   els.fitButton.disabled = disabled || !hasPreview;
   els.actualButton.disabled = disabled || !hasPreview;
   els.clearOverlayButton.disabled = disabled || !hasAnalysis;
+  els.annotationAssistButton.disabled = disabled || !hasAnalysis;
+  els.topologyButton.disabled = disabled || !hasAnalysis;
   els.panToolButton.disabled = disabled || !hasPreview;
   els.referenceToolButton.disabled = disabled || !hasPreview;
   els.negativeToolButton.disabled = disabled || !hasPreview;
@@ -455,6 +465,7 @@ function currentBoundaryOptions() {
     ...currentExtractionOptions(),
     localCalibration: state.localCalibration,
     exclusionMask: state.exclusionMask,
+    edgeFrameGuard: 1,
   };
 }
 
@@ -544,6 +555,95 @@ function featureSettingChanged() {
   invalidateFeatures();
   clearLocalCalibration(true);
   scheduleAutosave();
+}
+
+function applyAnnotationAssistView() {
+  els.annotationAssistButton?.classList.toggle("active", state.annotationAssist);
+  if (els.overlayCanvas) {
+    els.overlayCanvas.style.opacity = state.annotationAssist ? "0.32" : "1";
+    els.overlayCanvas.style.visibility = state.overlayPeekHidden ? "hidden" : "visible";
+  }
+  if (els.negativeCanvas) els.negativeCanvas.style.opacity = state.annotationAssist ? "0.22" : "1";
+  if (els.exclusionCanvas) els.exclusionCanvas.style.opacity = state.annotationAssist ? "0.58" : "1";
+  if (els.fullRoiCanvas) els.fullRoiCanvas.style.opacity = state.annotationAssist ? "0.78" : "1";
+}
+
+function toggleAnnotationAssist(force = null, announce = true) {
+  state.annotationAssist = force == null ? !state.annotationAssist : Boolean(force);
+  applyAnnotationAssistView();
+  if (announce) {
+    setStatus(state.annotationAssist
+      ? "お手本作成表示: 自動境界と非粒界Fillを薄く表示します。Hを押している間は自動境界を隠せます。"
+      : "通常のオーバーレイ濃度に戻しました。");
+  }
+}
+
+function setOverlayPeekHidden(hidden) {
+  state.overlayPeekHidden = Boolean(hidden);
+  applyAnnotationAssistView();
+}
+
+function invalidateTopology() {
+  state.lastTopology = null;
+  if (els.topologyStatus) els.topologyStatus.textContent = "Topology: 未実行";
+}
+
+function topologyRateText(value) {
+  return value == null ? "-" : `${(value * 100).toFixed(1)}%`;
+}
+
+function updateTopologyStatus(result = state.lastTopology) {
+  if (!els.topologyStatus) return;
+  if (!result) {
+    els.topologyStatus.textContent = "Topology: 未実行";
+    return;
+  }
+  const closure = result.seedClosure;
+  const r0 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 0);
+  const r2 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 2);
+  const r3 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 3);
+  const endpoint = result.endpointProxy;
+  const seedText = closure?.seedCount
+    ? `Seed Closure 0px ${topologyRateText(r0?.closureRate)} / 2px ${topologyRateText(r2?.closureRate)} / 3px ${topologyRateText(r3?.closureRate)}`
+    : "Seed Closure: 閉領域Fill seedなし";
+  els.topologyStatus.textContent =
+    `Topology: ${seedText} / Endpoint proxy ${endpoint?.endpointPixels?.toLocaleString?.() ?? endpoint?.endpointPixels ?? 0}`;
+}
+
+async function runTopologyDiagnostics() {
+  if (!state.preview || !state.analysisMask) return null;
+  setBusy(true);
+  try {
+    setStatus("Topology診断中... 境界の閉領域と短いgapを確認しています。", 10);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const startedAt = nowMs();
+    const result = computeBoundaryTopology(
+      state.analysisMask,
+      state.preview.width,
+      state.preview.height,
+      state.closedNegativeSeeds,
+      {
+        bridgeRadii: [0, 1, 2, 3],
+        endpointEdgeMargin: 3,
+      },
+    );
+    recordPerformance("topologyMs", startedAt);
+    state.lastTopology = result;
+    updateTopologyStatus(result);
+    const r0 = result.seedClosure.closureByBridgeRadius.find(item => item.bridgeRadius === 0);
+    const r2 = result.seedClosure.closureByBridgeRadius.find(item => item.bridgeRadius === 2);
+    setStatus(
+      `Topology診断完了: Seed Closure 0px ${topologyRateText(r0?.closureRate)} → 2px ${topologyRateText(r2?.closureRate)} / Endpoint proxy ${result.endpointProxy.endpointPixels.toLocaleString()} / ${state.performance.topologyMs.toFixed(0)} ms`,
+      100,
+    );
+    return result;
+  } catch (error) {
+    console.error(error);
+    setStatus(`Topology診断エラー: ${error.message}`, 0);
+    return null;
+  } finally {
+    setBusy(false);
+  }
 }
 
 function updateMetrics(metrics = null) {
@@ -711,6 +811,7 @@ function renderNormalOverlay() {
   els.exclusionCanvas.style.visibility = "visible";
   els.fullRoiCanvas.style.visibility = "visible";
   state.comparisonMode = false;
+  applyAnnotationAssistView();
   updateControls();
 }
 
@@ -997,6 +1098,7 @@ function commitReferenceHistory(entry) {
 
 function invalidateAfterReferenceEdit(affectsAnalysis = false) {
   clearLocalCalibration(true);
+  invalidateTopology();
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
   els.negativeCanvas.style.visibility = "visible";
@@ -1132,6 +1234,7 @@ function showNormalView() {
 
 function clearOverlay() {
   els.overlayCanvas.getContext("2d").clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
+  invalidateTopology();
   state.analysisMask = null;
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
@@ -1379,6 +1482,18 @@ async function exportDiagnostics() {
   setBusy(true);
   try {
     const features = await ensureFeatures();
+    setStatus("Topology診断を更新中...", 76);
+    const topologyStartedAt = nowMs();
+    const topology = computeBoundaryTopology(
+      state.analysisMask,
+      state.preview.width,
+      state.preview.height,
+      state.closedNegativeSeeds,
+      { bridgeRadii: [0, 1, 2, 3], endpointEdgeMargin: 3 },
+    );
+    recordPerformance("topologyMs", topologyStartedAt);
+    state.lastTopology = topology;
+    updateTopologyStatus(topology);
     const source = {
       name: state.file?.name ?? "",
       size: state.file?.size ?? 0,
@@ -1404,9 +1519,12 @@ async function exportDiagnostics() {
       localCalibration: state.localCalibration,
       history: state.history,
       performance: performanceSnapshot(),
+      topology,
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
     });
+
+    invalidateTopology();
 
     const comparison = renderComparisonOverlay(
       state.analysisMask,
@@ -1684,6 +1802,7 @@ async function analyzePreview() {
       onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, 72 + ratio * 27),
     });
     recordPerformance("boundaryAnalysisMs", analysisStartedAt);
+    invalidateTopology();
     renderNormalOverlay();
     updateMetrics();
     const count = state.analysisMask.reduce((sum, value) => sum + value, 0);
@@ -1708,6 +1827,7 @@ function compareCurrent(record = true) {
     currentEvaluationOptions(),
   );
   els.overlayCanvas.getContext("2d").putImageData(result.imageData, 0, 0);
+  applyAnnotationAssistView();
   els.referenceCanvas.style.visibility = "hidden";
   els.negativeCanvas.style.visibility = "hidden";
   state.comparisonMode = true;
@@ -1781,6 +1901,7 @@ async function autoTune() {
     state.localCalibration = null;
     updateLocalCalibrationStatus();
     state.analysisMask = result.mask;
+    invalidateTopology();
 
     const comparison = renderComparisonOverlay(
       result.mask,
@@ -1790,6 +1911,7 @@ async function autoTune() {
       currentEvaluationOptions(),
     );
     els.overlayCanvas.getContext("2d").putImageData(comparison.imageData, 0, 0);
+    applyAnnotationAssistView();
     els.referenceCanvas.style.visibility = "hidden";
     els.negativeCanvas.style.visibility = "hidden";
     state.comparisonMode = true;
@@ -1897,6 +2019,7 @@ async function localTune() {
       currentEvaluationOptions(),
     );
     els.overlayCanvas.getContext("2d").putImageData(comparison.imageData, 0, 0);
+    applyAnnotationAssistView();
     els.referenceCanvas.style.visibility = "hidden";
     els.negativeCanvas.style.visibility = "hidden";
     state.comparisonMode = true;
@@ -2375,6 +2498,7 @@ els.projectInput.addEventListener("change", event => importProjectFile(event.tar
 els.fitButton.addEventListener("click", fitToViewer);
 els.actualButton.addEventListener("click", actualSize);
 els.clearOverlayButton.addEventListener("click", clearOverlay);
+els.annotationAssistButton.addEventListener("click", () => toggleAnnotationAssist());
 els.analyzeButton.addEventListener("click", analyzePreview);
 els.compareButton.addEventListener("click", () => compareCurrent(true));
 els.autoTuneButton.addEventListener("click", autoTune);
@@ -2385,6 +2509,7 @@ els.clearNegativeButton.addEventListener("click", clearNegativeReference);
 els.clearExclusionButton.addEventListener("click", clearExclusions);
 els.clearFullRoiButton.addEventListener("click", clearFullEvaluationRois);
 els.showNormalButton.addEventListener("click", showNormalView);
+els.topologyButton.addEventListener("click", runTopologyDiagnostics);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
 els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
@@ -2542,6 +2667,22 @@ els.viewer.addEventListener("lostpointercapture", event => {
 window.addEventListener("keydown", event => {
   if (!state.preview || state.busy) return;
 
+  const targetTag = event.target?.tagName?.toLowerCase();
+  const editingControl = targetTag === "input" || targetTag === "textarea" || targetTag === "select";
+  const plainKey = !(event.ctrlKey || event.metaKey || event.altKey);
+  const keyLower = event.key.toLowerCase();
+
+  if (!editingControl && plainKey && keyLower === "h") {
+    setOverlayPeekHidden(true);
+    event.preventDefault();
+    return;
+  }
+  if (!editingControl && plainKey && keyLower === "v" && !event.repeat) {
+    toggleAnnotationAssist();
+    event.preventDefault();
+    return;
+  }
+
   if ((event.key === "Delete" || event.key === "Backspace") && !(event.ctrlKey || event.metaKey)) {
     const tag = event.target?.tagName?.toLowerCase();
     if (tag !== "input" && tag !== "textarea") {
@@ -2572,10 +2713,17 @@ window.addEventListener("keydown", event => {
   }
 });
 
+window.addEventListener("keyup", event => {
+  if (event.key.toLowerCase() === "h") setOverlayPeekHidden(false);
+});
+window.addEventListener("blur", () => setOverlayPeekHidden(false));
+
 window.addEventListener("resize", () => { if (state.preview) fitToViewer(); });
 
 renderHistory();
 els.projectStatus.textContent = `v${APP_VERSION} / ${ALGORITHM_VERSION}`;
 updateAnnotationStatus();
 updateLocalCalibrationStatus();
+updateTopologyStatus();
+applyAnnotationAssistView();
 updateControls();
