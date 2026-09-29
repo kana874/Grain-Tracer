@@ -1484,18 +1484,21 @@ async function exportDiagnostics() {
   setBusy(true);
   try {
     const features = await ensureFeatures();
-    setStatus("Topology診断を更新中...", 76);
-    const topologyStartedAt = nowMs();
-    const topology = computeBoundaryTopology(
-      state.analysisMask,
-      state.preview.width,
-      state.preview.height,
-      state.closedNegativeSeeds,
-      { bridgeRadii: [0, 1, 2, 3], endpointEdgeMargin: 3 },
-    );
-    recordPerformance("topologyMs", topologyStartedAt);
-    state.lastTopology = topology;
-    updateTopologyStatus(topology);
+    let topology = state.lastTopology;
+    if (!topology) {
+      setStatus("Topology診断を更新中...", 76);
+      const topologyStartedAt = nowMs();
+      topology = computeBoundaryTopology(
+        state.analysisMask,
+        state.preview.width,
+        state.preview.height,
+        state.closedNegativeSeeds,
+        { bridgeRadii: [0, 1, 2, 3], endpointEdgeMargin: 3 },
+      );
+      recordPerformance("topologyMs", topologyStartedAt);
+      state.lastTopology = topology;
+      updateTopologyStatus(topology);
+    }
     const source = {
       name: state.file?.name ?? "",
       size: state.file?.size ?? 0,
