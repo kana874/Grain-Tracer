@@ -2231,7 +2231,7 @@ function eventToPreviewPoint(event) {
 
 function closedFillFailureMessage(reason) {
   if (reason === "seed-on-boundary") return "黄色のお手本線上では閉領域Fillできません。粒の内側をクリックしてください。";
-  if (reason === "open-region") return "閉領域ではありません。黄色のお手本線が完全に閉じているか確認してください。";
+  if (reason === "open-region") return "閉領域ではありません。黄色線を閉じるか、画像端と黄色線で囲う場合は「画像端を閉境界として許可」を有効にしてください。";
   if (reason === "region-too-large") return "閉領域が大きすぎるため安全のためFillしませんでした。";
   if (reason === "border-region-too-large") return "画像端を使う領域が大きすぎるため安全のためFillしませんでした。黄色線を追加して領域を絞ってください。";
   if (reason === "border-too-many-sides") return "画像端への接触範囲が広すぎます。1辺または隣接する2辺と黄色線で囲った領域だけを許可します。";
