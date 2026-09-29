@@ -2280,7 +2280,8 @@ function addClosedNegativeFill(event) {
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
   const index = state.closedNegativeSeeds.length;
-  state.closedNegativeSeeds.push(seed);
+  const acceptedSeed = { ...seed, borderAssisted: Boolean(result.usesImageBorder) };
+  state.closedNegativeSeeds.push(acceptedSeed);
   state.closedNegativeRegionIndex = rebuilt.regionIndex ?? state.closedNegativeRegionIndex;
   state.closedNegativeMask = rebuilt.mask;
   state.borderAssistedNegativeMask = rebuilt.borderAssistedMask ?? new Uint8Array(state.preview.width * state.preview.height);
@@ -2306,7 +2307,7 @@ function addClosedNegativeFill(event) {
     referenceOpacityRatio(),
     [255, 138, 0],
   );
-  commitReferenceHistory({ kind: "closed-fill-add", index, seed: { ...seed } });
+  commitReferenceHistory({ kind: "closed-fill-add", index, seed: { ...acceptedSeed } });
   recalcAnnotationCounts();
   updateMetrics();
   updateControls();
