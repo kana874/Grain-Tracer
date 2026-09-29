@@ -71,6 +71,14 @@ v0.3.6.3 keeps the feature extraction kernels unchanged but records the valid ge
 
 The outermost one preview pixel remains a protected frame guard so the image frame itself is not promoted into a grain boundary. Neighbour-support filtering is bounds-aware, allowing retained boundary candidates to approach the protected frame instead of being discarded by a fixed one-pixel loop margin.
 
+### Centerline NMS
+
+v0.3.6.4 optionally applies Non-Maximum Suppression after thresholding and before neighbour-support / minimum-component filtering. The Ridge orientation supplies the estimated boundary normal. Along that normal, only the local maximum response is retained.
+
+If several adjacent pixels have an equal response plateau, GrainTracer keeps the plateau midpoint rather than always choosing one side. This avoids introducing a systematic positional offset while reducing thick or doubled responses to a more stable centreline.
+
+Where Ridge orientation is geometrically unavailable near the image edge, the edge-aware candidate is retained instead of inventing a normal direction. Centerline NMS is enabled by default and is stored in extraction settings.
+
 ## 5. Partial Label evaluation
 
 The visible positive reference stroke can be thick for usability, but evaluation uses a separate thin centerline.
@@ -95,6 +103,14 @@ Multi-Tolerance diagnostics automatically recalculate labelled performance at 1,
 Formal Precision / Recall / F1 are calculated only inside complete-evaluation ROIs. A complete-evaluation ROI is a rectangle where the user declares that every grain boundary has been labelled; therefore unlabelled pixels inside that ROI can legitimately act as negative background.
 
 Regional Partial Label metrics are calculated on a 4×4 grid and stored with diagnostic/evaluation data.
+
+### Independent Negative holdout
+
+Manual non-boundary centerlines continue to use connected-component holdout. Closed-region Negative Fill requires a different split because its dense pixels within one grain are highly correlated.
+
+v0.3.6.4 therefore splits Closed Fill data by complete connected grain-interior region, not by pixel. Approximately 20% of valid filled regions are deterministically assigned to validation and the remainder to tuning. A Closed Fill region can never contribute pixels to both sets. Manual-line and Closed-Fill tuning masks are then combined, and their validation masks are combined separately.
+
+This makes validation Negative Leakage / Macro Negative Leakage meaningful even when most Negative supervision comes from Closed Fill.
 
 ## 6. Auto Tune v2
 
@@ -188,6 +204,12 @@ v0.3.6.3 adds on-demand topology diagnostics and records their runtime in Diagno
 
 This staging keeps topology observable before it is allowed to influence tuning or automatically bridge gaps.
 
+v0.3.6.4 upgrades this to Topology v2. Instead of treating a single fill seed point as the region representative, GrainTracer erodes the high-confidence Closed Negative Fill mask to a smaller interior core and evaluates each connected core region. A core region is open when any of its pixels can still reach the image edge through non-boundary pixels; otherwise it is closed.
+
+The same 0 / 1 / 2 / 3 preview-pixel bridge probes are used only on temporary diagnostic copies. Increasing the bridge radius can only remove background reachability, so Core Closure is monotonic. Separately, the diagnostic records how much of the core is covered by the widened prediction. This distinguishes genuine gap closure from an excessively thick boundary response. The endpoint proxy remains a secondary within-image trend metric.
+
+Topology v2 remains observational in v0.3.6.4. It does not yet contribute to the Auto Tune objective and does not automatically connect gaps.
+
 ## 10. Persistence
 
 A `.graintracer.json` project stores:
@@ -216,5 +238,5 @@ IndexedDB is used for optional autosave and automatic restore when the same BMP 
 - Full-resolution overlapping-tile analysis and seam handling.
 - Smart Trace and manual correction workflow.
 - PNG / binary mask / SVG export.
-- Topology-aware Auto Tune objective and direction-consistent short-gap bridge evaluation after diagnostic validation.
+- Topology-aware Auto Tune objective and direction-consistent short-gap bridge application after Topology v2 is validated on multiple real micrographs.
 - Closed-grain segmentation and grain metrics.

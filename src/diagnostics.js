@@ -2,7 +2,6 @@ import {
   computeFullEvaluationRoiMetrics,
   computeMultiToleranceMetrics,
   computeRegionalMetrics,
-  dilateBinaryMask,
   splitReferenceCenterline,
 } from "./evaluation.js";
 
@@ -224,7 +223,9 @@ export function buildDiagnosticReport(input) {
     referenceCenterline,
     negativeMask,
     negativeCenterline,
+    closedNegativeMask,
     closedNegativeSeeds,
+    negativeHoldout,
     exclusionMask,
     exclusionRects,
     fullEvaluationRois,
@@ -298,25 +299,9 @@ export function buildDiagnosticReport(input) {
     preview.height,
     { validationFraction: 0.20, minComponentPixels: 8 },
   );
-  const negativeSplit = negativeCenterline
-    ? splitReferenceCenterline(
-      negativeCenterline,
-      preview.width,
-      preview.height,
-      { validationFraction: 0.20, minComponentPixels: 8 },
-    )
-    : null;
-  const hasClosedNegativeFill = (closedNegativeSeeds ?? []).length > 0;
-  const tuningNegativeMask = hasClosedNegativeFill
-    ? negativeMask
-    : negativeSplit?.validationPixels > 0
-      ? dilateBinaryMask(negativeSplit.tuneMask, preview.width, preview.height, comparison.tolerance)
-      : negativeMask;
-  const validationNegativeMask = hasClosedNegativeFill
-    ? null
-    : negativeSplit?.validationPixels > 0
-      ? dilateBinaryMask(negativeSplit.validationMask, preview.width, preview.height, comparison.tolerance)
-      : null;
+  const negativeSplit = negativeHoldout ?? null;
+  const tuningNegativeMask = negativeSplit?.tuningMask ?? negativeMask;
+  const validationNegativeMask = negativeSplit?.validationMask ?? null;
   const tuningMetrics = computeRegionalMetrics(
     prediction,
     split.tuneMask,
@@ -371,7 +356,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v6",
+    schema: "graintracer-diagnostic-v7",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -390,6 +375,8 @@ export function buildDiagnosticReport(input) {
       neighborSupportMinimum: 2,
       edgeAwareFeatureRenormalization: true,
       edgeFrameGuard: 1,
+      centerlineNms: settings.extraction?.centerlineNms !== false,
+      centerlineNmsMode: "ridge-normal-non-maximum-suppression",
       featureMargins: features.featureMargins ?? {
         dark: 0,
         ridge: 5,
@@ -462,17 +449,17 @@ export function buildDiagnosticReport(input) {
       validationPixels: split.validationPixels,
       validationFraction: split.validationFraction,
       negative: negativeSplit ? {
-        mode: hasClosedNegativeFill ? "closed-fill-in-tuning-manual-holdout-omitted" : negativeSplit.mode,
-        componentCount: negativeSplit.componentCount,
-        tuningPixels: hasClosedNegativeFill ? metrics.negativePixels : negativeSplit.tuningPixels,
-        validationPixels: hasClosedNegativeFill ? 0 : negativeSplit.validationPixels,
-        validationFraction: hasClosedNegativeFill ? 0 : negativeSplit.validationFraction,
-      } : hasClosedNegativeFill ? {
-        mode: "closed-fill-in-tuning-no-manual-negative-holdout",
-        componentCount: 0,
-        tuningPixels: metrics.negativePixels,
-        validationPixels: 0,
-        validationFraction: 0,
+        mode: negativeSplit.mode ?? "independent-region-holdout",
+        tuningPixels: negativeSplit.tuningPixels ?? 0,
+        validationPixels: negativeSplit.validationPixels ?? 0,
+        validationFraction: (negativeSplit.validationPixels ?? 0)
+          / Math.max(1, (negativeSplit.tuningPixels ?? 0) + (negativeSplit.validationPixels ?? 0)),
+        manualComponentCount: negativeSplit.summary?.manualComponentCount ?? negativeSplit.manualSplit?.componentCount ?? 0,
+        closedRegionCount: negativeSplit.summary?.closedRegionCount ?? negativeSplit.closedSplit?.regionCount ?? 0,
+        closedTuningRegionCount: negativeSplit.summary?.closedTuningRegionCount ?? negativeSplit.closedSplit?.tuningRegionCount ?? 0,
+        closedValidationRegionCount: negativeSplit.summary?.closedValidationRegionCount ?? negativeSplit.closedSplit?.validationRegionCount ?? 0,
+        closedTuningPixels: negativeSplit.summary?.closedTuningPixels ?? negativeSplit.closedSplit?.tuningPixels ?? 0,
+        closedValidationPixels: negativeSplit.summary?.closedValidationPixels ?? negativeSplit.closedSplit?.validationPixels ?? 0,
       } : null,
     },
     topology: topology ?? null,
@@ -506,6 +493,9 @@ export function buildDiagnosticReport(input) {
         : 0,
       closedNegativeFillSeeds: (closedNegativeSeeds ?? []).map(seed => ({ ...seed })),
       closedNegativeFillSeedCount: (closedNegativeSeeds ?? []).length,
+      closedNegativeFillPixels: closedNegativeMask
+        ? closedNegativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
+        : 0,
       nonBoundaryMaskPixels: negativeMask
         ? negativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
@@ -525,13 +515,15 @@ export function buildDiagnosticReport(input) {
     notes: [
       "Feature values are normalized to 0..1.",
       "Near image edges, extraction renormalizes the score over feature channels that are geometrically available; the outermost 1 px remains guarded to suppress image-frame artifacts.",
-      "Topology metrics are diagnostic-only in v0.3.6.3 and are not part of Auto Tune v2.",
+      "Topology v2 uses eroded Closed Negative Fill cores; closure is monotonic with increasing diagnostic bridge radius and core coverage is reported separately. It remains diagnostic-only and is not part of Auto Tune v2.",
       "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",
       "Predictions in Unknown areas are not counted as false positives.",
       "Positive Recall measures how much of the user-labelled boundary centerline is recovered.",
       "Negative Leakage is pixel-weighted over explicit non-boundary labels.",
       "Macro Negative Leakage is the unweighted mean leakage across 4x4 regions that contain Negative labels and is used by Auto Tune v2 in Partial Label mode.",
       "Closed-region Negative Fill is regenerated from saved seed coordinates and the current positive reference geometry.",
+      "Closed-region Negative Fill holdout is split by whole connected grain-interior regions; a region never contributes pixels to both tuning and validation.",
+      "Centerline NMS suppresses non-maximal boundary responses along the Ridge-estimated normal before connected-component filtering when enabled.",
       "Performance timings are the latest browser-session measurements in milliseconds and are intended for regression diagnosis rather than cross-device benchmarking.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
       "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",

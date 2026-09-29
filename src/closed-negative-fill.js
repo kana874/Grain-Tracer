@@ -244,6 +244,119 @@ export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = 
   };
 }
 
+function deterministicRegionHash(seed, label, fillPixels) {
+  return (
+    ((Math.round(seed.x) + 1) * 73856093)
+    ^ ((Math.round(seed.y) + 1) * 19349663)
+    ^ ((label + 1) * 83492791)
+    ^ ((fillPixels + 1) * 2654435761)
+  ) >>> 0;
+}
+
+export function splitClosedNegativeRegions(
+  referenceMask,
+  width,
+  height,
+  seeds = [],
+  options = {},
+  regionIndex = null,
+) {
+  validateInputs(referenceMask, width, height);
+  const validationFraction = Math.max(0.05, Math.min(0.45, Number(options.validationFraction ?? 0.20)));
+  const requestedSafetyRadius = Math.max(0, Math.round(options.safetyRadius ?? 3));
+  const index = regionIndex
+    && regionIndex.width === width
+    && regionIndex.height === height
+    && regionIndex.safetyRadius === requestedSafetyRadius
+    ? regionIndex
+    : buildClosedNegativeRegionIndex(referenceMask, width, height, options);
+
+  const selectedLabels = new Set();
+  const regions = [];
+  const results = [];
+  for (const rawSeed of seeds ?? []) {
+    const result = classifySeed(index, width, height, rawSeed, options, selectedLabels);
+    results.push(result);
+    if (!result.accepted) continue;
+    selectedLabels.add(result.label);
+    regions.push({
+      label: result.label,
+      seed: { ...result.seed },
+      fillPixels: result.fillPixels,
+      hash: deterministicRegionHash(result.seed, result.label, result.fillPixels),
+    });
+  }
+
+  const tuningMask = new Uint8Array(width * height);
+  const validationMask = new Uint8Array(width * height);
+  if (!regions.length) {
+    return {
+      tuningMask,
+      validationMask,
+      regionCount: 0,
+      tuningRegionCount: 0,
+      validationRegionCount: 0,
+      tuningPixels: 0,
+      validationPixels: 0,
+      validationFraction: 0,
+      requestedValidationFraction: validationFraction,
+      mode: "no-valid-closed-fill-regions",
+      results,
+      regionIndex: index,
+    };
+  }
+
+  let validationLabels = new Set();
+  if (regions.length >= 2) {
+    const desired = Math.max(
+      1,
+      Math.min(regions.length - 1, Math.round(regions.length * validationFraction)),
+    );
+    validationLabels = new Set(
+      [...regions]
+        .sort((a, b) => a.hash - b.hash || a.label - b.label)
+        .slice(0, desired)
+        .map(region => region.label),
+    );
+  }
+
+  const selectedFlags = new Uint8Array(index.componentCount + 1);
+  const validationFlags = new Uint8Array(index.componentCount + 1);
+  for (const region of regions) {
+    selectedFlags[region.label] = 1;
+    if (validationLabels.has(region.label)) validationFlags[region.label] = 1;
+  }
+
+  let tuningPixels = 0;
+  let validationPixels = 0;
+  for (let p = 0; p < index.labels.length; p += 1) {
+    const label = index.labels[p];
+    if (!label || !selectedFlags[label] || index.safetyMask[p]) continue;
+    if (validationFlags[label]) {
+      validationMask[p] = 1;
+      validationPixels += 1;
+    } else {
+      tuningMask[p] = 1;
+      tuningPixels += 1;
+    }
+  }
+
+  return {
+    tuningMask,
+    validationMask,
+    regionCount: regions.length,
+    tuningRegionCount: regions.length - validationLabels.size,
+    validationRegionCount: validationLabels.size,
+    tuningPixels,
+    validationPixels,
+    validationFraction: validationPixels / Math.max(1, tuningPixels + validationPixels),
+    requestedValidationFraction: validationFraction,
+    mode: validationLabels.size ? "closed-fill-region-holdout" : "insufficient-closed-fill-regions",
+    results,
+    regionIndex: index,
+  };
+}
+
 export function combineNegativeMasks(manualMask, closedFillMask, positiveMask = null) {
   const length = manualMask?.length ?? closedFillMask?.length ?? positiveMask?.length ?? 0;
   const out = new Uint8Array(length);
