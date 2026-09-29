@@ -476,7 +476,7 @@ export function buildDiagnosticReport(input) {
       } : null,
     },
     topology: topology ?? null,
-        referenceCoverage: {
+    referenceCoverage: {
       regionsWithReference: regionsWithReference.length,
       totalRegions: metrics.regions.length,
       referencePixels: metrics.referencePixels,
