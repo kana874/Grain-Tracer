@@ -668,19 +668,51 @@ function setOverlayPeekHidden(hidden) {
   applyAnnotationAssistView();
 }
 
+
+function clearGapProposal() {
+  state.gapProposal = null;
+  if (els.gapCanvas && state.preview) {
+    els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  }
+  if (els.gapStatus && !state.gapApplied) {
+    els.gapStatus.textContent = "Safe Gap: 未プレビュー";
+  }
+}
+
+function resetGapBridgeState(clearApplied = true) {
+  clearGapProposal();
+  if (clearApplied) {
+    state.gapBaseMask = null;
+    state.gapApplied = null;
+    if (els.gapStatus) els.gapStatus.textContent = "Safe Gap: 未プレビュー";
+  }
+}
+
 function invalidateTopology() {
   state.lastTopology = null;
-  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2.1: 未実行";
+  clearGapProposal();
+  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2.2: 未実行";
 }
 
 function topologyRateText(value) {
-  return value == null ? "-" : `${(value * 100).toFixed(1)}%`;
+  return value == null ? "-" : (value * 100).toFixed(1) + "%";
+}
+
+function currentGapBridgeOptions() {
+  return {
+    gapApplyMaxDistance: Number(els.gapMaxDistance.value),
+    maxGapAngleDeg: Number(els.gapAngle.value),
+    minGapScore: Number(els.gapMinScore.value) / 100,
+    negativeGuardRadius: 1,
+    maxAcceptedBridges: 400,
+    maxGapProposalCandidates: 2000,
+  };
 }
 
 function updateTopologyStatus(result = state.lastTopology) {
   if (!els.topologyStatus) return;
   if (!result) {
-    els.topologyStatus.textContent = "Topology v2.1: 未実行";
+    els.topologyStatus.textContent = "Topology v2.2: 未実行";
     return;
   }
   const closure = result.regionClosure;
@@ -689,22 +721,33 @@ function updateTopologyStatus(result = state.lastTopology) {
   const r3 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 3);
   const endpoint = result.endpointProxy;
   const gap = result.shortGapCandidates;
+  const safe = result.safeGapBridge;
   const regionCount = closure?.coreRegionCount || r0?.regionCount || 0;
   const label = closure?.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
   const closureText = regionCount
-    ? `${label} 0px ${topologyRateText(r0?.closureRate)} / 2px ${topologyRateText(r2?.closureRate)} / 3px ${topologyRateText(r3?.closureRate)}`
-    : `${label}: 評価領域なし`;
+    ? label + " 0px " + topologyRateText(r0?.closureRate)
+      + " / 2px " + topologyRateText(r2?.closureRate)
+      + " / 3px " + topologyRateText(r3?.closureRate)
+    : label + ": 評価領域なし";
   const coverageText = r2?.coveredCorePixelFraction
-    ? ` / Core被覆@2px ${topologyRateText(r2.coveredCorePixelFraction)}`
+    ? " / Core被覆@2px " + topologyRateText(r2.coveredCorePixelFraction)
     : "";
   const borderText = (r0?.borderAssistedRegions ?? 0)
-    ? ` / 端部Core ${r0.borderAssistedClosedRegions ?? 0}/${r0.borderAssistedRegions}`
+    ? " / 端部Core " + (r0.borderAssistedClosedRegions ?? 0) + "/" + r0.borderAssistedRegions
     : "";
   const gapText = gap
-    ? ` / Short-gap候補 ${gap.candidateCount.toLocaleString()}件`
+    ? " / Short-gap候補 " + gap.candidateCount.toLocaleString() + "件"
     : "";
+  const safeText = safe
+    ? " / Safe候補 " + safe.acceptedBridgeCount.toLocaleString()
+      + "本・+" + safe.addedPixels.toLocaleString() + "px"
+    : "";
+  const endpointText = endpoint?.endpointPixels?.toLocaleString?.()
+    ?? endpoint?.endpointPixels
+    ?? 0;
   els.topologyStatus.textContent =
-    `Topology v2.1: ${closureText}${coverageText}${borderText}${gapText} / Endpoint proxy ${endpoint?.endpointPixels?.toLocaleString?.() ?? endpoint?.endpointPixels ?? 0}`;
+    "Topology v2.2: " + closureText + coverageText + borderText + gapText + safeText
+    + " / Endpoint proxy " + endpointText;
 }
 
 function topologyOptions() {
@@ -713,13 +756,194 @@ function topologyOptions() {
     endpointEdgeMargin: 3,
     closedNegativeMask: state.closedNegativeMask,
     borderAssistedMask: state.borderAssistedNegativeMask,
+    negativeMask: state.negativeMask,
+    exclusionMask: state.exclusionMask,
     coreErosionRadius: 2,
     minCorePixels: 12,
     maxBorderLeakAreaRatio: 2.0,
     maxGapDistance: 4.25,
-    maxGapAngleDeg: 40,
     maxGapCandidates: 120,
+    ...currentGapBridgeOptions(),
   };
+}
+
+function renderGapProposalMask(mask) {
+  if (!state.preview || !els.gapCanvas) return;
+  const rgba = new Uint8ClampedArray(mask.length * 4);
+  for (let p = 0; p < mask.length; p += 1) {
+    if (!mask[p]) continue;
+    const i = p * 4;
+    rgba[i] = 255;
+    rgba[i + 1] = 79;
+    rgba[i + 2] = 216;
+    rgba[i + 3] = 245;
+  }
+  els.gapCanvas.getContext("2d").putImageData(
+    new ImageData(rgba, state.preview.width, state.preview.height),
+    0,
+    0,
+  );
+}
+
+function gapMetricsText(before, after) {
+  if (!before || !after) return "";
+  const recallDelta = (after.positiveRecall - before.positiveRecall) * 100;
+  const leakDelta = (after.negativeLeakage - before.negativeLeakage) * 100;
+  const signed = value => (value >= 0 ? "+" : "") + value.toFixed(2) + "pt";
+  return " / Recall " + (before.positiveRecall * 100).toFixed(1)
+    + "→" + (after.positiveRecall * 100).toFixed(1) + "% (" + signed(recallDelta) + ")"
+    + " / Leak " + (before.negativeLeakage * 100).toFixed(1)
+    + "→" + (after.negativeLeakage * 100).toFixed(1) + "% (" + signed(leakDelta) + ")";
+}
+
+async function previewSafeGapBridges() {
+  if (!state.preview || !state.analysisMask) return null;
+  ensureClosedNegativeFresh();
+  setBusy(true);
+  try {
+    setStatus("Safe Gap候補を評価中...", 20);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const startedAt = nowMs();
+    const proposal = proposeShortGapBridges(
+      state.analysisMask,
+      state.preview.width,
+      state.preview.height,
+      topologyOptions(),
+    );
+    recordPerformance("gapBridgeMs", startedAt);
+    state.gapProposal = proposal;
+    renderGapProposalMask(proposal.bridgeMask);
+
+    let beforeMetrics = null;
+    let afterMetrics = null;
+    if (hasReference()) {
+      const evaluationOptions = {
+        ...currentComparisonOptions(),
+        negativeMask: state.negativeMask,
+        exclusionMask: state.exclusionMask,
+        cols: 4,
+        rows: 4,
+      };
+      beforeMetrics = computeRegionalMetrics(
+        state.analysisMask,
+        state.referenceCenterline,
+        state.preview.width,
+        state.preview.height,
+        evaluationOptions,
+      );
+      afterMetrics = computeRegionalMetrics(
+        proposal.mask,
+        state.referenceCenterline,
+        state.preview.width,
+        state.preview.height,
+        evaluationOptions,
+      );
+    }
+
+    proposal.evaluation = beforeMetrics && afterMetrics ? {
+      before: {
+        positiveRecall: beforeMetrics.positiveRecall,
+        negativeLeakage: beforeMetrics.negativeLeakage,
+        macroNegativeLeakage: beforeMetrics.macroNegativeLeakage,
+      },
+      after: {
+        positiveRecall: afterMetrics.positiveRecall,
+        negativeLeakage: afterMetrics.negativeLeakage,
+        macroNegativeLeakage: afterMetrics.macroNegativeLeakage,
+      },
+    } : null;
+
+    const rejected = proposal.rejected;
+    const detail =
+      "候補 " + proposal.sourceCandidateCount.toLocaleString() + "件"
+      + " → 安全判定 " + proposal.acceptedBridgeCount.toLocaleString() + "本"
+      + " / 追加 " + proposal.addedPixels.toLocaleString() + "px"
+      + " / Reject: Negative " + rejected.negative
+      + ", 除外 " + rejected.exclusion
+      + ", 端点競合 " + rejected.endpointConflict;
+    els.gapStatus.textContent =
+      "Safe Gap: " + detail + gapMetricsText(beforeMetrics, afterMetrics);
+    setStatus(
+      "Safe Gapプレビュー完了: " + detail
+        + " / " + state.performance.gapBridgeMs.toFixed(0) + " ms",
+      100,
+    );
+    updateControls();
+    return proposal;
+  } catch (error) {
+    console.error(error);
+    setStatus("Safe Gapエラー: " + error.message, 0);
+    return null;
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function applySafeGapBridges() {
+  if (!state.preview || !state.analysisMask) return;
+  let proposal = state.gapProposal;
+  if (!proposal) proposal = await previewSafeGapBridges();
+  if (!proposal?.acceptedBridgeCount) {
+    setStatus("適用できるSafe Gap候補がありません。");
+    return;
+  }
+
+  const wasComparison = state.comparisonMode;
+  if (!state.gapBaseMask) state.gapBaseMask = state.analysisMask.slice();
+  state.analysisMask = proposal.mask;
+  state.gapApplied = {
+    appliedAt: new Date().toISOString(),
+    bridgeCount: proposal.acceptedBridgeCount,
+    addedPixels: proposal.addedPixels,
+    settings: proposal.settings,
+    rejected: proposal.rejected,
+    sourceCandidateCount: proposal.sourceCandidateCount,
+    evaluation: proposal.evaluation ?? null,
+  };
+  state.gapProposal = null;
+  els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  state.lastTopology = null;
+  els.topologyStatus.textContent = "Topology v2.2: Gap適用後は未再診断";
+
+  if (wasComparison && hasReference()) {
+    compareCurrent(false);
+  } else {
+    renderNormalOverlay();
+    updateMetrics();
+  }
+  els.gapStatus.textContent =
+    "Safe Gap: 適用済み " + state.gapApplied.bridgeCount.toLocaleString()
+      + "本 / +" + state.gapApplied.addedPixels.toLocaleString()
+      + "px（「Gap適用を戻す」で抽出直後へ復帰）";
+  updateControls();
+  setStatus(
+    "Safe Gapを適用しました: " + state.gapApplied.bridgeCount.toLocaleString()
+      + "本 / +" + state.gapApplied.addedPixels.toLocaleString()
+      + "px。必要ならTopologyを再診断してください。",
+    100,
+  );
+}
+
+function revertSafeGapBridges() {
+  if (!state.preview || !state.gapBaseMask) return;
+  const wasComparison = state.comparisonMode;
+  state.analysisMask = state.gapBaseMask;
+  state.gapBaseMask = null;
+  state.gapApplied = null;
+  state.gapProposal = null;
+  els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  state.lastTopology = null;
+  els.topologyStatus.textContent = "Topology v2.2: Gap復帰後は未再診断";
+  els.gapStatus.textContent = "Safe Gap: 適用を戻しました";
+
+  if (wasComparison && hasReference()) {
+    compareCurrent(false);
+  } else {
+    renderNormalOverlay();
+    updateMetrics();
+  }
+  updateControls();
+  setStatus("Safe Gap適用前の粒界マスクへ戻しました。", 100);
 }
 
 async function runTopologyDiagnostics() {
@@ -727,7 +951,7 @@ async function runTopologyDiagnostics() {
   ensureClosedNegativeFresh();
   setBusy(true);
   try {
-    setStatus("Topology v2.1診断中... Core閉鎖・画像端・短いgapを確認しています。", 10);
+    setStatus("Topology v2.2診断中... Core閉鎖・画像端・Safe Gapを確認しています。", 10);
     await new Promise(resolve => setTimeout(resolve, 0));
     const startedAt = nowMs();
     const result = computeBoundaryTopology(
@@ -745,14 +969,21 @@ async function runTopologyDiagnostics() {
     const r2 = closure.closureByBridgeRadius.find(item => item.bridgeRadius === 2);
     const basis = closure.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
     const gapCount = result.shortGapCandidates?.candidateCount ?? 0;
+    const safeCount = result.safeGapBridge?.acceptedBridgeCount ?? 0;
     setStatus(
-      `Topology v2.1完了: ${basis} 0px ${topologyRateText(r0?.closureRate)} → 2px ${topologyRateText(r2?.closureRate)} / Short-gap候補 ${gapCount.toLocaleString()}件 / Endpoint proxy ${result.endpointProxy.endpointPixels.toLocaleString()} / ${state.performance.topologyMs.toFixed(0)} ms`,
+      "Topology v2.2完了: " + basis
+        + " 0px " + topologyRateText(r0?.closureRate)
+        + " → 2px " + topologyRateText(r2?.closureRate)
+        + " / Short-gap " + gapCount.toLocaleString() + "件"
+        + " / Safe " + safeCount.toLocaleString() + "本"
+        + " / Endpoint proxy " + result.endpointProxy.endpointPixels.toLocaleString()
+        + " / " + state.performance.topologyMs.toFixed(0) + " ms",
       100,
     );
     return result;
   } catch (error) {
     console.error(error);
-    setStatus(`Topology診断エラー: ${error.message}`, 0);
+    setStatus("Topology診断エラー: " + error.message, 0);
     return null;
   } finally {
     setBusy(false);
