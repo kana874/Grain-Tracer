@@ -190,9 +190,11 @@ export function fillClosedNegativeRegion(referenceMask, width, height, seed, opt
 
 export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = [], options = {}, regionIndex = null) {
   const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const requestedSafetyRadius = Math.max(0, Math.round(options.safetyRadius ?? 3));
   const index = regionIndex
     && regionIndex.width === width
     && regionIndex.height === height
+    && regionIndex.safetyRadius === requestedSafetyRadius
     ? regionIndex
     : buildClosedNegativeRegionIndex(referenceMask, width, height, options);
   const mask = new Uint8Array(width * height);
@@ -219,8 +221,10 @@ export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = 
 
   let fillPixels = 0;
   if (selectedLabels.size) {
+    const selectedFlags = new Uint8Array(index.componentCount + 1);
+    for (const label of selectedLabels) selectedFlags[label] = 1;
     for (let p = 0; p < mask.length; p += 1) {
-      if (!index.safetyMask[p] && selectedLabels.has(index.labels[p])) {
+      if (!index.safetyMask[p] && selectedFlags[index.labels[p]]) {
         mask[p] = 1;
         fillPixels += 1;
       }
