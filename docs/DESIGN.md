@@ -53,7 +53,9 @@ Brightness is evaluated relative to a local neighbourhood as well as by absolute
 
 ### Multi-scale Dark Ridge
 
-Ridge response is evaluated at several scales and four orientations. The normal-direction dark-line response is penalised by the tangent-direction response. Dot-like dark structures therefore tend to score lower than elongated grain-boundary lines.
+Ridge response is evaluated at several scales and four sampled orientations. The normal-direction dark-line response is penalised by the tangent-direction response. Dot-like dark structures therefore tend to score lower than elongated grain-boundary lines.
+
+v0.3.6.5 keeps the same four response samples but derives a continuous axial normal from their squared response weights using a doubled-angle mean. This preserves the established Ridge detector while providing a continuous normal for sub-pixel NMS sampling.
 
 ### Directional Lab difference
 
@@ -73,9 +75,9 @@ The outermost one preview pixel remains a protected frame guard so the image fra
 
 ### Centerline NMS
 
-v0.3.6.4 optionally applies Non-Maximum Suppression after thresholding and before neighbour-support / minimum-component filtering. The Ridge orientation supplies the estimated boundary normal. Along that normal, only the local maximum response is retained.
+v0.3.6.4 introduced Non-Maximum Suppression after thresholding and before neighbour-support / minimum-component filtering.
 
-If several adjacent pixels have an equal response plateau, GrainTracer keeps the plateau midpoint rather than always choosing one side. This avoids introducing a systematic positional offset while reducing thick or doubled responses to a more stable centreline.
+v0.3.6.5 replaces the four-bin NMS decision with continuous-direction NMS. The Ridge stage estimates an axial normal angle, and GrainTracer bilinearly samples the boundary score one preview pixel to both sides of the candidate along that continuous normal. Only a local maximum is retained. Exact flat response plateaus fall back to the sampled Ridge bin solely to select the plateau midpoint, preventing a systematic left/right positional bias.
 
 Where Ridge orientation is geometrically unavailable near the image edge, the edge-aware candidate is retained instead of inventing a normal direction. Centerline NMS is enabled by default and is stored in extraction settings.
 
@@ -111,6 +113,12 @@ Manual non-boundary centerlines continue to use connected-component holdout. Clo
 v0.3.6.4 therefore splits Closed Fill data by complete connected grain-interior region, not by pixel. Approximately 20% of valid filled regions are deterministically assigned to validation and the remainder to tuning. A Closed Fill region can never contribute pixels to both sets. Manual-line and Closed-Fill tuning masks are then combined, and their validation masks are combined separately.
 
 This makes validation Negative Leakage / Macro Negative Leakage meaningful even when most Negative supervision comes from Closed Fill.
+
+### Spatially balanced Positive holdout
+
+The earlier connected-component Positive split could become badly unbalanced when one long reference component contained most of the labelled pixels. v0.3.6.5 adds a deterministic 4×4 spatial split for Positive labels. It searches the active grid-cell subsets and chooses validation cells whose labelled-pixel total is closest to the requested 20%, with the number of validation cells used as a secondary balancing criterion.
+
+The validation set is therefore spatially separated and pixel-balanced rather than depending on connected-component size. Manual Negative lines retain connected-component holdout; Closed Fill Negative regions retain whole-region holdout.
 
 ## 6. Auto Tune v2
 
@@ -181,7 +189,9 @@ Three annotation classes are kept separate from the source image:
 
 Positive and non-boundary labels are mutually exclusive while drawing: painting one class removes conflicting centerline pixels from the other class along the same stroke.
 
-A closed-region Negative Fill tool can convert the interior of a fully closed positive reference loop into high-confidence Negative training data. The user explicitly clicks the intended interior. Flood fill is rejected if it reaches the image edge or exceeds the safety area limit. Filled pixels keep a 3 px safety distance from the positive reference, and Positive always overrides Negative. Project persistence stores seed coordinates rather than the expanded fill mask; fills are regenerated when the positive reference changes or a project is restored.
+A closed-region Negative Fill tool can convert the interior of a positive reference loop into high-confidence Negative training data. The user explicitly clicks the intended interior. Filled pixels keep a 3 px safety distance from the positive reference, and Positive always overrides Negative. Project persistence stores seed coordinates rather than the expanded fill mask; fills are regenerated when the positive reference changes or a project is restored.
+
+v0.3.6.5 adds an explicit border-assisted mode for grains cut by the preview frame. A seed created with this mode may use the image frame together with the yellow positive reference as a virtual closure. This is not automatic: the mode is saved per seed. Safety rules reject oversized areas, regions that touch opposite frame sides or too many sides, and regions with insufficient contact to the positive reference. Ordinary seeds continue to reject any component that reaches the image edge.
 
 v0.3.6.2 indexes connected non-reference regions once for the current positive-reference geometry. Multiple closed-fill seeds are resolved against that shared index and the 3 px safety dilation is also computed once. The index is invalidated only when positive-reference geometry changes. This replaces the earlier seed-by-seed full-preview flood-fill rebuild.
 
@@ -209,6 +219,10 @@ v0.3.6.4 upgrades this to Topology v2. Instead of treating a single fill seed po
 The same 0 / 1 / 2 / 3 preview-pixel bridge probes are used only on temporary diagnostic copies. Increasing the bridge radius can only remove background reachability, so Core Closure is monotonic. Separately, the diagnostic records how much of the core is covered by the widened prediction. This distinguishes genuine gap closure from an excessively thick boundary response. The endpoint proxy remains a secondary within-image trend metric.
 
 Topology v2 remains observational in v0.3.6.4. It does not yet contribute to the Auto Tune objective and does not automatically connect gaps.
+
+v0.3.6.5 extends the diagnostic to Topology v2.1. Border-assisted Closed Fill cores inherit the image-edge sides used by their parent fill. They may treat those explicitly annotated frame sides as virtual closure, but are still marked open if the prediction-background component leaks to another frame side or grows far beyond the annotated fill area.
+
+Topology v2.1 also enumerates short-gap candidates without modifying the extraction. Only one-neighbour endpoints are considered. Candidate endpoints must be within the configured preview-pixel distance, their outgoing tangent directions must face each other within an angular tolerance, and the straight segment must not cross an existing prediction. The resulting candidate list is intended to validate a later direction-consistent bridge stage before any automatic connection is enabled.
 
 ## 10. Persistence
 
@@ -238,5 +252,5 @@ IndexedDB is used for optional autosave and automatic restore when the same BMP 
 - Full-resolution overlapping-tile analysis and seam handling.
 - Smart Trace and manual correction workflow.
 - PNG / binary mask / SVG export.
-- Topology-aware Auto Tune objective and direction-consistent short-gap bridge application after Topology v2 is validated on multiple real micrographs.
+- Topology-aware Auto Tune objective and direction-consistent short-gap bridge application after Topology v2.1 candidates are validated on multiple real micrographs.
 - Closed-grain segmentation and grain metrics.
