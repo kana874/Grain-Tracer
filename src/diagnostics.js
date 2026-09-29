@@ -224,6 +224,7 @@ export function buildDiagnosticReport(input) {
     referenceCenterline,
     negativeMask,
     negativeCenterline,
+    closedNegativeSeeds,
     exclusionMask,
     exclusionRects,
     fullEvaluationRois,
@@ -303,12 +304,17 @@ export function buildDiagnosticReport(input) {
       { validationFraction: 0.20, minComponentPixels: 8 },
     )
     : null;
-  const tuningNegativeMask = negativeSplit?.validationPixels > 0
-    ? dilateBinaryMask(negativeSplit.tuneMask, preview.width, preview.height, comparison.tolerance)
-    : negativeMask;
-  const validationNegativeMask = negativeSplit?.validationPixels > 0
-    ? dilateBinaryMask(negativeSplit.validationMask, preview.width, preview.height, comparison.tolerance)
-    : null;
+  const hasClosedNegativeFill = (closedNegativeSeeds ?? []).length > 0;
+  const tuningNegativeMask = hasClosedNegativeFill
+    ? negativeMask
+    : negativeSplit?.validationPixels > 0
+      ? dilateBinaryMask(negativeSplit.tuneMask, preview.width, preview.height, comparison.tolerance)
+      : negativeMask;
+  const validationNegativeMask = hasClosedNegativeFill
+    ? null
+    : negativeSplit?.validationPixels > 0
+      ? dilateBinaryMask(negativeSplit.validationMask, preview.width, preview.height, comparison.tolerance)
+      : null;
   const tuningMetrics = computeRegionalMetrics(
     prediction,
     split.tuneMask,
@@ -363,7 +369,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v3",
+    schema: "graintracer-diagnostic-v4",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -387,6 +393,9 @@ export function buildDiagnosticReport(input) {
       mode: "partial-label",
       positiveRecall: metrics.positiveRecall,
       negativeLeakage: metrics.negativeLeakage,
+      macroNegativeLeakage: metrics.macroNegativeLeakage,
+      negativeRegionCount: metrics.negativeRegionCount,
+      maxNegativeRegionShare: metrics.maxNegativeRegionShare,
       alignmentError: metrics.alignmentError,
       matchedReference: metrics.matchedReference,
       falseNegative: metrics.falseNegative,
@@ -406,6 +415,8 @@ export function buildDiagnosticReport(input) {
       tuning: {
         positiveRecall: tuningMetrics.positiveRecall,
         negativeLeakage: tuningMetrics.negativeLeakage,
+        macroNegativeLeakage: tuningMetrics.macroNegativeLeakage,
+        negativeRegionCount: tuningMetrics.negativeRegionCount,
         alignmentError: tuningMetrics.alignmentError,
         labelPrecisionProxy: tuningMetrics.labelPrecision,
         labelF1Proxy: tuningMetrics.labelF1,
@@ -413,6 +424,8 @@ export function buildDiagnosticReport(input) {
       validation: validationMetrics ? {
         positiveRecall: validationMetrics.positiveRecall,
         negativeLeakage: validationMetrics.negativeLeakage,
+        macroNegativeLeakage: validationMetrics.macroNegativeLeakage,
+        negativeRegionCount: validationMetrics.negativeRegionCount,
         alignmentError: validationMetrics.alignmentError,
         labelPrecisionProxy: validationMetrics.labelPrecision,
         labelF1Proxy: validationMetrics.labelF1,
@@ -425,11 +438,17 @@ export function buildDiagnosticReport(input) {
       validationPixels: split.validationPixels,
       validationFraction: split.validationFraction,
       negative: negativeSplit ? {
-        mode: negativeSplit.mode,
+        mode: hasClosedNegativeFill ? "closed-fill-in-tuning-manual-holdout-omitted" : negativeSplit.mode,
         componentCount: negativeSplit.componentCount,
-        tuningPixels: negativeSplit.tuningPixels,
-        validationPixels: negativeSplit.validationPixels,
-        validationFraction: negativeSplit.validationFraction,
+        tuningPixels: hasClosedNegativeFill ? metrics.negativePixels : negativeSplit.tuningPixels,
+        validationPixels: hasClosedNegativeFill ? 0 : negativeSplit.validationPixels,
+        validationFraction: hasClosedNegativeFill ? 0 : negativeSplit.validationFraction,
+      } : hasClosedNegativeFill ? {
+        mode: "closed-fill-in-tuning-no-manual-negative-holdout",
+        componentCount: 0,
+        tuningPixels: metrics.negativePixels,
+        validationPixels: 0,
+        validationFraction: 0,
       } : null,
     },
     referenceCoverage: {
@@ -440,6 +459,9 @@ export function buildDiagnosticReport(input) {
       unknownPredictionPixels: metrics.unknownPrediction,
       nonBoundaryPixels: metrics.negativePixels,
       nonBoundaryPredictionPixels: metrics.negativePrediction,
+      negativeRegionCount: metrics.negativeRegionCount,
+      macroNegativeLeakage: metrics.macroNegativeLeakage,
+      maxNegativeRegionShare: metrics.maxNegativeRegionShare,
       exclusionRectCount: (exclusionRects ?? []).length,
       excludedPixels: metrics.excludedPixels,
       fullEvaluationRoiCount: (fullEvaluationRois ?? []).length,
@@ -457,6 +479,8 @@ export function buildDiagnosticReport(input) {
       nonBoundaryCenterlinePixels: negativeCenterline
         ? negativeCenterline.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
+      closedNegativeFillSeeds: (closedNegativeSeeds ?? []).map(seed => ({ ...seed })),
+      closedNegativeFillSeedCount: (closedNegativeSeeds ?? []).length,
       nonBoundaryMaskPixels: negativeMask
         ? negativeMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
@@ -478,7 +502,9 @@ export function buildDiagnosticReport(input) {
       "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",
       "Predictions in Unknown areas are not counted as false positives.",
       "Positive Recall measures how much of the user-labelled boundary centerline is recovered.",
-      "Negative Leakage measures prediction pixels inside explicit non-boundary labels.",
+      "Negative Leakage is pixel-weighted over explicit non-boundary labels.",
+      "Macro Negative Leakage is the unweighted mean leakage across 4x4 regions that contain Negative labels and is used by Auto Tune v2 in Partial Label mode.",
+      "Closed-region Negative Fill is regenerated from saved seed coordinates and the current positive reference geometry.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
       "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",
       "Multi-Tolerance diagnostics are reported for 1, 2, 3, and 4 preview pixels.",

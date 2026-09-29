@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.6-alpha</div>
+    <div class="version">v0.3.6.1-alpha</div>
   </header>
 
   <main class="layout">
@@ -42,8 +42,9 @@
         <ol class="guide-list">
           <li>「お手本線」で正しい粒界をなぞる</li>
           <li>「非粒界線」で粒内模様・傷など誤検出してほしくない線を教える</li>
+          <li>粒を黄色線で完全に囲ったら「閉領域→非粒界」で内側をクリックし、高信頼Negativeとして塗る</li>
           <li>スケールバー・文字などは「除外矩形」で解析対象外にする</li>
-          <li>「比較」「自動調整」で判定との差を確認・最適化する</li>
+          <li>「比較」「Auto Tune v2」で判定との差を確認・最適化する</li>
         </ol>
         <p class="help">v0.3では、お手本の中心線を評価に使うため、ブラシの太さによるRecallのズレを抑えています。</p>
       </section>
@@ -65,6 +66,7 @@
         <button id="panToolButton" class="tool-button active" type="button" disabled>移動</button>
         <button id="referenceToolButton" class="tool-button" type="button" disabled>お手本線</button>
         <button id="negativeToolButton" class="tool-button negative-tool" type="button" disabled>非粒界線</button>
+        <button id="closedNegativeFillToolButton" class="tool-button negative-tool" type="button" disabled>閉領域→非粒界</button>
         <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>線消去</button>
         <button id="exclusionToolButton" class="tool-button exclusion-tool" type="button" disabled>除外矩形</button>
         <button id="fullRoiToolButton" class="tool-button roi-tool" type="button" disabled>完全評価ROI</button>
@@ -124,7 +126,7 @@
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
         <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
-        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。未記入領域はUnknownとして誤検出扱いしません。Auto Tune v2はROIがあればTrue F1、なければPartial Label評価を使います。</p>
+        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。「閉領域→非粒界」は黄色線で完全に囲った粒の内側だけをクリックして使います。未記入領域はUnknownのままです。Auto Tune v2はROIがあればTrue F1、なければPositive Recallと地域均等化したMacro Negative Leakageを使います。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
@@ -138,7 +140,7 @@
           <button id="clearFullRoiButton" type="button" disabled>ROI全消去</button>
           <button id="showNormalButton" type="button" disabled>通常表示</button>
         </div>
-        <p id="annotationStatus" class="help metric-detail">非粒界: 0 px / 除外: 0領域 / 完全評価ROI: 0領域</p>
+        <p id="annotationStatus" class="help metric-detail">非粒界線: 0 px / 閉領域Fill: 0領域 / Negative合計: 0 px / 除外: 0領域 / 完全評価ROI: 0領域</p>
         <p id="localCalibrationStatus" class="help metric-detail">局所補正: 未作成</p>
 
         <div class="legend">
@@ -153,6 +155,7 @@
         <div class="metrics-grid">
           <div><span>Positive Recall</span><strong id="metricPositiveRecall">-</strong></div>
           <div><span>Negative Leakage</span><strong id="metricNegativeLeakage">-</strong></div>
+          <div><span>Macro Negative Leakage</span><strong id="metricMacroNegativeLeakage">-</strong></div>
           <div><span>Alignment</span><strong id="metricAlignment">-</strong></div>
         </div>
         <p id="metricDetail" class="help metric-detail">お手本線を描くとPartial Label評価できます。</p>
@@ -163,7 +166,7 @@
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ファイルを書き出す</button>
-        <p class="help">出力: diagnostic.json v3 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">出力: diagnostic.json v4 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
       </section>
 
       <section>
@@ -187,6 +190,8 @@
           <li class="done">非粒界お手本 / 解析除外領域</li>
           <li class="done">Partial Label評価 / 完全評価ROI / Multi-Tolerance診断</li>
           <li class="done">Auto Tune v2（Coordinate Descent / feature=0 / Ablation）</li>
+          <li class="done">閉領域Negative Fill / seed保存 / Undo・Redo</li>
+          <li class="done">Macro Negative Leakage（4×4地域均等）</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>

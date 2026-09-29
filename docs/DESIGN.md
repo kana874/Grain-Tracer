@@ -77,6 +77,7 @@ Unknown is not equivalent to Negative. Automatic boundary pixels in Unknown area
 
 The primary Partial Label metrics are:
 
+- Macro Negative Leakage: unweighted mean Negative Leakage across 4×4 regions containing explicit Negative labels; this prevents a densely-labelled region from dominating tuning.
 - Positive Recall: fraction of positive reference-centerline pixels matched within the spatial tolerance.
 - Negative Leakage: fraction of explicit negative-mask pixels containing an automatic prediction.
 - Alignment Error: preview-pixel distance from positive reference centerline to the nearest prediction.
@@ -121,7 +122,7 @@ The search uses coarse-to-fine steps over up to three rounds. Weight/sensitivity
 Objective selection follows the v0.3.5 evaluation model:
 
 - when complete-evaluation ROIs exist, formal ROI True F1 is the primary tuning objective;
-- otherwise the tuner uses a Partial Label balance of Positive Recall and explicit Negative leakage, while Unknown pixels remain outside false-positive scoring.
+- otherwise the tuner uses a Partial Label balance of Positive Recall and 4×4 Macro Negative Leakage, while Unknown pixels remain outside false-positive scoring.
 
 The tuner records an ablation summary for:
 
@@ -156,6 +157,8 @@ Three annotation classes are kept separate from the source image:
 
 Positive and non-boundary labels are mutually exclusive while drawing: painting one class removes conflicting centerline pixels from the other class along the same stroke.
 
+A closed-region Negative Fill tool can convert the interior of a fully closed positive reference loop into high-confidence Negative training data. The user explicitly clicks the intended interior. Flood fill is rejected if it reaches the image edge or exceeds the safety area limit. Filled pixels keep a 3 px safety distance from the positive reference, and Positive always overrides Negative. Project persistence stores seed coordinates rather than the expanded fill mask; fills are regenerated when the positive reference changes or a project is restored.
+
 Non-boundary examples extend the evaluated area without treating every unlabelled pixel as negative. Exclusion rectangles are also applied before connected-component evaluation so ignored image content cannot support a retained candidate component.
 
 Undo/Redo covers positive/negative line edits, exclusion-region edits, and complete-evaluation ROI edits. Exclusion and ROI rectangles can be selected, moved, resized from all four sides/corners, and deleted after creation or project reload.
@@ -171,6 +174,7 @@ A `.graintracer.json` project stores:
 - comparison settings
 - reference display mask and centerline
 - non-boundary display mask and centerline
+- closed-region Negative Fill seed coordinates
 - exclusion rectangles
 - complete-evaluation ROI rectangles
 - evaluation history, including Partial Label and regional metrics

@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.6.1-alpha - 2026-09-29
+
+### Added
+- Click-to-fill closed grain interiors as high-confidence non-boundary annotations using the positive reference mask as a flood-fill wall.
+- Safety handling for closed fills: open regions, oversized regions, tiny regions, and clicks on the positive boundary are rejected.
+- A 3 px safety band keeps generated Negative pixels away from the positive reference.
+- Closed-fill seed coordinates are saved in project JSON and regenerated from the current positive reference instead of persisting the expanded fill as the source of truth.
+- Undo / Redo support for closed-fill creation and combined clearing of manual/closed Negative annotations.
+- 4×4 Macro Negative Leakage and Negative spatial-distribution diagnostics.
+- Diagnostic JSON v4 fields for Macro Negative Leakage, negative-region count, maximum regional concentration, and closed-fill seeds.
+
+### Changed
+- Partial Label Auto Tune v2 now optimizes Positive Recall against region-balanced Macro Negative Leakage instead of only pixel-weighted Negative Leakage.
+- Pixel-weighted Negative Leakage remains available as a descriptive metric.
+- Closed-region Negative fills are included in Auto Tune v2 training data; seed-derived fills are not presented as an independent Negative holdout.
+- App version advanced to `0.3.6.1-alpha`; boundary extraction identifier remains `boundary-v4-dendrite-negref`.
+
+### Validation
+- JavaScript syntax validation passed for analysis, app, evaluation, project, diagnostics, and closed-fill modules.
+- Synthetic closed-region test accepted a fully enclosed region and rejected an open region that reached the image edge.
+- Synthetic spatial-imbalance test confirmed Macro Negative Leakage differs from pixel-weighted leakage and gives equal weight to labelled regions.
+
 ## v0.3.6-alpha - 2026-09-28
 
 ### Added
