@@ -1066,9 +1066,12 @@ function renderHistory() {
 function compactAutoTuneSearch(search) {
   if (!search) return null;
   return {
-    version: search.version ?? 2,
-    strategy: search.strategy ?? "coordinate-descent",
+    version: search.version ?? 3,
+    strategy: search.strategy ?? "coordinate-descent-processed-guard",
     objectiveMode: search.objectiveMode ?? null,
+    coordinateEvaluation: search.coordinateEvaluation ?? null,
+    processedEvaluation: search.processedEvaluation ?? null,
+    ablationEvaluation: search.ablationEvaluation ?? null,
     baseline: search.baseline ?? null,
     final: search.final ?? null,
     rounds: (search.rounds ?? []).map(round => ({
@@ -1080,7 +1083,10 @@ function compactAutoTuneSearch(search) {
       coordinates: (round.coordinates ?? []).map(item => ({
         name: item.name,
         previousValue: item.previousValue,
+        rawSelectedValue: item.rawSelectedValue ?? item.selectedValue,
         selectedValue: item.selectedValue,
+        acceptedByProcessed: item.acceptedByProcessed ?? null,
+        processedObjective: item.processedObjective ?? null,
       })),
     })),
     ablation: search.ablation ?? [],
@@ -1592,6 +1598,7 @@ function showNormalView() {
 
 function clearOverlay() {
   els.overlayCanvas.getContext("2d").clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
+  resetGapBridgeState(true);
   invalidateTopology();
   state.analysisMask = null;
   state.comparisonMode = false;
@@ -1889,6 +1896,7 @@ async function exportDiagnostics() {
       history: state.history,
       performance: performanceSnapshot(),
       topology,
+      gapBridge: state.gapApplied,
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
     });
@@ -2173,6 +2181,7 @@ async function analyzePreview() {
     const features = await ensureFeatures();
     setStatus("粒界候補を解析中...", 72);
     const analysisStartedAt = nowMs();
+    resetGapBridgeState(true);
     state.analysisMask = await buildBoundaryMask(features, {
       ...currentBoundaryOptions(),
       onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, 72 + ratio * 27),
@@ -2276,6 +2285,7 @@ async function autoTune() {
     setRangeValue(els.minComponent, result.parameters.minComponent);
     state.localCalibration = null;
     updateLocalCalibrationStatus();
+    resetGapBridgeState(true);
     state.analysisMask = result.mask;
     invalidateTopology();
 
@@ -2383,6 +2393,7 @@ async function localTune() {
     state.localCalibration = calibration;
     updateLocalCalibrationStatus();
 
+    resetGapBridgeState(true);
     state.analysisMask = await buildBoundaryMask(features, {
       ...extraction,
       localCalibration: calibration,
@@ -2901,6 +2912,9 @@ els.clearExclusionButton.addEventListener("click", clearExclusions);
 els.clearFullRoiButton.addEventListener("click", clearFullEvaluationRois);
 els.showNormalButton.addEventListener("click", showNormalView);
 els.topologyButton.addEventListener("click", runTopologyDiagnostics);
+els.gapPreviewButton.addEventListener("click", previewSafeGapBridges);
+els.gapApplyButton.addEventListener("click", applySafeGapBridges);
+els.gapRevertButton.addEventListener("click", revertSafeGapBridges);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
 els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
@@ -2950,6 +2964,18 @@ els.referenceOpacity.addEventListener("change", () => {
   }
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
+const gapSettingChanged = () => {
+  clearGapProposal();
+  state.lastTopology = null;
+  if (els.topologyStatus) {
+    els.topologyStatus.textContent = "Topology v2.2: Gap設定変更後は未実行";
+  }
+  updateControls();
+  scheduleAutosave();
+};
+bindRange(els.gapMaxDistance, $("gapMaxDistanceValue"), gapSettingChanged);
+bindRange(els.gapAngle, $("gapAngleValue"), gapSettingChanged);
+bindRange(els.gapMinScore, $("gapMinScoreValue"), gapSettingChanged);
 els.localEnabled.addEventListener("change", featureSettingChanged);
 els.borderAssistedFill.addEventListener("change", scheduleAutosave);
 els.autosaveEnabled.addEventListener("change", () => {
