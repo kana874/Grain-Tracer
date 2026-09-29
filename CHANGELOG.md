@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.3.6.6-alpha - 2026-09-29
+
+### Added
+- Topology v2.2 Safe Gap Bridge proposal and explicit application workflow.
+- Magenta Safe Gap preview overlay with configurable maximum gap distance, endpoint-angle tolerance, and minimum candidate score.
+- Safety rejection for bridge segments that cross Exclusion pixels or a 1 px guard around explicit Negative labels.
+- Greedy endpoint conflict protection so one endpoint is used by at most one accepted bridge; application remains user-confirmed and reversible.
+- Diagnostic JSON v9 records Safe Gap settings, proposal summary, applied bridge metadata, and bridge timing.
+
+### Changed
+- Auto Tune v2 search trace advanced to v3. Fast raw scoring still proposes coordinate changes, but each changed coordinate must improve the processed post-NMS / neighbour-support / minimum-component objective before it is accepted.
+- Auto Tune Ablation now uses the same processed stage as the final tuning objective, so Full and feature-disabled scores are directly comparable.
+- Topology revision advanced to `2.2-safe-gap-bridge`.
+- App version advanced to `0.3.6.6-alpha`; algorithm identifier advanced to `boundary-v8-safe-gap-processed-tune`.
+
+### Safety / behaviour
+- Safe Gap Bridge is never applied automatically by Auto Tune or Topology diagnostics.
+- Preview candidates are limited by distance, facing angle and score, cannot cross Exclusion or guarded Negative pixels, and can be reverted to the pre-bridge extraction mask.
+- Project persistence stores Safe Gap settings but not the transient extraction/bridge mask, matching existing analysis-mask behaviour.
+
+### Validation
+- Implementation keeps the existing v0.3.6.5 candidate detector and adds a stricter post-filter/application stage.
+- Processed-gated coordinate tuning and processed Ablation share the same NMS / neighbour-support / component pipeline as final extraction.
+
 ## v0.3.6.5-alpha - 2026-09-29
 
 ### Added
