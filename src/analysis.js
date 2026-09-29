@@ -88,6 +88,7 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
     dendriteOrientation: dendriteOrientation.orientation,
     dendriteCoherence: dendriteOrientation.coherence,
     orientation: ridgeResult.orientation,
+    orientationAngle: ridgeResult.orientationAngle,
     ridgeScale: ridgeResult.bestScale,
     featureMargins: {
       dark: 0,
@@ -185,6 +186,72 @@ export function applyDirectionalNonMaximumSuppression(mask, score, features, opt
   const ridgeMargin = Math.max(1, Math.round(
     options.ridgeMargin ?? features.featureMargins?.ridge ?? 5,
   ));
+  const epsilon = 1e-7;
+
+  const sampleBilinear = (x, y) => {
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = Math.min(width - 1, x0 + 1);
+    const y1 = Math.min(height - 1, y0 + 1);
+    const sx = x - x0;
+    const sy = y - y0;
+    const p00 = y0 * width + x0;
+    const p10 = y0 * width + x1;
+    const p01 = y1 * width + x0;
+    const p11 = y1 * width + x1;
+    const top = score[p00] * (1 - sx) + score[p10] * sx;
+    const bottom = score[p01] * (1 - sx) + score[p11] * sx;
+    return top * (1 - sy) + bottom * sy;
+  };
+
+  const discretePlateauMidpoint = (p, x, y, orientationIndex, center) => {
+    let dx = 1;
+    let dy = 0;
+    if (orientationIndex === 1) {
+      dx = 1;
+      dy = 1;
+    } else if (orientationIndex === 2) {
+      dx = 0;
+      dy = 1;
+    } else if (orientationIndex === 3) {
+      dx = -1;
+      dy = 1;
+    }
+
+    const maxPlateauSteps = 8;
+    let beforeSteps = 0;
+    let afterSteps = 0;
+    let bx = x - dx;
+    let by = y - dy;
+    let ax = x + dx;
+    let ay = y + dy;
+    const inBounds = (sx, sy) => sx >= 0 && sy >= 0 && sx < width && sy < height;
+
+    while (beforeSteps < maxPlateauSteps && inBounds(bx, by)) {
+      const bp = by * width + bx;
+      if (!mask[bp] || Math.abs(score[bp] - center) > epsilon) break;
+      beforeSteps += 1;
+      bx -= dx;
+      by -= dy;
+    }
+    while (afterSteps < maxPlateauSteps && inBounds(ax, ay)) {
+      const ap = ay * width + ax;
+      if (!mask[ap] || Math.abs(score[ap] - center) > epsilon) break;
+      afterSteps += 1;
+      ax += dx;
+      ay += dy;
+    }
+
+    const before = inBounds(bx, by) ? by * width + bx : -1;
+    const after = inBounds(ax, ay) ? ay * width + ax : -1;
+    const beforeScore = before >= 0 && mask[before] ? score[before] : -1;
+    const afterScore = after >= 0 && mask[after] ? score[after] : -1;
+    if (beforeScore > center + epsilon || afterScore > center + epsilon) return false;
+
+    const plateauSpan = beforeSteps + afterSteps;
+    const midpointFromBefore = Math.floor(plateauSpan / 2);
+    return beforeSteps === midpointFromBefore;
+  };
 
   for (let y = 0; y < height; y += 1) {
     const base = y * width;
@@ -192,65 +259,35 @@ export function applyDirectionalNonMaximumSuppression(mask, score, features, opt
       const p = base + x;
       if (!mask[p]) continue;
 
-      // Near the image edge the Ridge orientation is geometrically unavailable.
-      // Keep the edge-aware candidate rather than imposing an arbitrary normal.
+      // Ridge orientation is unavailable close to the frame. Preserve the
+      // edge-aware candidate instead of imposing a fabricated normal.
       if (x < ridgeMargin || y < ridgeMargin
         || x >= width - ridgeMargin || y >= height - ridgeMargin) {
         out[p] = 1;
         continue;
       }
 
-      const orientation = features.orientation?.[p] ?? 0;
-      let dx = 1;
-      let dy = 0;
-      if (orientation === 1) {
-        dx = 1;
-        dy = 1;
-      } else if (orientation === 2) {
-        dx = 0;
-        dy = 1;
-      } else if (orientation === 3) {
-        dx = -1;
-        dy = 1;
-      }
-
       const center = score[p];
-      const epsilon = 1e-7;
-      const maxPlateauSteps = 8;
-      let beforeSteps = 0;
-      let afterSteps = 0;
-      let bx = x - dx;
-      let by = y - dy;
-      let ax = x + dx;
-      let ay = y + dy;
+      const angle = features.orientationAngle?.[p];
+      if (Number.isFinite(angle)) {
+        const nx = Math.cos(angle);
+        const ny = Math.sin(angle);
+        const before = sampleBilinear(x - nx, y - ny);
+        const after = sampleBilinear(x + nx, y + ny);
+        if (center + epsilon < before || center + epsilon < after) continue;
 
-      const inBounds = (sx, sy) => sx >= 0 && sy >= 0 && sx < width && sy < height;
-      while (beforeSteps < maxPlateauSteps && inBounds(bx, by)) {
-        const bp = by * width + bx;
-        if (!mask[bp] || Math.abs(score[bp] - center) > epsilon) break;
-        beforeSteps += 1;
-        bx -= dx;
-        by -= dy;
-      }
-      while (afterSteps < maxPlateauSteps && inBounds(ax, ay)) {
-        const ap = ay * width + ax;
-        if (!mask[ap] || Math.abs(score[ap] - center) > epsilon) break;
-        afterSteps += 1;
-        ax += dx;
-        ay += dy;
+        // A unique continuous-direction maximum is retained directly.
+        if (center > before + epsilon || center > after + epsilon) {
+          out[p] = 1;
+          continue;
+        }
       }
 
-      const before = inBounds(bx, by) ? by * width + bx : -1;
-      const after = inBounds(ax, ay) ? ay * width + ax : -1;
-      const beforeScore = before >= 0 && mask[before] ? score[before] : -1;
-      const afterScore = after >= 0 && mask[after] ? score[after] : -1;
-      if (beforeScore > center + epsilon || afterScore > center + epsilon) continue;
-
-      // A flat response plateau has no unique maximum. Keep its midpoint rather
-      // than consistently choosing one side, which would introduce a position bias.
-      const plateauSpan = beforeSteps + afterSteps;
-      const midpointFromBefore = Math.floor(plateauSpan / 2);
-      if (beforeSteps === midpointFromBefore) out[p] = 1;
+      // Exact flat plateaus have no sub-pixel maximum. Fall back to the sampled
+      // Ridge bin only to choose the centre of the plateau deterministically.
+      if (discretePlateauMidpoint(p, x, y, features.orientation?.[p] ?? 0, center)) {
+        out[p] = 1;
+      }
     }
   }
 
