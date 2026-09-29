@@ -46,33 +46,33 @@ function erodeSquare(mask, width, height, radius) {
   const span = r * 2 + 1;
   const horizontal = new Uint8Array(mask.length);
   const output = new Uint8Array(mask.length);
+  const prefix = new Uint32Array(Math.max(width, height) + 1);
 
   for (let y = 0; y < height; y += 1) {
     const base = y * width;
-    let sum = 0;
+    prefix[0] = 0;
     for (let x = 0; x < width; x += 1) {
-      const addX = x + r;
-      if (addX < width) sum += mask[base + addX] ? 1 : 0;
-      const removeX = x - r - 1;
-      if (removeX >= 0) sum -= mask[base + removeX] ? 1 : 0;
-      if (x >= r && x < width - r && sum === span) horizontal[base + x] = 1;
+      prefix[x + 1] = prefix[x] + (mask[base + x] ? 1 : 0);
+    }
+    for (let x = r; x < width - r; x += 1) {
+      const sum = prefix[x + r + 1] - prefix[x - r];
+      if (sum === span) horizontal[base + x] = 1;
     }
   }
 
   for (let x = 0; x < width; x += 1) {
-    let sum = 0;
+    prefix[0] = 0;
     for (let y = 0; y < height; y += 1) {
-      const addY = y + r;
-      if (addY < height) sum += horizontal[addY * width + x] ? 1 : 0;
-      const removeY = y - r - 1;
-      if (removeY >= 0) sum -= horizontal[removeY * width + x] ? 1 : 0;
-      if (y >= r && y < height - r && sum === span) output[y * width + x] = 1;
+      prefix[y + 1] = prefix[y] + (horizontal[y * width + x] ? 1 : 0);
+    }
+    for (let y = r; y < height - r; y += 1) {
+      const sum = prefix[y + r + 1] - prefix[y - r];
+      if (sum === span) output[y * width + x] = 1;
     }
   }
 
   return output;
 }
-
 function buildComponentIndex(mask, width, height, minPixels = 1, foreground = true) {
   const labels = new Uint32Array(mask.length);
   const queue = new Int32Array(mask.length);
