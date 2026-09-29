@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.3.6.3-alpha - 2026-09-29
+
+### Added
+- Annotation-assist view that attenuates the automatic boundary/comparison overlay and Negative annotation overlay without changing analysis or label geometry.
+- `H` hold shortcut to temporarily hide the automatic overlay and inspect the source image; `V` toggles annotation-assist view.
+- On-demand Topology diagnostics with an interior endpoint proxy and Seed Closure Rate probes at 0 / 1 / 2 / 3 preview-pixel bridge radii.
+- Diagnostic JSON v6 topology payload and topology runtime measurement.
+
+### Changed
+- Boundary scoring is now edge-aware: near image borders, only geometrically available Dark / Ridge / Color / Dendrite channels contribute and their weights are renormalized locally.
+- The outermost 1 preview pixel remains guarded to suppress image-frame artifacts, while neighbor-support filtering now handles image bounds and allows boundaries to approach that guard.
+- Auto Tune v2 raw candidate scoring uses the same edge-aware feature availability rules as final extraction.
+- App version advanced to `0.3.6.3-alpha`; extraction identifier advanced to `boundary-v5-edge-aware-negref`.
+
+### Notes
+- Topology diagnostics are observational only in this version. Seed Closure and endpoint proxy values do not yet affect Auto Tune v2 or automatically bridge gaps.
+- Bridge-radius probes only dilate a temporary diagnostic copy of the prediction; they do not modify the displayed or saved extraction result.
+
+### Validation
+- JavaScript syntax validation passed across all source modules.
+- Synthetic edge-scoring test confirmed the protected outermost pixel remains suppressed while a strong boundary cue one pixel inward can be evaluated.
+- Synthetic one-pixel-gap topology test reported an open seed region at 0 px and a closed seed region at a 1 px bridge probe.
+- DOM references for the annotation-assist and Topology controls resolve against the updated HTML.
+
 ## v0.3.6.2-alpha - 2026-09-29
 
 ### Added
