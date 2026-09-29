@@ -2414,12 +2414,15 @@ bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
   clearLocalCalibration(true);
   if (state.preview && state.referenceCenterline) {
     renderReferenceCanvas();
-    renderNegativeCanvas();
-    if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent(false);
-    else renderNormalOverlay();
+    renderNegativeCanvas(false, true);
+    scheduleClosedFillRefresh();
+    if (!state.comparisonMode) renderNormalOverlay();
     updateMetrics();
   }
   scheduleAutosave();
+});
+els.referenceBrush.addEventListener("change", () => {
+  if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent(false);
 });
 bindRange(els.referenceOpacity, $("referenceOpacityValue"), scheduleAutosave);
 els.referenceOpacity.addEventListener("change", () => {
