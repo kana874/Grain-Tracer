@@ -783,7 +783,7 @@ function renderNegativeCanvas(rebuildClosed = true, rebuildManual = true) {
     );
   }
   if (rebuildClosed) rebuildClosedNegativeState();
-  rebuildCombinedNegativeMask();
+  if (rebuildClosed || rebuildManual || !state.negativeMask) rebuildCombinedNegativeMask();
   renderBinaryMaskCanvas(
     els.negativeCanvas,
     state.negativeMask,
@@ -1914,6 +1914,7 @@ function closedFillFailureMessage(reason) {
   if (reason === "open-region") return "閉領域ではありません。黄色のお手本線が完全に閉じているか確認してください。";
   if (reason === "region-too-large") return "閉領域が大きすぎるため安全のためFillしませんでした。";
   if (reason === "region-too-small") return "閉領域が小さすぎるためFillしませんでした。";
+  if (reason === "duplicate-region") return "この閉領域はすでに非粒界Fillされています。";
   return "この位置では閉領域Fillできませんでした。";
 }
 
@@ -2293,7 +2294,8 @@ bindRange(els.ridgeWeight, $("ridgeWeightValue"), extractionSettingChanged);
 bindRange(els.colorWeight, $("colorWeightValue"), extractionSettingChanged);
 bindRange(els.dendriteWeight, $("dendriteWeightValue"), extractionSettingChanged);
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
-bindRange(els.overlayOpacity, $("overlayOpacityValue"), () => { rerenderOverlayOpacity(); scheduleAutosave(); });
+bindRange(els.overlayOpacity, $("overlayOpacityValue"), scheduleAutosave);
+els.overlayOpacity.addEventListener("change", rerenderOverlayOpacity);
 bindRange(els.localStrength, $("localStrengthValue"), featureSettingChanged);
 bindRange(els.localWindow, $("localWindowValue"), featureSettingChanged);
 bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
@@ -2309,18 +2311,13 @@ bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
   }
   scheduleAutosave();
 });
-let referenceOpacityFrame = null;
-bindRange(els.referenceOpacity, $("referenceOpacityValue"), () => {
-  if (referenceOpacityFrame != null) cancelAnimationFrame(referenceOpacityFrame);
-  referenceOpacityFrame = requestAnimationFrame(() => {
-    referenceOpacityFrame = null;
-    if (state.preview && state.referenceCenterline) {
-      // Opacity does not change annotation geometry; keep closed-region index/masks intact.
-      renderReferenceCanvas(false);
-      renderNegativeCanvas(false, false);
-    }
-  });
-  scheduleAutosave();
+bindRange(els.referenceOpacity, $("referenceOpacityValue"), scheduleAutosave);
+els.referenceOpacity.addEventListener("change", () => {
+  if (state.preview && state.referenceCenterline) {
+    // Opacity does not change annotation geometry; redraw only after slider release.
+    renderReferenceCanvas(false);
+    renderNegativeCanvas(false, false);
+  }
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
 els.localEnabled.addEventListener("change", featureSettingChanged);
