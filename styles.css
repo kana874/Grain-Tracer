@@ -52,7 +52,7 @@ button.view-button.active { border-color: var(--warn); background: rgba(255, 216
 .viewer.reference-mode.dragging { cursor: grabbing; }
 .canvas-stage { position: absolute; transform-origin: 0 0; display: none; }
 .canvas-stage canvas { position: absolute; inset: 0; image-rendering: auto; }
-#overlayCanvas, #referenceCanvas, #negativeCanvas, #exclusionCanvas, #fullRoiCanvas { pointer-events: none; }
+#overlayCanvas, #gapCanvas, #referenceCanvas, #negativeCanvas, #exclusionCanvas, #fullRoiCanvas { pointer-events: none; }
 .empty-state { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: var(--muted); gap: 4px; }
 .empty-state strong { color: var(--text); }
 .status-bar { display: grid; grid-template-columns: 1fr 180px; align-items: center; gap: 12px; padding: 6px 10px; background: #171b22; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
@@ -67,6 +67,7 @@ progress { width: 100%; height: 10px; }
 .check-row { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; margin: 8px 0; }
 .check-row input { accent-color: var(--accent); }
 .subpanel { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: #171b22; }
+.subpanel-title { display: block; margin-bottom: 8px; font-size: 12px; }
 .button-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .button-grid button { font-size: 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 11px; }
@@ -79,6 +80,7 @@ progress { width: 100%; height: 10px; }
 .swatch.unknown { background: #23f5de; opacity: .45; }
 .swatch.roi { background: #62beff; }
 .swatch.excluded { background: #7f8998; }
+.swatch.gap { background: #ff4fd8; }
 button.negative-tool.active { border-color: #ff8a00; background: rgba(255, 138, 0, .16); color: #fff2df; }
 button.exclusion-tool.active { border-color: #98a3b3; background: rgba(130, 140, 155, .16); color: #eef2f7; }
 button.roi-tool.active { border-color: #62beff; background: rgba(66, 170, 255, .14); color: #e6f5ff; }
