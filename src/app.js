@@ -169,6 +169,9 @@ const state = {
   closedNegativeCount: 0,
   closedNegativeValidCount: 0,
   closedNegativeInvalidCount: 0,
+  closedNegativeDirty: false,
+  closedFillRefreshTimer: null,
+  closedFillRefreshIdleHandle: null,
   combinedNegativeCount: 0,
   exclusionRects: [],
   exclusionMask: null,
@@ -721,6 +724,7 @@ function renderReferenceCanvas(rebuildMask = true) {
       referenceJudgementRadius(),
     );
     state.closedNegativeRegionIndex = null;
+    state.closedNegativeDirty = state.closedNegativeSeeds.length > 0;
   }
   const rgba = new Uint8ClampedArray(state.referenceMask.length * 4);
   for (let p = 0; p < state.referenceMask.length; p += 1) {
@@ -744,6 +748,20 @@ function closedNegativeFillOptions() {
 
 function rebuildClosedNegativeState() {
   if (!state.preview || !state.referenceMask) return null;
+  if (!state.closedNegativeSeeds.length) {
+    if (!state.closedNegativeMask || state.closedNegativeMask.length !== state.preview.width * state.preview.height) {
+      state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
+    } else {
+      state.closedNegativeMask.fill(0);
+    }
+    state.closedNegativeCount = 0;
+    state.closedNegativeValidCount = 0;
+    state.closedNegativeInvalidCount = 0;
+    state.closedNegativeDirty = false;
+    state.performance.closedFillRebuildMs = 0;
+    return null;
+  }
+
   const startedAt = nowMs();
   const rebuilt = rebuildClosedNegativeMask(
     state.referenceMask,
@@ -758,8 +776,56 @@ function rebuildClosedNegativeState() {
   state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
   state.closedNegativeValidCount = rebuilt.validCount;
   state.closedNegativeInvalidCount = rebuilt.invalidCount;
+  state.closedNegativeDirty = false;
   state.performance.closedFillRebuildMs = rebuilt.elapsedMs ?? recordPerformance("closedFillRebuildMs", startedAt);
   return rebuilt;
+}
+
+function cancelScheduledClosedFillRefresh() {
+  clearTimeout(state.closedFillRefreshTimer);
+  state.closedFillRefreshTimer = null;
+  if (state.closedFillRefreshIdleHandle != null) {
+    if ("cancelIdleCallback" in window) window.cancelIdleCallback(state.closedFillRefreshIdleHandle);
+    else clearTimeout(state.closedFillRefreshIdleHandle);
+  }
+  state.closedFillRefreshIdleHandle = null;
+}
+
+function refreshClosedFillNow() {
+  cancelScheduledClosedFillRefresh();
+  if (!state.closedNegativeDirty || !state.preview) return;
+  rebuildClosedNegativeState();
+  rebuildCombinedNegativeMask();
+  renderBinaryMaskCanvas(
+    els.negativeCanvas,
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    referenceOpacityRatio(),
+    [255, 138, 0],
+  );
+  updateAnnotationStatus();
+}
+
+function scheduleClosedFillRefresh() {
+  cancelScheduledClosedFillRefresh();
+  if (!state.closedNegativeDirty || !state.closedNegativeSeeds.length || !state.preview) return;
+  state.closedFillRefreshTimer = setTimeout(() => {
+    state.closedFillRefreshTimer = null;
+    const run = () => {
+      state.closedFillRefreshIdleHandle = null;
+      if (!state.drawingReference && state.closedNegativeDirty) refreshClosedFillNow();
+    };
+    if ("requestIdleCallback" in window) {
+      state.closedFillRefreshIdleHandle = window.requestIdleCallback(run, { timeout: 1200 });
+    } else {
+      state.closedFillRefreshIdleHandle = setTimeout(run, 0);
+    }
+  }, 80);
+}
+
+function ensureClosedNegativeFresh() {
+  if (state.closedNegativeDirty) refreshClosedFillNow();
 }
 
 function rebuildCombinedNegativeMask() {
@@ -862,6 +928,7 @@ function referenceOpacityRatio() {
 function refreshReferenceDirty(changedBounds) {
   if (!state.preview || !state.referenceCenterline || !state.referenceMask || !changedBounds) return;
   state.closedNegativeRegionIndex = null;
+  state.closedNegativeDirty = state.closedNegativeSeeds.length > 0;
   const dirty = rebuildReferenceMaskRegion(
     state.referenceCenterline,
     state.referenceMask,
@@ -980,7 +1047,10 @@ function applyReferenceUndoRedo(direction) {
       applyMaskHistoryPart(part, direction);
       if (part.layer === "reference") referenceChanged = true;
     }
-    if (referenceChanged) renderNegativeCanvas(true);
+    if (referenceChanged) {
+      renderNegativeCanvas(false, true);
+      scheduleClosedFillRefresh();
+    }
   } else if (item.kind === "closed-fill-add") {
     if (direction === "undo") state.closedNegativeSeeds.splice(item.index, 1);
     else state.closedNegativeSeeds.splice(item.index, 0, { ...item.seed });
@@ -1300,6 +1370,7 @@ async function importProjectFile(file) {
 
 async function exportDiagnostics() {
   if (!state.preview || !state.analysisMask || !hasReference()) return;
+  ensureClosedNegativeFresh();
   setBusy(true);
   try {
     const features = await ensureFeatures();
@@ -1461,6 +1532,7 @@ async function loadBmp(file) {
   state.closedNegativeCount = 0;
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
+  state.closedNegativeDirty = false;
   state.combinedNegativeCount = 0;
   state.exclusionRects = [];
   state.exclusionMask = null;
@@ -1504,6 +1576,7 @@ async function loadBmp(file) {
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
+    state.closedNegativeDirty = false;
     state.combinedNegativeCount = 0;
     state.exclusionMask = new Uint8Array(preview.width * preview.height);
     state.exclusionPixelCount = 0;
@@ -1556,6 +1629,7 @@ async function loadBmp(file) {
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
+    state.closedNegativeDirty = false;
     state.combinedNegativeCount = 0;
     state.exclusionMask = null;
     state.exclusionPixelCount = 0;
@@ -1616,6 +1690,7 @@ async function analyzePreview() {
 
 function compareCurrent(record = true) {
   if (!state.preview || !state.analysisMask || !hasReference()) return null;
+  ensureClosedNegativeFresh();
   const comparisonStartedAt = nowMs();
   const result = renderComparisonOverlay(
     state.analysisMask,
@@ -1655,6 +1730,7 @@ function compareCurrent(record = true) {
 
 async function autoTune() {
   if (!state.preview || !hasReference()) return;
+  ensureClosedNegativeFresh();
   setBusy(true);
   try {
     const features = await ensureFeatures();
@@ -1770,6 +1846,7 @@ async function autoTune() {
 
 async function localTune() {
   if (!state.preview || !hasReference()) return;
+  ensureClosedNegativeFresh();
   setBusy(true);
   try {
     const features = await ensureFeatures();
@@ -1959,6 +2036,7 @@ function addClosedNegativeFill(event) {
   state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
   state.closedNegativeValidCount = rebuilt.validCount;
   state.closedNegativeInvalidCount = rebuilt.invalidCount;
+  state.closedNegativeDirty = false;
   state.performance.closedFillRebuildMs = rebuilt.elapsedMs ?? null;
   state.manualNegativeMask = dilateBinaryMask(
     state.negativeCenterline,
@@ -2032,6 +2110,7 @@ function applyReferenceSegment(from, to) {
 function beginReferenceDraw(event) {
   const point = eventToPreviewPoint(event);
   if (!point) return false;
+  cancelScheduledClosedFillRefresh();
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
 
@@ -2075,7 +2154,10 @@ function endReferenceDraw(event) {
   if (negativeEntry) parts.push({ layer: "negative", entry: negativeEntry });
   state.currentReferenceEdit = null;
   if (parts.length) commitReferenceHistory({ kind: "mask-edit", parts });
-  if (referenceEntry) renderNegativeCanvas(true);
+  if (referenceEntry) {
+    renderNegativeCanvas(false, true);
+    scheduleClosedFillRefresh();
+  }
 
   recalcAnnotationCounts();
   updateMetrics();
