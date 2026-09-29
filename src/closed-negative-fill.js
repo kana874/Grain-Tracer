@@ -13,22 +13,32 @@ function dilateSquare(mask, width, height, radius) {
   for (let y = 0; y < height; y += 1) {
     const base = y * width;
     let active = 0;
+    for (let sx = 0; sx <= Math.min(width - 1, r); sx += 1) {
+      if (mask[base + sx]) active += 1;
+    }
     for (let x = 0; x < width; x += 1) {
-      const addX = x + r;
-      if (addX < width && mask[base + addX]) active += 1;
-      const removeX = x - r - 1;
-      if (removeX >= 0 && mask[base + removeX]) active -= 1;
+      if (x > 0) {
+        const addX = x + r;
+        if (addX < width && mask[base + addX]) active += 1;
+        const removeX = x - r - 1;
+        if (removeX >= 0 && mask[base + removeX]) active -= 1;
+      }
       if (active > 0) horizontal[base + x] = 1;
     }
   }
 
   for (let x = 0; x < width; x += 1) {
     let active = 0;
+    for (let sy = 0; sy <= Math.min(height - 1, r); sy += 1) {
+      if (horizontal[sy * width + x]) active += 1;
+    }
     for (let y = 0; y < height; y += 1) {
-      const addY = y + r;
-      if (addY < height && horizontal[addY * width + x]) active += 1;
-      const removeY = y - r - 1;
-      if (removeY >= 0 && horizontal[removeY * width + x]) active -= 1;
+      if (y > 0) {
+        const addY = y + r;
+        if (addY < height && horizontal[addY * width + x]) active += 1;
+        const removeY = y - r - 1;
+        if (removeY >= 0 && horizontal[removeY * width + x]) active -= 1;
+      }
       if (active > 0) out[y * width + x] = 1;
     }
   }
