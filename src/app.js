@@ -296,8 +296,8 @@ function updateControls() {
   els.annotationAssistButton.disabled = disabled || !hasAnalysis;
   els.topologyButton.disabled = disabled || !hasAnalysis;
   els.gapPreviewButton.disabled = disabled || !hasAnalysis;
-  els.gapApplyButton.disabled = disabled || !state.gapProposal?.acceptedBridgeCount;
-  els.gapRevertButton.disabled = disabled || !state.gapBaseMask;
+  els.gapApplyButton.disabled = disabled || !hasAnalysis || !state.gapProposal?.acceptedBridgeCount;
+  els.gapRevertButton.disabled = disabled || !hasAnalysis || !state.gapBaseMask;
   els.gapMaxDistance.disabled = disabled || !hasAnalysis;
   els.gapAngle.disabled = disabled || !hasAnalysis;
   els.gapMinScore.disabled = disabled || !hasAnalysis;
@@ -622,6 +622,7 @@ function clearLocalCalibration(silent = false) {
   updateLocalCalibrationStatus();
   updateControls();
   if (!silent) {
+    resetGapBridgeState(true);
     state.analysisMask = null;
     invalidateTopology();
     renderNormalOverlay();
@@ -1822,6 +1823,7 @@ async function restoreProject(project, source = "プロジェクト") {
   rebuildExclusionLayer();
   rebuildFullRoiLayer();
   renderHistory();
+  resetGapBridgeState(true);
   state.analysisMask = null;
   invalidateTopology();
   renderNormalOverlay();
@@ -2976,10 +2978,25 @@ els.referenceOpacity.addEventListener("change", () => {
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
 const gapSettingChanged = () => {
+  const wasComparison = state.comparisonMode;
+  const gapWasApplied = Boolean(state.gapBaseMask);
+  if (gapWasApplied) {
+    state.analysisMask = state.gapBaseMask;
+    state.gapBaseMask = null;
+    state.gapApplied = null;
+  }
   clearGapProposal();
   state.lastTopology = null;
   if (els.topologyStatus) {
     els.topologyStatus.textContent = "Topology v2.2: Gap設定変更後は未実行";
+  }
+  if (gapWasApplied && state.analysisMask) {
+    if (wasComparison && hasReference()) compareCurrent(false);
+    else {
+      renderNormalOverlay();
+      updateMetrics();
+    }
+    els.gapStatus.textContent = "Safe Gap: 設定変更のため適用を自動解除しました";
   }
   updateControls();
   scheduleAutosave();
