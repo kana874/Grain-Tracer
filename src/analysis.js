@@ -488,16 +488,63 @@ function scorePredictionFunction(features, helpers, scoreIsPrediction) {
 
 function evaluateRawConfiguration(features, helpers, config) {
   const threshold = thresholdFromSensitivity(config.sensitivity);
-  const weights = normalizeWeights(
-    config.darkWeight,
-    config.ridgeWeight,
-    config.colorWeight,
-    config.dendriteWeight ?? 0,
+  const rawWeights = {
+    dark: Math.max(0, Number(config.darkWeight ?? 0)),
+    ridge: Math.max(0, Number(config.ridgeWeight ?? 0)),
+    color: Math.max(0, Number(config.colorWeight ?? 0)),
+    dendrite: Math.max(0, Number(config.dendriteWeight ?? 0)),
+  };
+  const interiorWeights = normalizeWeights(
+    rawWeights.dark,
+    rawWeights.ridge,
+    rawWeights.color,
+    rawWeights.dendrite,
   );
-  const scoreIsPrediction = p => ((features.dark[p] / 255) * weights.dark
-    + (features.ridge[p] / 255) * weights.ridge
-    + (features.color[p] / 255) * weights.color
-    + ((features.dendrite?.[p] ?? 0) / 255) * weights.dendrite) >= threshold;
+  const margins = features.featureMargins ?? { dark: 0, ridge: 5, color: 7, dendrite: 14 };
+  const maxMargin = Math.max(margins.ridge ?? 0, margins.color ?? 0, margins.dendrite ?? 0);
+  const scoreIsPrediction = p => {
+    const x = p % features.width;
+    const y = Math.floor(p / features.width);
+    if (x < 1 || y < 1 || x >= features.width - 1 || y >= features.height - 1) return false;
+
+    if (x >= maxMargin && y >= maxMargin
+      && x < features.width - maxMargin
+      && y < features.height - maxMargin) {
+      return ((features.dark[p] / 255) * interiorWeights.dark
+        + (features.ridge[p] / 255) * interiorWeights.ridge
+        + (features.color[p] / 255) * interiorWeights.color
+        + ((features.dendrite?.[p] ?? 0) / 255) * interiorWeights.dendrite) >= threshold;
+    }
+
+    let scoreSum = 0;
+    let weightSum = 0;
+    if (rawWeights.dark > 0) {
+      scoreSum += (features.dark[p] / 255) * rawWeights.dark;
+      weightSum += rawWeights.dark;
+    }
+    if (rawWeights.ridge > 0
+      && x >= (margins.ridge ?? 0) && y >= (margins.ridge ?? 0)
+      && x < features.width - (margins.ridge ?? 0)
+      && y < features.height - (margins.ridge ?? 0)) {
+      scoreSum += (features.ridge[p] / 255) * rawWeights.ridge;
+      weightSum += rawWeights.ridge;
+    }
+    if (rawWeights.color > 0
+      && x >= (margins.color ?? 0) && y >= (margins.color ?? 0)
+      && x < features.width - (margins.color ?? 0)
+      && y < features.height - (margins.color ?? 0)) {
+      scoreSum += (features.color[p] / 255) * rawWeights.color;
+      weightSum += rawWeights.color;
+    }
+    if (rawWeights.dendrite > 0
+      && x >= (margins.dendrite ?? 0) && y >= (margins.dendrite ?? 0)
+      && x < features.width - (margins.dendrite ?? 0)
+      && y < features.height - (margins.dendrite ?? 0)) {
+      scoreSum += ((features.dendrite?.[p] ?? 0) / 255) * rawWeights.dendrite;
+      weightSum += rawWeights.dendrite;
+    }
+    return weightSum > 0 && scoreSum / weightSum >= threshold;
+  };
   return scorePredictionFunction(features, helpers, scoreIsPrediction);
 }
 
