@@ -117,6 +117,7 @@ const els = {
   localWindow: $("localWindow"),
   referenceBrush: $("referenceBrush"),
   referenceOpacity: $("referenceOpacity"),
+  borderAssistedFill: $("borderAssistedFill"),
   reviewRadius: $("reviewRadius"),
   metricPositiveRecall: $("metricPositiveRecall"),
   metricNegativeLeakage: $("metricNegativeLeakage"),
@@ -170,9 +171,12 @@ const state = {
   negativeCenterline: null,
   negativeCount: 0,
   closedNegativeMask: null,
+  borderAssistedNegativeMask: null,
   closedNegativeRegionIndex: null,
   closedNegativeSeeds: [],
   closedNegativeCount: 0,
+  borderAssistedNegativeCount: 0,
+  borderAssistedSeedCount: 0,
   closedNegativeValidCount: 0,
   closedNegativeInvalidCount: 0,
   closedNegativeDirty: false,
@@ -529,6 +533,7 @@ function currentSettings() {
     referenceBrush: normalizedReferenceWidth(),
     referenceOpacity: Number(els.referenceOpacity.value),
     overlayOpacity: Number(els.overlayOpacity.value),
+    borderAssistedFill: els.borderAssistedFill.checked,
     autosaveEnabled: els.autosaveEnabled.checked,
   };
 }
@@ -564,6 +569,7 @@ function applySettings(settings = {}) {
   }
   if (settings.referenceOpacity != null) setRangeValue(els.referenceOpacity, settings.referenceOpacity);
   if (settings.overlayOpacity != null) setRangeValue(els.overlayOpacity, settings.overlayOpacity);
+  if (settings.borderAssistedFill != null) els.borderAssistedFill.checked = Boolean(settings.borderAssistedFill);
   if (settings.autosaveEnabled != null) els.autosaveEnabled.checked = Boolean(settings.autosaveEnabled);
   invalidateFeatures();
 }
@@ -625,7 +631,7 @@ function setOverlayPeekHidden(hidden) {
 
 function invalidateTopology() {
   state.lastTopology = null;
-  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2: 未実行";
+  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2.1: 未実行";
 }
 
 function topologyRateText(value) {
@@ -635,7 +641,7 @@ function topologyRateText(value) {
 function updateTopologyStatus(result = state.lastTopology) {
   if (!els.topologyStatus) return;
   if (!result) {
-    els.topologyStatus.textContent = "Topology: 未実行";
+    els.topologyStatus.textContent = "Topology v2.1: 未実行";
     return;
   }
   const closure = result.regionClosure;
@@ -643,6 +649,7 @@ function updateTopologyStatus(result = state.lastTopology) {
   const r2 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 2);
   const r3 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 3);
   const endpoint = result.endpointProxy;
+  const gap = result.shortGapCandidates;
   const regionCount = closure?.coreRegionCount || r0?.regionCount || 0;
   const label = closure?.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
   const closureText = regionCount
@@ -651,8 +658,29 @@ function updateTopologyStatus(result = state.lastTopology) {
   const coverageText = r2?.coveredCorePixelFraction
     ? ` / Core被覆@2px ${topologyRateText(r2.coveredCorePixelFraction)}`
     : "";
+  const borderText = (r0?.borderAssistedRegions ?? 0)
+    ? ` / 端部Core ${r0.borderAssistedClosedRegions ?? 0}/${r0.borderAssistedRegions}`
+    : "";
+  const gapText = gap
+    ? ` / Short-gap候補 ${gap.candidateCount.toLocaleString()}件`
+    : "";
   els.topologyStatus.textContent =
-    `Topology v2: ${closureText}${coverageText} / Endpoint proxy ${endpoint?.endpointPixels?.toLocaleString?.() ?? endpoint?.endpointPixels ?? 0}`;
+    `Topology v2.1: ${closureText}${coverageText}${borderText}${gapText} / Endpoint proxy ${endpoint?.endpointPixels?.toLocaleString?.() ?? endpoint?.endpointPixels ?? 0}`;
+}
+
+function topologyOptions() {
+  return {
+    bridgeRadii: [0, 1, 2, 3],
+    endpointEdgeMargin: 3,
+    closedNegativeMask: state.closedNegativeMask,
+    borderAssistedMask: state.borderAssistedNegativeMask,
+    coreErosionRadius: 2,
+    minCorePixels: 12,
+    maxBorderLeakAreaRatio: 2.0,
+    maxGapDistance: 4.25,
+    maxGapAngleDeg: 40,
+    maxGapCandidates: 120,
+  };
 }
 
 async function runTopologyDiagnostics() {
@@ -660,7 +688,7 @@ async function runTopologyDiagnostics() {
   ensureClosedNegativeFresh();
   setBusy(true);
   try {
-    setStatus("Topology v2診断中... 閉領域Coreと短いgapを確認しています。", 10);
+    setStatus("Topology v2.1診断中... Core閉鎖・画像端・短いgapを確認しています。", 10);
     await new Promise(resolve => setTimeout(resolve, 0));
     const startedAt = nowMs();
     const result = computeBoundaryTopology(
@@ -668,13 +696,7 @@ async function runTopologyDiagnostics() {
       state.preview.width,
       state.preview.height,
       state.closedNegativeSeeds,
-      {
-        bridgeRadii: [0, 1, 2, 3],
-        endpointEdgeMargin: 3,
-        closedNegativeMask: state.closedNegativeMask,
-        coreErosionRadius: 2,
-        minCorePixels: 12,
-      },
+      topologyOptions(),
     );
     recordPerformance("topologyMs", startedAt);
     state.lastTopology = result;
@@ -683,8 +705,9 @@ async function runTopologyDiagnostics() {
     const r0 = closure.closureByBridgeRadius.find(item => item.bridgeRadius === 0);
     const r2 = closure.closureByBridgeRadius.find(item => item.bridgeRadius === 2);
     const basis = closure.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
+    const gapCount = result.shortGapCandidates?.candidateCount ?? 0;
     setStatus(
-      `Topology v2完了: ${basis} 0px ${topologyRateText(r0?.closureRate)} → 2px ${topologyRateText(r2?.closureRate)} / Endpoint proxy ${result.endpointProxy.endpointPixels.toLocaleString()} / ${state.performance.topologyMs.toFixed(0)} ms`,
+      `Topology v2.1完了: ${basis} 0px ${topologyRateText(r0?.closureRate)} → 2px ${topologyRateText(r2?.closureRate)} / Short-gap候補 ${gapCount.toLocaleString()}件 / Endpoint proxy ${result.endpointProxy.endpointPixels.toLocaleString()} / ${state.performance.topologyMs.toFixed(0)} ms`,
       100,
     );
     return result;
@@ -893,6 +916,9 @@ function closedNegativeFillOptions() {
   return {
     safetyRadius: 3,
     maxAreaFraction: 0.35,
+    borderMaxAreaFraction: 0.12,
+    maxBorderSides: 2,
+    minBorderReferenceContactPixels: 8,
     minPixels: 12,
   };
 }
@@ -905,7 +931,14 @@ function rebuildClosedNegativeState() {
     } else {
       state.closedNegativeMask.fill(0);
     }
+    if (!state.borderAssistedNegativeMask || state.borderAssistedNegativeMask.length !== state.preview.width * state.preview.height) {
+      state.borderAssistedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
+    } else {
+      state.borderAssistedNegativeMask.fill(0);
+    }
     state.closedNegativeCount = 0;
+    state.borderAssistedNegativeCount = 0;
+    state.borderAssistedSeedCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
     state.closedNegativeDirty = false;
@@ -924,7 +957,10 @@ function rebuildClosedNegativeState() {
   );
   state.closedNegativeRegionIndex = rebuilt.regionIndex ?? null;
   state.closedNegativeMask = rebuilt.mask;
+  state.borderAssistedNegativeMask = rebuilt.borderAssistedMask ?? new Uint8Array(state.preview.width * state.preview.height);
   state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
+  state.borderAssistedNegativeCount = rebuilt.borderAssistedPixels ?? countMaskPixels(state.borderAssistedNegativeMask);
+  state.borderAssistedSeedCount = rebuilt.borderAssistedCount ?? 0;
   state.closedNegativeValidCount = rebuilt.validCount;
   state.closedNegativeInvalidCount = rebuilt.invalidCount;
   state.closedNegativeDirty = false;
@@ -1061,13 +1097,15 @@ function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
 function updateAnnotationStatus() {
   const manualNegative = state.negativeCount ?? 0;
   const closedNegative = state.closedNegativeCount ?? 0;
+  const borderNegative = state.borderAssistedNegativeCount ?? 0;
+  const borderSeeds = state.borderAssistedSeedCount ?? 0;
   const combinedNegative = state.combinedNegativeCount ?? 0;
   const excluded = state.exclusionPixelCount ?? 0;
   const invalidFillText = state.closedNegativeInvalidCount
     ? ` / 無効seed ${state.closedNegativeInvalidCount}`
     : "";
   els.annotationStatus.textContent =
-    `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${state.fullEvaluationRois.length}領域`;
+    `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px) / 画像端Fill: ${borderSeeds}領域 (${borderNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${state.fullEvaluationRois.length}領域`;
 }
 
 function resetReferenceHistory() {
@@ -1473,8 +1511,11 @@ async function restoreProject(project, source = "プロジェクト") {
   state.negativeCenterline = masks.negativeCenterline;
   state.closedNegativeSeeds = masks.closedNegativeSeeds ?? [];
   state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
+  state.borderAssistedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
   state.closedNegativeRegionIndex = null;
   state.closedNegativeCount = 0;
+  state.borderAssistedNegativeCount = 0;
+  state.borderAssistedSeedCount = 0;
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
   state.exclusionRects = masks.exclusionRects;
@@ -1542,13 +1583,7 @@ async function exportDiagnostics() {
         state.preview.width,
         state.preview.height,
         state.closedNegativeSeeds,
-        {
-          bridgeRadii: [0, 1, 2, 3],
-          endpointEdgeMargin: 3,
-          closedNegativeMask: state.closedNegativeMask,
-          coreErosionRadius: 2,
-          minCorePixels: 12,
-        },
+        topologyOptions(),
       );
       recordPerformance("topologyMs", topologyStartedAt);
       state.lastTopology = topology;
@@ -1574,6 +1609,7 @@ async function exportDiagnostics() {
       negativeMask: state.negativeMask,
       negativeCenterline: state.negativeCenterline,
       closedNegativeMask: state.closedNegativeMask,
+      borderAssistedNegativeMask: state.borderAssistedNegativeMask,
       closedNegativeSeeds: state.closedNegativeSeeds,
       negativeHoldout,
       exclusionMask: state.exclusionMask,
@@ -1713,9 +1749,12 @@ async function loadBmp(file) {
   state.manualNegativeMask = null;
   state.negativeCenterline = null;
   state.closedNegativeMask = null;
+  state.borderAssistedNegativeMask = null;
   state.closedNegativeRegionIndex = null;
   state.closedNegativeSeeds = [];
   state.closedNegativeCount = 0;
+  state.borderAssistedNegativeCount = 0;
+  state.borderAssistedSeedCount = 0;
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
   state.closedNegativeDirty = false;
@@ -1757,9 +1796,12 @@ async function loadBmp(file) {
     state.manualNegativeMask = new Uint8Array(preview.width * preview.height);
     state.negativeCenterline = new Uint8Array(preview.width * preview.height);
     state.closedNegativeMask = new Uint8Array(preview.width * preview.height);
+    state.borderAssistedNegativeMask = new Uint8Array(preview.width * preview.height);
     state.closedNegativeRegionIndex = null;
     state.closedNegativeSeeds = [];
     state.closedNegativeCount = 0;
+    state.borderAssistedNegativeCount = 0;
+    state.borderAssistedSeedCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
     state.closedNegativeDirty = false;
@@ -1814,6 +1856,8 @@ async function loadBmp(file) {
     state.closedNegativeRegionIndex = null;
     state.closedNegativeSeeds = [];
     state.closedNegativeCount = 0;
+    state.borderAssistedNegativeCount = 0;
+    state.borderAssistedSeedCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
     state.closedNegativeDirty = false;
@@ -2186,6 +2230,9 @@ function closedFillFailureMessage(reason) {
   if (reason === "seed-on-boundary") return "黄色のお手本線上では閉領域Fillできません。粒の内側をクリックしてください。";
   if (reason === "open-region") return "閉領域ではありません。黄色のお手本線が完全に閉じているか確認してください。";
   if (reason === "region-too-large") return "閉領域が大きすぎるため安全のためFillしませんでした。";
+  if (reason === "border-region-too-large") return "画像端を使う領域が大きすぎるため安全のためFillしませんでした。黄色線を追加して領域を絞ってください。";
+  if (reason === "border-too-many-sides") return "画像端への接触範囲が広すぎます。1辺または隣接する2辺と黄色線で囲った領域だけを許可します。";
+  if (reason === "border-insufficient-reference") return "画像端だけで囲われており、黄色のお手本線との接触が不足しています。黄色線を追加してください。";
   if (reason === "region-too-small") return "閉領域が小さすぎるためFillしませんでした。";
   if (reason === "duplicate-region") return "この閉領域はすでに非粒界Fillされています。";
   return "この位置では閉領域Fillできませんでした。";
@@ -2196,7 +2243,11 @@ function addClosedNegativeFill(event) {
   const annotationStartedAt = nowMs();
   const point = eventToPreviewPoint(event);
   if (!point) return false;
-  const seed = { x: Math.round(point.x), y: Math.round(point.y) };
+  const seed = {
+    x: Math.round(point.x),
+    y: Math.round(point.y),
+    borderAssisted: Boolean(els.borderAssistedFill.checked),
+  };
   const p = seed.y * state.preview.width + seed.x;
 
   if (state.closedNegativeSeeds.some(item => item.x === seed.x && item.y === seed.y)) {
@@ -2229,7 +2280,10 @@ function addClosedNegativeFill(event) {
   state.closedNegativeSeeds.push(seed);
   state.closedNegativeRegionIndex = rebuilt.regionIndex ?? state.closedNegativeRegionIndex;
   state.closedNegativeMask = rebuilt.mask;
+  state.borderAssistedNegativeMask = rebuilt.borderAssistedMask ?? new Uint8Array(state.preview.width * state.preview.height);
   state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
+  state.borderAssistedNegativeCount = rebuilt.borderAssistedPixels ?? countMaskPixels(state.borderAssistedNegativeMask);
+  state.borderAssistedSeedCount = rebuilt.borderAssistedCount ?? 0;
   state.closedNegativeValidCount = rebuilt.validCount;
   state.closedNegativeInvalidCount = rebuilt.invalidCount;
   state.closedNegativeDirty = false;
@@ -2255,7 +2309,7 @@ function addClosedNegativeFill(event) {
   updateControls();
   recordPerformance("annotationCommitMs", annotationStartedAt);
   setStatus(
-    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域 / rebuild ${state.performance.closedFillRebuildMs?.toFixed(0) ?? "-"} ms / total ${state.performance.annotationCommitMs?.toFixed(0) ?? "-"} ms。Undoで取り消せます。`,
+    `${result.usesImageBorder ? "画像端＋お手本線" : "閉領域"}を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域 / rebuild ${state.performance.closedFillRebuildMs?.toFixed(0) ?? "-"} ms / total ${state.performance.annotationCommitMs?.toFixed(0) ?? "-"} ms。Undoで取り消せます。`,
   );
   scheduleAutosave();
   return true;
@@ -2625,6 +2679,7 @@ els.referenceOpacity.addEventListener("change", () => {
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
 els.localEnabled.addEventListener("change", featureSettingChanged);
+els.borderAssistedFill.addEventListener("change", scheduleAutosave);
 els.autosaveEnabled.addEventListener("change", () => {
   if (els.autosaveEnabled.checked) scheduleAutosave();
   else {
