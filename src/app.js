@@ -1172,16 +1172,48 @@ function buildProject() {
   });
 }
 
-function scheduleAutosave() {
+function cancelScheduledAutosave() {
   clearTimeout(state.autosaveTimer);
+  state.autosaveTimer = null;
+  if (state.autosaveIdleHandle != null && "cancelIdleCallback" in window) {
+    window.cancelIdleCallback(state.autosaveIdleHandle);
+  }
+  state.autosaveIdleHandle = null;
+}
+
+async function performAutosave() {
+  state.autosaveIdleHandle = null;
   if (!els.autosaveEnabled.checked || !state.sourceFingerprint || !state.preview) return;
-  state.autosaveTimer = setTimeout(async () => {
-    try {
-      await saveAutosave(state.sourceFingerprint, buildProject());
-      els.projectStatus.textContent = `自動保存済み ${new Date().toLocaleTimeString("ja-JP")}`;
-    } catch (error) {
-      console.warn("autosave failed", error);
-      els.projectStatus.textContent = "自動保存に失敗しました";
+  try {
+    const serializeStartedAt = nowMs();
+    const project = buildProject();
+    state.performance.autosaveSerializeMs = Math.max(0, nowMs() - serializeStartedAt);
+
+    const writeStartedAt = nowMs();
+    await saveAutosave(state.sourceFingerprint, project);
+    state.performance.autosaveWriteMs = Math.max(0, nowMs() - writeStartedAt);
+    els.projectStatus.textContent = `自動保存済み ${new Date().toLocaleTimeString("ja-JP")} / ${state.performance.autosaveSerializeMs.toFixed(0)}+${state.performance.autosaveWriteMs.toFixed(0)} ms`;
+  } catch (error) {
+    console.warn("autosave failed", error);
+    els.projectStatus.textContent = "自動保存に失敗しました";
+  }
+}
+
+function scheduleAutosave() {
+  cancelScheduledAutosave();
+  if (!els.autosaveEnabled.checked || !state.sourceFingerprint || !state.preview) return;
+  state.autosaveTimer = setTimeout(() => {
+    state.autosaveTimer = null;
+    if ("requestIdleCallback" in window) {
+      state.autosaveIdleHandle = window.requestIdleCallback(
+        () => { performAutosave(); },
+        { timeout: 1500 },
+      );
+    } else {
+      state.autosaveIdleHandle = setTimeout(() => {
+        state.autosaveIdleHandle = null;
+        performAutosave();
+      }, 0);
     }
   }, 700);
 }
@@ -2235,7 +2267,13 @@ bindRange(els.referenceOpacity, $("referenceOpacityValue"), () => {
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
 els.localEnabled.addEventListener("change", featureSettingChanged);
-els.autosaveEnabled.addEventListener("change", () => { if (els.autosaveEnabled.checked) scheduleAutosave(); else els.projectStatus.textContent = "自動保存OFF"; });
+els.autosaveEnabled.addEventListener("change", () => {
+  if (els.autosaveEnabled.checked) scheduleAutosave();
+  else {
+    cancelScheduledAutosave();
+    els.projectStatus.textContent = "自動保存OFF";
+  }
+});
 
 for (const type of ["dragenter", "dragover"]) {
   els.dropZone.addEventListener(type, event => { event.preventDefault(); els.dropZone.classList.add("dragover"); });
