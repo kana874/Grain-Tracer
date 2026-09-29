@@ -540,6 +540,7 @@ function clearLocalCalibration(silent = false) {
   updateControls();
   if (!silent) {
     state.analysisMask = null;
+    invalidateTopology();
     renderNormalOverlay();
     updateMetrics();
     setStatus("局所補正を解除しました。再度粒界抽出してください。");
