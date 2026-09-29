@@ -1111,6 +1111,7 @@ function buildProject() {
     referenceMask: state.referenceMask,
     referenceCenterline: state.referenceCenterline,
     negativeMask: state.negativeMask,
+    manualNegativeMask: state.manualNegativeMask,
     negativeCenterline: state.negativeCenterline,
     closedNegativeSeeds: state.closedNegativeSeeds,
     exclusionRects: state.exclusionRects,
