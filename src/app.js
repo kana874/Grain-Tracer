@@ -165,6 +165,7 @@ const state = {
   negativeCenterline: null,
   negativeCount: 0,
   closedNegativeMask: null,
+  closedNegativeRegionIndex: null,
   closedNegativeSeeds: [],
   closedNegativeCount: 0,
   closedNegativeValidCount: 0,
@@ -711,14 +712,17 @@ function renderNormalOverlay() {
   updateControls();
 }
 
-function renderReferenceCanvas() {
+function renderReferenceCanvas(rebuildMask = true) {
   if (!state.preview || !state.referenceCenterline) return;
-  state.referenceMask = dilateBinaryMask(
-    state.referenceCenterline,
-    state.preview.width,
-    state.preview.height,
-    referenceJudgementRadius(),
-  );
+  if (rebuildMask) {
+    state.referenceMask = dilateBinaryMask(
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      referenceJudgementRadius(),
+    );
+    state.closedNegativeRegionIndex = null;
+  }
   const rgba = new Uint8ClampedArray(state.referenceMask.length * 4);
   for (let p = 0; p < state.referenceMask.length; p += 1) {
     if (!state.referenceMask[p]) continue;
@@ -748,7 +752,10 @@ function rebuildClosedNegativeState() {
     state.preview.height,
     state.closedNegativeSeeds,
     closedNegativeFillOptions(),
+    state.closedNegativeRegionIndex,
   );
+  state.closedNegativeRegionIndex = rebuilt.regionIndex ?? null;
+  state.closedNegativeRegionIndex = rebuilt.regionIndex ?? state.closedNegativeRegionIndex;
   state.closedNegativeMask = rebuilt.mask;
   state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
   state.closedNegativeValidCount = rebuilt.validCount;
@@ -767,14 +774,16 @@ function rebuildCombinedNegativeMask() {
   state.combinedNegativeCount = countMaskPixels(state.negativeMask);
 }
 
-function renderNegativeCanvas(rebuildClosed = true) {
+function renderNegativeCanvas(rebuildClosed = true, rebuildManual = true) {
   if (!state.preview || !state.negativeCenterline) return;
-  state.manualNegativeMask = dilateBinaryMask(
-    state.negativeCenterline,
-    state.preview.width,
-    state.preview.height,
-    referenceJudgementRadius(),
-  );
+  if (rebuildManual) {
+    state.manualNegativeMask = dilateBinaryMask(
+      state.negativeCenterline,
+      state.preview.width,
+      state.preview.height,
+      referenceJudgementRadius(),
+    );
+  }
   if (rebuildClosed) rebuildClosedNegativeState();
   rebuildCombinedNegativeMask();
   renderBinaryMaskCanvas(
@@ -854,6 +863,7 @@ function referenceOpacityRatio() {
 
 function refreshReferenceDirty(changedBounds) {
   if (!state.preview || !state.referenceCenterline || !state.referenceMask || !changedBounds) return;
+  state.closedNegativeRegionIndex = null;
   const dirty = rebuildReferenceMaskRegion(
     state.referenceCenterline,
     state.referenceMask,
@@ -1911,6 +1921,7 @@ function addClosedNegativeFill(event) {
     state.preview.height,
     candidateSeeds,
     closedNegativeFillOptions(),
+    state.closedNegativeRegionIndex,
   );
   const result = rebuilt.results[rebuilt.results.length - 1];
   if (!result?.accepted) {
