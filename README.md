@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6.1-alpha / boundary-v4-dendrite-negref**
+**v0.3.6.2-alpha / boundary-v4-dendrite-negref**
 
 Current capabilities:
 
@@ -20,6 +20,9 @@ Current capabilities:
 - user-labelled non-boundary examples for explicit false-positive suppression during tuning
 - click-to-fill closed grain interiors as high-confidence non-boundary examples, with a 3 px safety band from the positive reference
 - closed-region fill seeds persisted in project JSON and regenerated from the current positive reference geometry
+- closed-region fill acceleration using one connected-region index per positive-reference geometry, reused across seed operations
+- middle-button drag temporary pan in every annotation tool without changing the active tool
+- idle-time IndexedDB autosave and diagnostic performance timings for feature extraction, analysis, comparison, Auto Tune, annotation, fill rebuild, and autosave
 - Partial Label evaluation: Positive / Negative / Unknown, with unlabelled predictions excluded from false-positive counts
 - whole-image Positive Recall / Negative Leakage / Alignment Error metrics
 - 4x4 region-balanced Macro Negative Leakage for spatially balanced Partial Label tuning
