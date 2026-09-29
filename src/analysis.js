@@ -826,6 +826,31 @@ async function optimizeMinComponent(features, referenceCenterline, config, optio
   return { ...best, mask: bestMask };
 }
 
+
+function evaluateProcessedConfiguration(features, referenceCenterline, config, options, helpers) {
+  const candidates = buildBoundaryCandidates(features, {
+    ...config,
+    edgeFrameGuard: options.edgeFrameGuard ?? 1,
+  });
+  applyExclusionInPlace(candidates.mask, options.exclusionMask);
+  const raw = config.centerlineNms === false
+    ? candidates.mask
+    : applyDirectionalNonMaximumSuppression(candidates.mask, candidates.score, features, config);
+  applyExclusionInPlace(raw, options.exclusionMask);
+  const mask = applyMinComponent(
+    raw,
+    features.width,
+    features.height,
+    config.minComponent ?? 24,
+  );
+  applyExclusionInPlace(mask, options.exclusionMask);
+  return {
+    ...scoreProcessedMask(mask, referenceCenterline, features, options, helpers),
+    parameters: { ...config },
+    mask,
+  };
+}
+
 function compactObjective(objective) {
   return {
     mode: objective.objectiveMode,
@@ -870,9 +895,12 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   }
 
   const search = {
-    version: 2,
-    strategy: "coordinate-descent",
+    version: 3,
+    strategy: "coordinate-descent-processed-guard",
     objectiveMode: helpers.objectiveMode,
+    coordinateEvaluation: "raw-proposal-with-processed-acceptance",
+    processedEvaluation: "post-nms-neighbor-support-min-component",
+    ablationEvaluation: "post-nms-neighbor-support-min-component",
     rounds: [],
     ablation: [],
   };
@@ -899,6 +927,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   onProgress(completedPhases / totalPhases);
 
   let working = { ...globalBest.parameters };
+  let processedWorking = globalBest;
   const coordinates = ["sensitivity", "darkWeight", "ridgeWeight", "colorWeight", "dendriteWeight"];
 
   for (let round = 0; round < maxRounds; round += 1) {
@@ -930,12 +959,34 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
       }
 
       const previousValue = working[coordinate];
-      working = { ...working, [coordinate]: bestRaw.parameters[coordinate] };
-      if (working[coordinate] !== previousValue) anyCoordinateChanged = true;
+      const rawSelectedValue = bestRaw.parameters[coordinate];
+      let acceptedByProcessed = rawSelectedValue === previousValue;
+      let processedCandidate = null;
+
+      if (rawSelectedValue !== previousValue) {
+        const proposedConfig = { ...working, [coordinate]: rawSelectedValue };
+        processedCandidate = evaluateProcessedConfiguration(
+          features,
+          referenceCenterline,
+          proposedConfig,
+          options,
+          helpers,
+        );
+        if (betterTuneScore(processedCandidate, processedWorking)) {
+          working = proposedConfig;
+          processedWorking = processedCandidate;
+          acceptedByProcessed = true;
+          anyCoordinateChanged = true;
+        }
+      }
+
       roundTrace.coordinates.push({
         name: coordinate,
         previousValue,
+        rawSelectedValue,
         selectedValue: working[coordinate],
+        acceptedByProcessed,
+        processedObjective: compactObjective(processedCandidate ?? processedWorking),
         candidates,
       });
       completedPhases += 1;
@@ -960,9 +1011,11 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     if (betterTuneScore(processed, globalBest)) {
       globalBest = processed;
       working = { ...processed.parameters };
+      processedWorking = processed;
       roundTrace.accepted = true;
     } else {
       working = { ...globalBest.parameters };
+      processedWorking = globalBest;
       roundTrace.accepted = false;
       roundTrace.revertedTo = { ...working };
     }
@@ -983,7 +1036,9 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     const [label, feature] = ablations[i];
     const config = { ...globalBest.parameters };
     if (feature) config[feature] = 0;
-    const objective = evaluateRawConfiguration(features, helpers, config);
+    const objective = feature
+      ? evaluateProcessedConfiguration(features, referenceCenterline, config, options, helpers)
+      : globalBest;
     search.ablation.push({
       label,
       disabledFeature: feature,
@@ -992,6 +1047,8 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
         ridgeWeight: config.ridgeWeight,
         colorWeight: config.colorWeight,
         dendriteWeight: config.dendriteWeight,
+        minComponent: config.minComponent,
+        centerlineNms: config.centerlineNms,
       },
       objective: compactObjective(objective),
     });
