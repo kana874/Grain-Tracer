@@ -51,6 +51,11 @@ import {
   renderFullEvaluationRoiCanvas,
   transformRect,
 } from "./annotations.js";
+import {
+  combineNegativeMasks,
+  fillClosedNegativeRegion,
+  rebuildClosedNegativeMask,
+} from "./closed-negative-fill.js";
 
 const $ = id => document.getElementById(id);
 
@@ -70,6 +75,7 @@ const els = {
   panToolButton: $("panToolButton"),
   referenceToolButton: $("referenceToolButton"),
   negativeToolButton: $("negativeToolButton"),
+  closedNegativeFillToolButton: $("closedNegativeFillToolButton"),
   eraseReferenceToolButton: $("eraseReferenceToolButton"),
   exclusionToolButton: $("exclusionToolButton"),
   fullRoiToolButton: $("fullRoiToolButton"),
@@ -110,6 +116,7 @@ const els = {
   reviewRadius: $("reviewRadius"),
   metricPositiveRecall: $("metricPositiveRecall"),
   metricNegativeLeakage: $("metricNegativeLeakage"),
+  metricMacroNegativeLeakage: $("metricMacroNegativeLeakage"),
   metricAlignment: $("metricAlignment"),
   metricDetail: $("metricDetail"),
   fullRoiMetrics: $("fullRoiMetrics"),
@@ -152,8 +159,14 @@ const state = {
   referenceCenterline: null,
   referenceCount: 0,
   negativeMask: null,
+  manualNegativeMask: null,
   negativeCenterline: null,
   negativeCount: 0,
+  closedNegativeMask: null,
+  closedNegativeSeeds: [],
+  closedNegativeCount: 0,
+  closedNegativeValidCount: 0,
+  closedNegativeInvalidCount: 0,
   exclusionRects: [],
   exclusionMask: null,
   fullEvaluationRois: [],
@@ -187,7 +200,7 @@ function hasReference() {
 }
 
 function hasNegativeReference() {
-  return state.negativeCount > 0;
+  return state.negativeCount > 0 || state.closedNegativeCount > 0;
 }
 
 function hasExclusions() {
@@ -211,6 +224,7 @@ function updateControls() {
   els.panToolButton.disabled = disabled || !hasPreview;
   els.referenceToolButton.disabled = disabled || !hasPreview;
   els.negativeToolButton.disabled = disabled || !hasPreview;
+  els.closedNegativeFillToolButton.disabled = disabled || !hasPreview || !hasRef;
   els.eraseReferenceToolButton.disabled = disabled || !hasPreview || (!hasRef && !hasNegativeReference());
   els.exclusionToolButton.disabled = disabled || !hasPreview;
   els.fullRoiToolButton.disabled = disabled || !hasPreview;
@@ -1621,6 +1635,7 @@ function setTool(tool) {
   els.panToolButton.classList.toggle("active", tool === "pan");
   els.referenceToolButton.classList.toggle("active", tool === "reference");
   els.negativeToolButton.classList.toggle("active", tool === "negative-reference");
+  els.closedNegativeFillToolButton.classList.toggle("active", tool === "closed-negative-fill");
   els.eraseReferenceToolButton.classList.toggle("active", tool === "erase-reference");
   els.exclusionToolButton.classList.toggle("active", tool === "exclusion");
   els.fullRoiToolButton.classList.toggle("active", tool === "full-roi");
