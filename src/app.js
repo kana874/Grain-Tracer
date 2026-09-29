@@ -1796,6 +1796,11 @@ function addClosedNegativeFill(event) {
   const seed = { x: Math.round(point.x), y: Math.round(point.y) };
   const p = seed.y * state.preview.width + seed.x;
 
+  if (state.closedNegativeSeeds.some(item => item.x === seed.x && item.y === seed.y)) {
+    setStatus("この位置はすでに閉領域Fillのseedとして登録されています。");
+    return false;
+  }
+
   if (state.closedNegativeMask?.[p]) {
     setStatus("この閉領域はすでに非粒界Fillされています。");
     return false;
