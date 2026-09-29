@@ -226,6 +226,7 @@ function performanceSnapshot() {
     ...state.performance,
     previewPixels: state.preview ? state.preview.width * state.preview.height : 0,
     closedFillSeedCount: state.closedNegativeSeeds.length,
+    borderAssistedFillSeedCount: state.closedNegativeSeeds.filter(seed => seed?.borderAssisted).length,
   };
 }
 
@@ -275,6 +276,7 @@ function updateControls() {
   const hasRef = hasReference();
   const disabled = state.busy;
   els.fileInput.disabled = disabled;
+  els.borderAssistedFill.disabled = disabled || !hasPreview;
   els.analyzeButton.disabled = disabled || !hasPreview;
   els.fitButton.disabled = disabled || !hasPreview;
   els.actualButton.disabled = disabled || !hasPreview;
@@ -1853,6 +1855,7 @@ async function loadBmp(file) {
     state.manualNegativeMask = null;
     state.negativeCenterline = null;
     state.closedNegativeMask = null;
+    state.borderAssistedNegativeMask = null;
     state.closedNegativeRegionIndex = null;
     state.closedNegativeSeeds = [];
     state.closedNegativeCount = 0;
