@@ -1,7 +1,7 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.6.4-alpha";
-export const ALGORITHM_VERSION = "boundary-v6-nms-edge-negref";
+export const APP_VERSION = "0.3.6.5-alpha";
+export const ALGORITHM_VERSION = "boundary-v7-continuous-nms-border-negref";
 
 export function packBinaryMask(mask) {
   const bytes = new Uint8Array(Math.ceil(mask.length / 8));
@@ -84,6 +84,7 @@ export function createProjectSnapshot(input) {
       closedFillSeeds: (closedNegativeSeeds ?? []).map(seed => ({
         x: Math.round(seed.x),
         y: Math.round(seed.y),
+        borderAssisted: Boolean(seed.borderAssisted),
       })),
     },
     exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
@@ -112,6 +113,7 @@ export function restoreReferenceMasks(project) {
       ? project.nonBoundary.closedFillSeeds.map(seed => ({
         x: Math.round(Number(seed.x)),
         y: Math.round(Number(seed.y)),
+        borderAssisted: Boolean(seed.borderAssisted),
       })).filter(seed => Number.isFinite(seed.x) && Number.isFinite(seed.y))
       : [],
     exclusionRects: Array.isArray(project.exclusionRects)

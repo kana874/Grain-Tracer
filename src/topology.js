@@ -40,121 +40,100 @@ function countInteriorEndpointProxy(mask, width, height, edgeMargin = 3) {
   };
 }
 
-function buildEdgeReachableMask(wall, width, height) {
-  const reachable = new Uint8Array(wall.length);
-  const queue = new Int32Array(wall.length);
-  let head = 0;
-  let tail = 0;
-
-  const push = p => {
-    if (wall[p] || reachable[p]) return;
-    reachable[p] = 1;
-    queue[tail++] = p;
-  };
-
-  for (let x = 0; x < width; x += 1) {
-    push(x);
-    push((height - 1) * width + x);
-  }
-  for (let y = 1; y < height - 1; y += 1) {
-    push(y * width);
-    push(y * width + width - 1);
-  }
-
-  while (head < tail) {
-    const p = queue[head++];
-    const x = p % width;
-    const y = Math.floor(p / width);
-    if (x > 0) push(p - 1);
-    if (x + 1 < width) push(p + 1);
-    if (y > 0) push(p - width);
-    if (y + 1 < height) push(p + width);
-  }
-
-  return reachable;
-}
-
 function erodeSquare(mask, width, height, radius) {
   const r = Math.max(0, Math.round(radius ?? 0));
   if (!r) return mask.slice();
   const span = r * 2 + 1;
   const horizontal = new Uint8Array(mask.length);
   const output = new Uint8Array(mask.length);
+  const prefix = new Uint32Array(Math.max(width, height) + 1);
 
   for (let y = 0; y < height; y += 1) {
     const base = y * width;
-    let sum = 0;
+    prefix[0] = 0;
     for (let x = 0; x < width; x += 1) {
-      const addX = x + r;
-      if (addX < width) sum += mask[base + addX] ? 1 : 0;
-      const removeX = x - r - 1;
-      if (removeX >= 0) sum -= mask[base + removeX] ? 1 : 0;
-      if (x >= r && x < width - r && sum === span) horizontal[base + x] = 1;
+      prefix[x + 1] = prefix[x] + (mask[base + x] ? 1 : 0);
+    }
+    for (let x = r; x < width - r; x += 1) {
+      const sum = prefix[x + r + 1] - prefix[x - r];
+      if (sum === span) horizontal[base + x] = 1;
     }
   }
 
   for (let x = 0; x < width; x += 1) {
-    let sum = 0;
+    prefix[0] = 0;
     for (let y = 0; y < height; y += 1) {
-      const addY = y + r;
-      if (addY < height) sum += horizontal[addY * width + x] ? 1 : 0;
-      const removeY = y - r - 1;
-      if (removeY >= 0) sum -= horizontal[removeY * width + x] ? 1 : 0;
-      if (y >= r && y < height - r && sum === span) output[y * width + x] = 1;
+      prefix[y + 1] = prefix[y] + (horizontal[y * width + x] ? 1 : 0);
+    }
+    for (let y = r; y < height - r; y += 1) {
+      const sum = prefix[y + r + 1] - prefix[y - r];
+      if (sum === span) output[y * width + x] = 1;
     }
   }
 
   return output;
 }
-
-function buildComponentIndex(mask, width, height, minPixels = 12) {
+function buildComponentIndex(mask, width, height, minPixels = 1, foreground = true) {
   const labels = new Uint32Array(mask.length);
   const queue = new Int32Array(mask.length);
   const sizes = [0];
+  const edgeMasks = [0];
+  const representatives = [-1];
   let count = 0;
 
+  const isTarget = p => Boolean(mask[p]) === foreground;
+
   for (let start = 0; start < mask.length; start += 1) {
-    if (!mask[start] || labels[start]) continue;
+    if (!isTarget(start) || labels[start]) continue;
     count += 1;
     let head = 0;
     let tail = 0;
+    let edgeMask = 0;
     queue[tail++] = start;
     labels[start] = count;
+    representatives[count] = start;
 
     while (head < tail) {
       const p = queue[head++];
       const x = p % width;
       const y = Math.floor(p / width);
+      if (x === 0) edgeMask |= 1;
+      if (y === 0) edgeMask |= 2;
+      if (x === width - 1) edgeMask |= 4;
+      if (y === height - 1) edgeMask |= 8;
+
       if (x > 0) {
         const np = p - 1;
-        if (mask[np] && !labels[np]) {
+        if (isTarget(np) && !labels[np]) {
           labels[np] = count;
           queue[tail++] = np;
         }
       }
       if (x + 1 < width) {
         const np = p + 1;
-        if (mask[np] && !labels[np]) {
+        if (isTarget(np) && !labels[np]) {
           labels[np] = count;
           queue[tail++] = np;
         }
       }
       if (y > 0) {
         const np = p - width;
-        if (mask[np] && !labels[np]) {
+        if (isTarget(np) && !labels[np]) {
           labels[np] = count;
           queue[tail++] = np;
         }
       }
       if (y + 1 < height) {
         const np = p + width;
-        if (mask[np] && !labels[np]) {
+        if (isTarget(np) && !labels[np]) {
           labels[np] = count;
           queue[tail++] = np;
         }
       }
     }
+
     sizes[count] = tail;
+    edgeMasks[count] = edgeMask;
   }
 
   const active = new Uint8Array(count + 1);
@@ -166,32 +145,131 @@ function buildComponentIndex(mask, width, height, minPixels = 12) {
     activeCount += 1;
     activePixels += sizes[label] ?? 0;
   }
-  return { labels, sizes, active, componentCount: activeCount, componentPixels: activePixels };
+
+  return {
+    labels,
+    sizes,
+    edgeMasks,
+    representatives,
+    active,
+    componentCount: activeCount,
+    rawComponentCount: count,
+    componentPixels: activePixels,
+  };
 }
 
-function classifyCoreClosure(wall, edgeReachable, coreIndex) {
-  const reachable = new Uint8Array(coreIndex.active.length);
-  const covered = new Uint32Array(coreIndex.active.length);
-  let coveredPixels = 0;
+function buildCoreParentMetadata(coreIndex, fillIndex, borderAssistedMask) {
+  const parentFillLabel = new Uint32Array(coreIndex.active.length);
+  const borderAssisted = new Uint8Array(coreIndex.active.length);
 
   for (let p = 0; p < coreIndex.labels.length; p += 1) {
-    const label = coreIndex.labels[p];
-    if (!label || !coreIndex.active[label]) continue;
-    if (edgeReachable[p]) reachable[label] = 1;
-    if (wall[p]) {
-      covered[label] += 1;
-      coveredPixels += 1;
+    const coreLabel = coreIndex.labels[p];
+    if (!coreLabel || !coreIndex.active[coreLabel]) continue;
+    if (!parentFillLabel[coreLabel]) parentFillLabel[coreLabel] = fillIndex?.labels?.[p] ?? 0;
+    if (borderAssistedMask?.[p]) borderAssisted[coreLabel] = 1;
+  }
+
+  // Erosion can remove direct overlap with the border-assisted mask near the
+  // frame. The parent fill label is therefore also used to inherit the flag.
+  if (fillIndex && borderAssistedMask) {
+    const borderFillLabels = new Uint8Array(fillIndex.rawComponentCount + 1);
+    for (let p = 0; p < fillIndex.labels.length; p += 1) {
+      if (!borderAssistedMask[p]) continue;
+      const label = fillIndex.labels[p];
+      if (label) borderFillLabels[label] = 1;
+    }
+    for (let coreLabel = 1; coreLabel < coreIndex.active.length; coreLabel += 1) {
+      const fillLabel = parentFillLabel[coreLabel];
+      if (fillLabel && borderFillLabels[fillLabel]) borderAssisted[coreLabel] = 1;
     }
   }
 
+  return { parentFillLabel, borderAssisted };
+}
+
+function classifyCoreClosure(
+  wall,
+  backgroundIndex,
+  coreIndex,
+  fillIndex,
+  coreMeta,
+  options = {},
+) {
+  const covered = new Uint32Array(coreIndex.active.length);
+  const backgroundLabels = Array.from({ length: coreIndex.active.length }, () => new Set());
+  let coveredPixels = 0;
+
+  for (let p = 0; p < coreIndex.labels.length; p += 1) {
+    const coreLabel = coreIndex.labels[p];
+    if (!coreLabel || !coreIndex.active[coreLabel]) continue;
+    if (wall[p]) {
+      covered[coreLabel] += 1;
+      coveredPixels += 1;
+      continue;
+    }
+    const backgroundLabel = backgroundIndex.labels[p];
+    if (backgroundLabel) backgroundLabels[coreLabel].add(backgroundLabel);
+  }
+
+  const maxBorderLeakAreaRatio = Math.max(
+    1.05,
+    Number(options.maxBorderLeakAreaRatio ?? 2.0),
+  );
   let closedRegions = 0;
   let openRegions = 0;
   let fullyCoveredCoreRegions = 0;
-  for (let label = 1; label < coreIndex.active.length; label += 1) {
-    if (!coreIndex.active[label]) continue;
-    if (reachable[label]) openRegions += 1;
-    else closedRegions += 1;
-    if (covered[label] >= (coreIndex.sizes[label] ?? 0)) fullyCoveredCoreRegions += 1;
+  let borderAssistedRegions = 0;
+  let borderAssistedClosedRegions = 0;
+  let borderAssistedOpenRegions = 0;
+  let maxObservedBorderLeakAreaRatio = 0;
+
+  for (let coreLabel = 1; coreLabel < coreIndex.active.length; coreLabel += 1) {
+    if (!coreIndex.active[coreLabel]) continue;
+    const coreSize = coreIndex.sizes[coreLabel] ?? 0;
+    const isFullyCovered = covered[coreLabel] >= coreSize;
+    if (isFullyCovered) fullyCoveredCoreRegions += 1;
+
+    const fillLabel = coreMeta.parentFillLabel[coreLabel] ?? 0;
+    const isBorderAssisted = Boolean(coreMeta.borderAssisted[coreLabel]);
+    if (isBorderAssisted) borderAssistedRegions += 1;
+
+    let isOpen = false;
+    if (!isFullyCovered) {
+      const bgLabels = backgroundLabels[coreLabel];
+      for (const bgLabel of bgLabels) {
+        const bgEdgeMask = backgroundIndex.edgeMasks[bgLabel] ?? 0;
+        if (!isBorderAssisted) {
+          if (bgEdgeMask) {
+            isOpen = true;
+            break;
+          }
+          continue;
+        }
+
+        const allowedEdgeMask = fillIndex?.edgeMasks?.[fillLabel] ?? 0;
+        if (bgEdgeMask & ~allowedEdgeMask) {
+          isOpen = true;
+          break;
+        }
+
+        const expectedArea = Math.max(1, fillIndex?.sizes?.[fillLabel] ?? coreSize);
+        const reachableArea = backgroundIndex.sizes[bgLabel] ?? 0;
+        const areaRatio = reachableArea / expectedArea;
+        maxObservedBorderLeakAreaRatio = Math.max(maxObservedBorderLeakAreaRatio, areaRatio);
+        if (areaRatio > maxBorderLeakAreaRatio) {
+          isOpen = true;
+          break;
+        }
+      }
+    }
+
+    if (isOpen) {
+      openRegions += 1;
+      if (isBorderAssisted) borderAssistedOpenRegions += 1;
+    } else {
+      closedRegions += 1;
+      if (isBorderAssisted) borderAssistedClosedRegions += 1;
+    }
   }
 
   return {
@@ -205,14 +283,24 @@ function classifyCoreClosure(wall, edgeReachable, coreIndex) {
     coveredCorePixelFraction: coreIndex.componentPixels
       ? coveredPixels / coreIndex.componentPixels
       : 0,
+    borderAssistedRegions,
+    borderAssistedClosedRegions,
+    borderAssistedOpenRegions,
+    maxBorderLeakAreaRatio,
+    maxObservedBorderLeakAreaRatio,
   };
 }
 
-function classifySeedFallback(wall, edgeReachable, seeds, width, height) {
+function classifySeedFallback(wall, backgroundIndex, seeds, width, height, options = {}) {
   let closed = 0;
   let open = 0;
   let coveredSeeds = 0;
   let outsideSeeds = 0;
+  let borderAssistedRegions = 0;
+  let borderAssistedClosedRegions = 0;
+  let borderAssistedOpenRegions = 0;
+  const maxBorderLeakAreaRatio = Math.max(1.05, Number(options.maxBorderLeakAreaRatio ?? 2.0));
+
   for (const rawSeed of seeds ?? []) {
     const x = clampInt(rawSeed?.x, -1, width);
     const y = clampInt(rawSeed?.y, -1, height);
@@ -221,10 +309,30 @@ function classifySeedFallback(wall, edgeReachable, seeds, width, height) {
       continue;
     }
     const p = y * width + x;
-    if (wall[p]) coveredSeeds += 1;
-    if (edgeReachable[p]) open += 1;
-    else closed += 1;
+    const isBorderAssisted = Boolean(rawSeed?.borderAssisted);
+    if (isBorderAssisted) borderAssistedRegions += 1;
+    if (wall[p]) {
+      coveredSeeds += 1;
+      closed += 1;
+      if (isBorderAssisted) borderAssistedClosedRegions += 1;
+      continue;
+    }
+
+    const bgLabel = backgroundIndex.labels[p];
+    const edgeMask = bgLabel ? backgroundIndex.edgeMasks[bgLabel] ?? 0 : 0;
+    const isOpen = isBorderAssisted
+      ? Boolean(edgeMask && (backgroundIndex.sizes[bgLabel] ?? 0) > width * height * 0.12 * maxBorderLeakAreaRatio)
+      : Boolean(edgeMask);
+
+    if (isOpen) {
+      open += 1;
+      if (isBorderAssisted) borderAssistedOpenRegions += 1;
+    } else {
+      closed += 1;
+      if (isBorderAssisted) borderAssistedClosedRegions += 1;
+    }
   }
+
   const considered = closed + open;
   return {
     regionCount: considered,
@@ -236,6 +344,127 @@ function classifySeedFallback(wall, edgeReachable, seeds, width, height) {
     corePixels: considered,
     coveredCorePixelFraction: considered ? coveredSeeds / considered : 0,
     outsideSeeds,
+    borderAssistedRegions,
+    borderAssistedClosedRegions,
+    borderAssistedOpenRegions,
+    maxBorderLeakAreaRatio,
+  };
+}
+
+function collectEndpointCandidates(mask, width, height, options = {}) {
+  const edgeMargin = Math.max(1, Math.round(options.endpointEdgeMargin ?? 3));
+  const maxGapDistance = Math.max(1.5, Number(options.maxGapDistance ?? 4.25));
+  const maxGapAngleDeg = Math.max(5, Math.min(80, Number(options.maxGapAngleDeg ?? 40)));
+  const minFacing = Math.cos(maxGapAngleDeg * Math.PI / 180);
+  const maxCandidates = Math.max(1, Math.min(500, Math.round(options.maxGapCandidates ?? 120)));
+  const endpoints = [];
+
+  for (let y = edgeMargin; y < height - edgeMargin; y += 1) {
+    for (let x = edgeMargin; x < width - edgeMargin; x += 1) {
+      const p = y * width + x;
+      if (!mask[p]) continue;
+      let neighborCount = 0;
+      let neighborX = x;
+      let neighborY = y;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const ny = y + dy;
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          if (!mask[ny * width + nx]) continue;
+          neighborCount += 1;
+          neighborX = nx;
+          neighborY = ny;
+        }
+      }
+      if (neighborCount !== 1) continue;
+      const tx = x - neighborX;
+      const ty = y - neighborY;
+      const length = Math.hypot(tx, ty) || 1;
+      endpoints.push({
+        p,
+        x,
+        y,
+        outX: tx / length,
+        outY: ty / length,
+      });
+    }
+  }
+
+  const cellSize = Math.max(2, Math.ceil(maxGapDistance));
+  const buckets = new Map();
+  const bucketKey = (bx, by) => `${bx},${by}`;
+  for (let i = 0; i < endpoints.length; i += 1) {
+    const endpoint = endpoints[i];
+    const bx = Math.floor(endpoint.x / cellSize);
+    const by = Math.floor(endpoint.y / cellSize);
+    const key = bucketKey(bx, by);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(i);
+  }
+
+  const lineCrossesExistingBoundary = (a, b) => {
+    const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    if (steps <= 1) return false;
+    for (let step = 1; step < steps; step += 1) {
+      const t = step / steps;
+      const x = Math.round(a.x + (b.x - a.x) * t);
+      const y = Math.round(a.y + (b.y - a.y) * t);
+      if (mask[y * width + x]) return true;
+    }
+    return false;
+  };
+
+  const candidates = [];
+  for (let i = 0; i < endpoints.length; i += 1) {
+    const a = endpoints[i];
+    const bx = Math.floor(a.x / cellSize);
+    const by = Math.floor(a.y / cellSize);
+
+    for (let oy = -1; oy <= 1; oy += 1) {
+      for (let ox = -1; ox <= 1; ox += 1) {
+        const list = buckets.get(bucketKey(bx + ox, by + oy));
+        if (!list) continue;
+        for (const j of list) {
+          if (j <= i) continue;
+          const b = endpoints[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const distance = Math.hypot(dx, dy);
+          if (distance <= 1.1 || distance > maxGapDistance) continue;
+          const vx = dx / distance;
+          const vy = dy / distance;
+          const facingA = a.outX * vx + a.outY * vy;
+          const facingB = b.outX * -vx + b.outY * -vy;
+          if (facingA < minFacing || facingB < minFacing) continue;
+          if (lineCrossesExistingBoundary(a, b)) continue;
+
+          const alignment = Math.min(facingA, facingB);
+          const distanceScore = 1 - Math.min(1, (distance - 1) / Math.max(0.5, maxGapDistance - 1));
+          candidates.push({
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            distance,
+            alignment,
+            score: alignment * 0.75 + distanceScore * 0.25,
+            estimatedMissingPixels: Math.max(1, Math.round(distance) - 1),
+          });
+        }
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score || a.distance - b.distance);
+  return {
+    endpointCount: endpoints.length,
+    candidateCount: candidates.length,
+    maxGapDistance,
+    maxGapAngleDeg,
+    candidates: candidates.slice(0, maxCandidates),
+    truncated: candidates.length > maxCandidates,
+    note: "Direction-consistent short-gap candidates are diagnostic only. No pixels are connected automatically.",
   };
 }
 
@@ -253,15 +482,23 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
     height,
     options.endpointEdgeMargin ?? 3,
   );
+  const shortGapCandidates = collectEndpointCandidates(prediction, width, height, options);
 
   const closedNegativeMask = options.closedNegativeMask ?? null;
+  const borderAssistedMask = options.borderAssistedMask ?? null;
   const coreErosionRadius = Math.max(0, Math.round(options.coreErosionRadius ?? 2));
   const minCorePixels = Math.max(1, Math.round(options.minCorePixels ?? 12));
   const coreMask = closedNegativeMask?.length === prediction.length
     ? erodeSquare(closedNegativeMask, width, height, coreErosionRadius)
     : null;
   const coreIndex = coreMask
-    ? buildComponentIndex(coreMask, width, height, minCorePixels)
+    ? buildComponentIndex(coreMask, width, height, minCorePixels, true)
+    : null;
+  const fillIndex = closedNegativeMask?.length === prediction.length
+    ? buildComponentIndex(closedNegativeMask, width, height, 1, true)
+    : null;
+  const coreMeta = coreIndex && fillIndex
+    ? buildCoreParentMetadata(coreIndex, fillIndex, borderAssistedMask)
     : null;
   const useCoreRegions = Boolean(coreIndex?.componentCount);
 
@@ -270,10 +507,10 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
     const wall = radius > 0
       ? dilateBinaryMask(prediction, width, height, radius)
       : prediction;
-    const edgeReachable = buildEdgeReachableMask(wall, width, height);
+    const backgroundIndex = buildComponentIndex(wall, width, height, 1, false);
     const classified = useCoreRegions
-      ? classifyCoreClosure(wall, edgeReachable, coreIndex)
-      : classifySeedFallback(wall, edgeReachable, seeds, width, height);
+      ? classifyCoreClosure(wall, backgroundIndex, coreIndex, fillIndex, coreMeta, options)
+      : classifySeedFallback(wall, backgroundIndex, seeds, width, height, options);
     closureByBridgeRadius.push({
       bridgeRadius: radius,
       ...classified,
@@ -293,17 +530,21 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
       totalClosedRegions: item.closedRegions,
       closureRate: item.closureRate,
       coveredCorePixelFraction: item.coveredCorePixelFraction,
+      borderAssistedClosedRegions: item.borderAssistedClosedRegions ?? 0,
     });
     previousClosed = Math.max(previousClosed, item.closedRegions);
   }
 
   return {
     version: 2,
+    revision: "2.1-border-assisted-gap-candidates",
     mode: "diagnostic-only",
     endpointProxy: endpoint,
+    shortGapCandidates,
     regionClosure: {
       basis: useCoreRegions ? "closed-negative-eroded-core" : "seed-fallback",
       seedCount: (seeds ?? []).length,
+      borderAssistedSeedCount: (seeds ?? []).filter(seed => seed?.borderAssisted).length,
       coreErosionRadius: useCoreRegions ? coreErosionRadius : null,
       minCorePixels: useCoreRegions ? minCorePixels : null,
       coreRegionCount: useCoreRegions ? coreIndex.componentCount : 0,
@@ -311,10 +552,12 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
       baseClosureRate: base?.closureRate ?? null,
       baseClosedRegions: base?.closedRegions ?? 0,
       baseOpenRegions: base?.openRegions ?? 0,
+      baseBorderAssistedRegions: base?.borderAssistedRegions ?? 0,
+      baseBorderAssistedClosedRegions: base?.borderAssistedClosedRegions ?? 0,
       closureByBridgeRadius,
       recovery,
-      note: "Closure is evaluated from eroded high-confidence Negative Fill cores. A region is open if any core pixel can reach the image edge through non-boundary pixels; increasing bridge radius can only remove reachability. Core coverage is reported separately so over-thick bridging is visible instead of being hidden by the closure score.",
+      note: "Ordinary cores are open when their prediction-background component reaches any image edge. Border-assisted cores may use the annotated image-edge sides as a virtual closure, but are still marked open if they leak to another edge or the reachable area grows beyond the annotated fill by the configured safety ratio. Core coverage is reported separately.",
     },
-    note: "Topology v2 is diagnostic only in v0.3.6.4 and is not part of Auto Tune v2 objective.",
+    note: "Topology v2.1 and short-gap candidates are diagnostic only in v0.3.6.5 and are not part of Auto Tune v2 objective.",
   };
 }

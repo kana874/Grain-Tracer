@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.6.4-alpha</div>
+    <div class="version">v0.3.6.5-alpha</div>
   </header>
 
   <main class="layout">
@@ -42,7 +42,7 @@
         <ol class="guide-list">
           <li>「お手本線」で正しい粒界をなぞる</li>
           <li>「非粒界線」で粒内模様・傷など誤検出してほしくない線を教える</li>
-          <li>粒を黄色線で完全に囲ったら「閉領域→非粒界」で内側をクリックし、高信頼Negativeとして塗る</li>
+          <li>粒を黄色線で囲ったら「閉領域→非粒界」で内側をクリックし、高信頼Negativeとして塗る。画像端と黄色線で閉じる粒は「画像端を閉境界として許可」を使える</li>
           <li>スケールバー・文字などは「除外矩形」で解析対象外にする</li>
           <li>「比較」「Auto Tune v2」で判定との差を確認・最適化する</li>
           <li>注釈ツール中も中ボタンドラッグで画面移動できる</li>
@@ -115,7 +115,7 @@
         <label class="control-row"><span>デンドライト差</span><output id="dendriteWeightValue">20</output><input id="dendriteWeight" type="range" min="0" max="100" value="20"></label>
         <label class="control-row"><span>最小連結サイズ</span><output id="minComponentValue">24</output><input id="minComponent" type="range" min="1" max="300" value="24"></label>
         <label class="check-row"><input id="centerlineNms" type="checkbox" checked> Centerline化（方向付きNMS）</label>
-        <p class="help">ONでは境界法線方向の局所最大だけを残し、太線・二重線を1本化します。画像端のRidge方向が未定義な範囲は従来候補を保持します。</p>
+        <p class="help">ONでは連続角度のRidge法線方向に補間した局所最大だけを残し、太線・二重線を1本化します。画像端のRidge方向が未定義な範囲は従来候補を保持します。</p>
 
         <div class="subpanel">
           <label class="check-row"><input id="localEnabled" type="checkbox" checked> 局所適応を有効</label>
@@ -131,7 +131,9 @@
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
         <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
-        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。「閉領域→非粒界」は黄色線で完全に囲った粒の内側だけをクリックして使います。未記入領域はUnknownのままです。Auto Tune v2はROIがあればTrue F1、なければPositive Recallと地域均等化したMacro Negative Leakageを使います。</p>
+        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝完全評価ROIです。「閉領域→非粒界」は黄色線で囲った粒の内側をクリックして使います。画像端と黄色線で閉じる粒は下のオプションを有効にしてください。未記入領域はUnknownのままです。Auto Tune v2はROIがあればTrue F1、なければPositive Recallと地域均等化したMacro Negative Leakageを使います。</p>
+        <label class="check-row"><input id="borderAssistedFill" type="checkbox"> 画像端を閉境界として許可</label>
+        <p class="help">ONで追加したFillだけ、画像端を仮想境界として保存します。巨大領域・反対側2辺への接触・黄色線との接触不足は安全のため拒否します。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="button-grid">
@@ -144,11 +146,11 @@
           <button id="clearExclusionButton" type="button" disabled>除外全消去</button>
           <button id="clearFullRoiButton" type="button" disabled>ROI全消去</button>
           <button id="showNormalButton" type="button" disabled>通常表示</button>
-          <button id="topologyButton" type="button" disabled>Topology v2診断</button>
+          <button id="topologyButton" type="button" disabled>Topology v2.1 / Gap診断</button>
         </div>
         <p id="annotationStatus" class="help metric-detail">非粒界線: 0 px / 閉領域Fill: 0領域 / Negative合計: 0 px / 除外: 0領域 / 完全評価ROI: 0領域</p>
         <p id="localCalibrationStatus" class="help metric-detail">局所補正: 未作成</p>
-        <p id="topologyStatus" class="help metric-detail">Topology v2: 未実行</p>
+        <p id="topologyStatus" class="help metric-detail">Topology v2.1: 未実行</p>
 
         <div class="legend">
           <span><i class="swatch tp"></i>一致</span>
@@ -173,7 +175,7 @@
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ファイルを書き出す</button>
-        <p class="help">出力: diagnostic.json v7 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">出力: diagnostic.json v8 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
       </section>
 
       <section>
@@ -205,8 +207,11 @@
           <li class="done">お手本作成表示 / H一時非表示</li>
           <li class="done">Edge-aware端部抽出</li>
           <li class="done">Topology v2（Closed Negative Core Closure / Endpoint Proxy）</li>
-          <li class="done">Centerline化（方向付きNMS）</li>
+          <li class="done">Centerline化（連続方向NMS）</li>
           <li class="done">Negative region holdout（Closed Fill 80/20）</li>
+          <li class="done">Positive spatial-balanced holdout（画素比≈80/20）</li>
+          <li class="done">画像端＋お手本線のBorder-assisted Fill</li>
+          <li class="done">Topology v2.1 Border-assisted Core / Short-gap候補診断</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>

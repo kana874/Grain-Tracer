@@ -468,7 +468,115 @@ export function computeFullEvaluationRoiMetrics(
   };
 }
 
+function splitReferenceSpatialBalanced(referenceCenterline, width, height, options = {}) {
+  const validationFraction = Math.max(0.05, Math.min(0.45, options.validationFraction ?? 0.20));
+  const cols = Math.max(2, Math.min(8, Math.round(options.cols ?? 4)));
+  const rows = Math.max(2, Math.min(8, Math.round(options.rows ?? 4)));
+  const tuneMask = new Uint8Array(referenceCenterline.length);
+  const validationMask = new Uint8Array(referenceCenterline.length);
+  const cellPixels = Array.from({ length: cols * rows }, () => []);
+
+  let totalPixels = 0;
+  for (let p = 0; p < referenceCenterline.length; p += 1) {
+    if (!referenceCenterline[p]) continue;
+    totalPixels += 1;
+    const x = p % width;
+    const y = Math.floor(p / width);
+    const cx = Math.min(cols - 1, Math.floor(x * cols / width));
+    const cy = Math.min(rows - 1, Math.floor(y * rows / height));
+    cellPixels[cy * cols + cx].push(p);
+  }
+
+  const activeCells = cellPixels
+    .map((pixels, index) => ({ index, pixels, size: pixels.length }))
+    .filter(cell => cell.size > 0);
+
+  if (activeCells.length < 2 || totalPixels === 0) {
+    tuneMask.set(referenceCenterline);
+    return {
+      tuneMask,
+      validationMask,
+      componentCount: activeCells.length,
+      tuningPixels: totalPixels,
+      validationPixels: 0,
+      validationFraction: 0,
+      requestedValidationFraction: validationFraction,
+      mode: "spatial-balanced-insufficient-cells",
+      cols,
+      rows,
+      tuningCellCount: activeCells.length,
+      validationCellCount: 0,
+    };
+  }
+
+  const targetPixels = Math.max(1, Math.round(totalPixels * validationFraction));
+  const targetCells = Math.max(1, Math.round(activeCells.length * validationFraction));
+  const count = activeCells.length;
+  let bestMask = 0;
+  let bestPixelError = Infinity;
+  let bestCellError = Infinity;
+  let bestTie = Infinity;
+
+  // At 4x4 this is at most 65,536 deterministic subsets. This happens only
+  // when the annotation holdout is rebuilt, not per extraction pixel.
+  const subsetLimit = 1 << count;
+  for (let subset = 1; subset < subsetLimit - 1; subset += 1) {
+    let pixels = 0;
+    let cells = 0;
+    let tie = 2166136261 >>> 0;
+    for (let i = 0; i < count; i += 1) {
+      if (!(subset & (1 << i))) continue;
+      const cell = activeCells[i];
+      pixels += cell.size;
+      cells += 1;
+      tie ^= (cell.index + 1) * 16777619;
+      tie = Math.imul(tie, 16777619) >>> 0;
+    }
+    const pixelError = Math.abs(pixels - targetPixels);
+    const cellError = Math.abs(cells - targetCells);
+    if (pixelError < bestPixelError
+      || (pixelError === bestPixelError && cellError < bestCellError)
+      || (pixelError === bestPixelError && cellError === bestCellError && tie < bestTie)) {
+      bestMask = subset;
+      bestPixelError = pixelError;
+      bestCellError = cellError;
+      bestTie = tie;
+    }
+  }
+
+  const validationCells = new Set();
+  for (let i = 0; i < count; i += 1) {
+    if (bestMask & (1 << i)) validationCells.add(activeCells[i].index);
+  }
+
+  let validationPixels = 0;
+  for (const cell of activeCells) {
+    const destination = validationCells.has(cell.index) ? validationMask : tuneMask;
+    for (const p of cell.pixels) destination[p] = 1;
+    if (validationCells.has(cell.index)) validationPixels += cell.size;
+  }
+
+  const tuningPixels = totalPixels - validationPixels;
+  return {
+    tuneMask,
+    validationMask,
+    componentCount: activeCells.length,
+    tuningPixels,
+    validationPixels,
+    validationFraction: validationPixels / Math.max(1, totalPixels),
+    requestedValidationFraction: validationFraction,
+    mode: "spatial-grid-pixel-balanced-holdout",
+    cols,
+    rows,
+    tuningCellCount: activeCells.length - validationCells.size,
+    validationCellCount: validationCells.size,
+  };
+}
+
 export function splitReferenceCenterline(referenceCenterline, width, height, options = {}) {
+  if (options.strategy === "spatial-balanced") {
+    return splitReferenceSpatialBalanced(referenceCenterline, width, height, options);
+  }
   const validationFraction = Math.max(0.05, Math.min(0.45, options.validationFraction ?? 0.20));
   const minComponentPixels = Math.max(1, options.minComponentPixels ?? 8);
   const visited = new Uint8Array(referenceCenterline.length);
