@@ -1086,6 +1086,7 @@ function buildProject() {
     referenceCenterline: state.referenceCenterline,
     negativeMask: state.negativeMask,
     negativeCenterline: state.negativeCenterline,
+    closedNegativeSeeds: state.closedNegativeSeeds,
     exclusionRects: state.exclusionRects,
     fullEvaluationRois: state.fullEvaluationRois,
     localCalibration: state.localCalibration,
@@ -1120,7 +1121,13 @@ async function restoreProject(project, source = "プロジェクト") {
   state.referenceMask = masks.referenceMask;
   state.referenceCenterline = masks.referenceCenterline;
   state.negativeMask = masks.negativeMask;
+  state.manualNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
   state.negativeCenterline = masks.negativeCenterline;
+  state.closedNegativeSeeds = masks.closedNegativeSeeds ?? [];
+  state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
+  state.closedNegativeCount = 0;
+  state.closedNegativeValidCount = 0;
+  state.closedNegativeInvalidCount = 0;
   state.exclusionRects = masks.exclusionRects;
   state.fullEvaluationRois = masks.fullEvaluationRois;
   state.selectedExclusionIndex = -1;
@@ -1142,7 +1149,7 @@ async function restoreProject(project, source = "プロジェクト") {
   updateMetrics();
   updateControls();
   els.projectStatus.textContent = `${source}を復元しました`;
-  setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
+  setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界線 ${state.negativeCount.toLocaleString()} px / 閉領域Fill ${state.closedNegativeValidCount}領域 / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
 }
 
 async function saveProjectManual() {
@@ -1323,7 +1330,13 @@ async function loadBmp(file) {
   state.referenceCenterline = null;
   state.negativeCount = 0;
   state.negativeMask = null;
+  state.manualNegativeMask = null;
   state.negativeCenterline = null;
+  state.closedNegativeMask = null;
+  state.closedNegativeSeeds = [];
+  state.closedNegativeCount = 0;
+  state.closedNegativeValidCount = 0;
+  state.closedNegativeInvalidCount = 0;
   state.exclusionRects = [];
   state.exclusionMask = null;
   state.fullEvaluationRois = [];
@@ -1356,7 +1369,13 @@ async function loadBmp(file) {
     state.referenceMask = new Uint8Array(preview.width * preview.height);
     state.referenceCenterline = new Uint8Array(preview.width * preview.height);
     state.negativeMask = new Uint8Array(preview.width * preview.height);
+    state.manualNegativeMask = new Uint8Array(preview.width * preview.height);
     state.negativeCenterline = new Uint8Array(preview.width * preview.height);
+    state.closedNegativeMask = new Uint8Array(preview.width * preview.height);
+    state.closedNegativeSeeds = [];
+    state.closedNegativeCount = 0;
+    state.closedNegativeValidCount = 0;
+    state.closedNegativeInvalidCount = 0;
     state.exclusionMask = new Uint8Array(preview.width * preview.height);
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
@@ -1400,7 +1419,13 @@ async function loadBmp(file) {
     state.referenceMask = null;
     state.referenceCenterline = null;
     state.negativeMask = null;
+    state.manualNegativeMask = null;
     state.negativeCenterline = null;
+    state.closedNegativeMask = null;
+    state.closedNegativeSeeds = [];
+    state.closedNegativeCount = 0;
+    state.closedNegativeValidCount = 0;
+    state.closedNegativeInvalidCount = 0;
     state.exclusionMask = null;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
