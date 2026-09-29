@@ -53,7 +53,6 @@ import {
 } from "./annotations.js";
 import {
   combineNegativeMasks,
-  fillClosedNegativeRegion,
   rebuildClosedNegativeMask,
 } from "./closed-negative-fill.js";
 
@@ -145,7 +144,10 @@ const state = {
   ty: 0,
   tool: "pan",
   dragging: false,
+  dragPointerId: null,
+  dragButton: null,
   drawingReference: false,
+  annotationStartedAt: null,
   dragOrigin: null,
   lastReferencePoint: null,
   currentReferenceEdit: null,
@@ -167,8 +169,10 @@ const state = {
   closedNegativeCount: 0,
   closedNegativeValidCount: 0,
   closedNegativeInvalidCount: 0,
+  combinedNegativeCount: 0,
   exclusionRects: [],
   exclusionMask: null,
+  exclusionPixelCount: 0,
   fullEvaluationRois: [],
   comparisonMode: false,
   lastMetrics: null,
@@ -177,7 +181,44 @@ const state = {
   busy: false,
   abortController: null,
   autosaveTimer: null,
+  autosaveIdleHandle: null,
+  transformFrame: null,
+  performance: {
+    featureComputeMs: null,
+    boundaryAnalysisMs: null,
+    comparisonMs: null,
+    autoTuneMs: null,
+    closedFillRebuildMs: null,
+    annotationCommitMs: null,
+    autosaveSerializeMs: null,
+    autosaveWriteMs: null,
+  },
 };
+
+function nowMs() {
+  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+}
+
+function recordPerformance(name, startedAt) {
+  state.performance[name] = Math.max(0, nowMs() - startedAt);
+  return state.performance[name];
+}
+
+function performanceSnapshot() {
+  return {
+    ...state.performance,
+    previewPixels: state.preview ? state.preview.width * state.preview.height : 0,
+    closedFillSeedCount: state.closedNegativeSeeds.length,
+  };
+}
+
+function scheduleTransform() {
+  if (state.transformFrame != null) return;
+  state.transformFrame = requestAnimationFrame(() => {
+    state.transformFrame = null;
+    applyTransform();
+  });
+}
 
 function formatBytes(bytes) {
   const units = ["B", "KB", "MB", "GB"];
