@@ -222,7 +222,9 @@ Topology v2 remains observational in v0.3.6.4. It does not yet contribute to the
 
 v0.3.6.5 extends the diagnostic to Topology v2.1. Border-assisted Closed Fill cores inherit the image-edge sides used by their parent fill. They may treat those explicitly annotated frame sides as virtual closure, but are still marked open if the prediction-background component leaks to another frame side or grows far beyond the annotated fill area.
 
-Topology v2.1 also enumerates short-gap candidates without modifying the extraction. Only one-neighbour endpoints are considered. Candidate endpoints must be within the configured preview-pixel distance, their outgoing tangent directions must face each other within an angular tolerance, and the straight segment must not cross an existing prediction. The resulting candidate list is intended to validate a later direction-consistent bridge stage before any automatic connection is enabled.
+Topology v2.1 also enumerates short-gap candidates without modifying the extraction. Only one-neighbour endpoints are considered. Candidate endpoints must be within the configured preview-pixel distance, their outgoing tangent directions must face each other within an angular tolerance, and the straight segment must not cross an existing prediction.
+
+v0.3.6.6 adds Topology v2.2 Safe Gap Bridge as a separate opt-in post-processing stage. Candidate segments must additionally satisfy a user-controlled maximum application distance and minimum score, cannot cross Exclusion pixels or a 1 px dilation of explicit Negative labels, and one endpoint may be consumed by at most one accepted bridge. The bridge mask is previewed separately and is applied only by explicit user action; the user can revert to the pre-bridge extraction mask.
 
 ## 10. Persistence
 
@@ -252,5 +254,5 @@ IndexedDB is used for optional autosave and automatic restore when the same BMP 
 - Full-resolution overlapping-tile analysis and seam handling.
 - Smart Trace and manual correction workflow.
 - PNG / binary mask / SVG export.
-- Topology-aware Auto Tune objective and direction-consistent short-gap bridge application after Topology v2.1 candidates are validated on multiple real micrographs.
+- Topology-aware Auto Tune objective and broader validation of the opt-in Safe Gap Bridge on multiple real micrographs.
 - Closed-grain segmentation and grain metrics.
