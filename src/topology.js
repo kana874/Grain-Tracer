@@ -1,4 +1,3 @@
-import { buildClosedNegativeRegionIndex } from "./closed-negative-fill.js";
 import { dilateBinaryMask } from "./evaluation.js";
 
 function clampInt(value, min, max) {
@@ -41,7 +40,41 @@ function countInteriorEndpointProxy(mask, width, height, edgeMargin = 3) {
   };
 }
 
-function classifySeedClosures(index, seeds, width, height) {
+function buildEdgeReachableMask(wall, width, height) {
+  const reachable = new Uint8Array(wall.length);
+  const queue = new Int32Array(wall.length);
+  let head = 0;
+  let tail = 0;
+
+  const push = p => {
+    if (wall[p] || reachable[p]) return;
+    reachable[p] = 1;
+    queue[tail++] = p;
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    push(x);
+    push((height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    push(y * width);
+    push(y * width + width - 1);
+  }
+
+  while (head < tail) {
+    const p = queue[head++];
+    const x = p % width;
+    const y = Math.floor(p / width);
+    if (x > 0) push(p - 1);
+    if (x + 1 < width) push(p + 1);
+    if (y > 0) push(p - width);
+    if (y + 1 < height) push(p + width);
+  }
+
+  return reachable;
+}
+
+function classifySeedClosures(wall, edgeReachable, seeds, width, height) {
   let closed = 0;
   let open = 0;
   let onBoundary = 0;
@@ -54,12 +87,12 @@ function classifySeedClosures(index, seeds, width, height) {
       outside += 1;
       continue;
     }
-    const label = index.labels[y * width + x];
-    if (!label) {
+    const p = y * width + x;
+    if (wall[p]) {
       onBoundary += 1;
       continue;
     }
-    if (index.componentTouchesEdge[label]) open += 1;
+    if (edgeReachable[p]) open += 1;
     else closed += 1;
   }
 
@@ -98,13 +131,8 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
     const wall = radius > 0
       ? dilateBinaryMask(prediction, width, height, radius)
       : prediction;
-    const index = buildClosedNegativeRegionIndex(
-      wall,
-      width,
-      height,
-      { safetyRadius: 0 },
-    );
-    const classified = classifySeedClosures(index, seeds, width, height);
+    const edgeReachable = buildEdgeReachableMask(wall, width, height);
+    const classified = classifySeedClosures(wall, edgeReachable, seeds, width, height);
     closureByBridgeRadius.push({
       bridgeRadius: radius,
       ...classified,
