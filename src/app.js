@@ -998,6 +998,7 @@ function clearReference() {
   state.referenceCenterline.fill(0);
   state.referenceMask.fill(0);
   els.referenceCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
+  renderNegativeCanvas(true);
   commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "reference", entry }] });
   recalcAnnotationCounts();
   renderNormalOverlay();
@@ -1011,21 +1012,26 @@ function clearNegativeReference() {
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
 
-  const entry = buildClearReferenceEntry(
+  const manualEntry = buildClearReferenceEntry(
     state.negativeCenterline,
     state.preview.width,
     state.preview.height,
   );
-  if (!entry) return;
+  const closedNegativeSeeds = state.closedNegativeSeeds.map(seed => ({ ...seed }));
+  if (!manualEntry && !closedNegativeSeeds.length) return;
 
   state.negativeCenterline.fill(0);
-  state.negativeMask.fill(0);
-  els.negativeCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
-  commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "negative", entry }] });
+  state.closedNegativeSeeds = [];
+  renderNegativeCanvas(true);
+  commitReferenceHistory({
+    kind: "negative-clear",
+    manualEntry,
+    closedNegativeSeeds,
+  });
   recalcAnnotationCounts();
   renderNormalOverlay();
   updateControls();
-  setStatus("非粒界お手本を全消去しました。Undoで復元できます。");
+  setStatus("非粒界線と閉領域Fillを全消去しました。Undoで復元できます。");
   scheduleAutosave();
 }
 
@@ -1806,6 +1812,7 @@ function endReferenceDraw(event) {
   if (negativeEntry) parts.push({ layer: "negative", entry: negativeEntry });
   state.currentReferenceEdit = null;
   if (parts.length) commitReferenceHistory({ kind: "mask-edit", parts });
+  if (referenceEntry) renderNegativeCanvas(true);
 
   recalcAnnotationCounts();
   updateMetrics();
