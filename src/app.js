@@ -1725,6 +1725,54 @@ function eventToPreviewPoint(event) {
   return { x, y };
 }
 
+function closedFillFailureMessage(reason) {
+  if (reason === "seed-on-boundary") return "黄色のお手本線上では閉領域Fillできません。粒の内側をクリックしてください。";
+  if (reason === "open-region") return "閉領域ではありません。黄色のお手本線が完全に閉じているか確認してください。";
+  if (reason === "region-too-large") return "閉領域が大きすぎるため安全のためFillしませんでした。";
+  if (reason === "region-too-small") return "閉領域が小さすぎるためFillしませんでした。";
+  return "この位置では閉領域Fillできませんでした。";
+}
+
+function addClosedNegativeFill(event) {
+  if (!state.preview || !state.referenceMask || !hasReference()) return false;
+  const point = eventToPreviewPoint(event);
+  if (!point) return false;
+  const seed = { x: Math.round(point.x), y: Math.round(point.y) };
+  const p = seed.y * state.preview.width + seed.x;
+
+  if (state.closedNegativeMask?.[p]) {
+    setStatus("この閉領域はすでに非粒界Fillされています。");
+    return false;
+  }
+
+  const result = fillClosedNegativeRegion(
+    state.referenceMask,
+    state.preview.width,
+    state.preview.height,
+    seed,
+    closedNegativeFillOptions(),
+  );
+  if (!result.accepted) {
+    setStatus(closedFillFailureMessage(result.reason));
+    return false;
+  }
+
+  if (state.comparisonMode) showNormalView();
+  invalidateAfterReferenceEdit();
+  const index = state.closedNegativeSeeds.length;
+  state.closedNegativeSeeds.push(seed);
+  renderNegativeCanvas(true);
+  commitReferenceHistory({ kind: "closed-fill-add", index, seed: { ...seed } });
+  recalcAnnotationCounts();
+  updateMetrics();
+  updateControls();
+  setStatus(
+    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域。Undoで取り消せます。`,
+  );
+  scheduleAutosave();
+  return true;
+}
+
 function applyLineSegment(layer, tracker, from, to, erase = false) {
   const centerline = layer === "negative" ? state.negativeCenterline : state.referenceCenterline;
   const dirtyBounds = paintReferenceCenterlineSegment(
@@ -2017,6 +2065,7 @@ els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.negativeToolButton.addEventListener("click", () => setTool("negative-reference"));
+els.closedNegativeFillToolButton.addEventListener("click", () => setTool("closed-negative-fill"));
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
 els.exclusionToolButton.addEventListener("click", () => setTool("exclusion"));
 els.fullRoiToolButton.addEventListener("click", () => setTool("full-roi"));
@@ -2087,6 +2136,7 @@ els.viewer.addEventListener("pointerdown", event => {
   if (!state.preview || event.button !== 0) return;
   if (state.tool === "exclusion") { beginRectInteraction(event, "exclusion"); return; }
   if (state.tool === "full-roi") { beginRectInteraction(event, "roi"); return; }
+  if (state.tool === "closed-negative-fill") { addClosedNegativeFill(event); return; }
   if (state.tool !== "pan") { beginReferenceDraw(event); return; }
   state.dragging = true;
   state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
