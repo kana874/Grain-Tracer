@@ -34,6 +34,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: #173f3c; border-color: #2c9188; }
 button.full { width: 100%; }
 button.tool-button.active { border-color: var(--accent); background: #173f3c; color: #eafffc; }
+button.view-button.active { border-color: var(--warn); background: rgba(255, 216, 74, .14); color: #fff6c7; }
 .drop-zone { margin-top: 10px; min-height: 76px; border: 1px dashed #536071; border-radius: 8px; display: grid; place-items: center; color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
 .drop-zone.dragover { border-color: var(--accent); color: var(--accent); background: rgba(53, 213, 196, .08); }
 .meta-grid { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 7px 8px; margin: 0; font-size: 12px; }
