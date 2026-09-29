@@ -740,7 +740,8 @@ function closedNegativeFillOptions() {
 }
 
 function rebuildClosedNegativeState() {
-  if (!state.preview || !state.referenceMask) return;
+  if (!state.preview || !state.referenceMask) return null;
+  const startedAt = nowMs();
   const rebuilt = rebuildClosedNegativeMask(
     state.referenceMask,
     state.preview.width,
@@ -749,9 +750,11 @@ function rebuildClosedNegativeState() {
     closedNegativeFillOptions(),
   );
   state.closedNegativeMask = rebuilt.mask;
-  state.closedNegativeCount = countMaskPixels(rebuilt.mask);
+  state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
   state.closedNegativeValidCount = rebuilt.validCount;
   state.closedNegativeInvalidCount = rebuilt.invalidCount;
+  state.performance.closedFillRebuildMs = rebuilt.elapsedMs ?? recordPerformance("closedFillRebuildMs", startedAt);
+  return rebuilt;
 }
 
 function rebuildCombinedNegativeMask() {
@@ -761,6 +764,7 @@ function rebuildCombinedNegativeMask() {
     state.closedNegativeMask,
     state.referenceMask,
   );
+  state.combinedNegativeCount = countMaskPixels(state.negativeMask);
 }
 
 function renderNegativeCanvas(rebuildClosed = true) {
@@ -798,6 +802,7 @@ function rebuildExclusionLayer(previewRect = null, showSelection = true) {
     state.preview.width,
     state.preview.height,
   );
+  state.exclusionPixelCount = countMaskPixels(state.exclusionMask);
   renderExclusionCanvas(
     els.exclusionCanvas,
     state.exclusionRects,
@@ -827,8 +832,8 @@ function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
 function updateAnnotationStatus() {
   const manualNegative = state.negativeCount ?? 0;
   const closedNegative = state.closedNegativeCount ?? 0;
-  const combinedNegative = state.negativeMask ? countMaskPixels(state.negativeMask) : 0;
-  const excluded = state.exclusionMask ? countMaskPixels(state.exclusionMask) : 0;
+  const combinedNegative = state.combinedNegativeCount ?? 0;
+  const excluded = state.exclusionPixelCount ?? 0;
   const invalidFillText = state.closedNegativeInvalidCount
     ? ` / 無効seed ${state.closedNegativeInvalidCount}`
     : "";
