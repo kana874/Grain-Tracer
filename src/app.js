@@ -350,7 +350,7 @@ function currentEvaluationOptions(overrides = {}) {
 }
 
 function buildNegativeHoldout() {
-  if (!state.preview || !state.negativeCenterline || !hasNegativeReference()) {
+  if (!state.preview || !hasNegativeReference()) {
     return {
       tuningMask: null,
       validationMask: null,
@@ -358,13 +358,28 @@ function buildNegativeHoldout() {
       split: null,
     };
   }
+
+  const hasClosedFill = state.closedNegativeCount > 0;
+  if (!state.negativeCenterline || state.negativeCount === 0) {
+    return {
+      tuningMask: state.negativeMask,
+      validationMask: null,
+      validationPixels: 0,
+      split: null,
+    };
+  }
+
   const split = splitReferenceCenterline(
     state.negativeCenterline,
     state.preview.width,
     state.preview.height,
     { validationFraction: 0.20, minComponentPixels: 8 },
   );
-  if (split.validationPixels < 20) {
+
+  // Closed-region Fill is generated from high-confidence grain interiors rather
+  // than a line component, so it remains entirely in the tuning set. Do not
+  // present a leaked pixel holdout as independent validation.
+  if (hasClosedFill || split.validationPixels < 20) {
     return {
       tuningMask: state.negativeMask,
       validationMask: null,
@@ -372,6 +387,7 @@ function buildNegativeHoldout() {
       split,
     };
   }
+
   return {
     tuningMask: dilateBinaryMask(
       split.tuneMask,
@@ -491,6 +507,7 @@ function updateMetrics(metrics = null) {
   if (!metrics) {
     els.metricPositiveRecall.textContent = "-";
     els.metricNegativeLeakage.textContent = "-";
+    els.metricMacroNegativeLeakage.textContent = "-";
     els.metricAlignment.textContent = "-";
     els.metricDetail.textContent = hasReference()
       ? "自動抽出後に「比較」を押してください。未記入領域はUnknownです。"
@@ -503,6 +520,7 @@ function updateMetrics(metrics = null) {
 
   els.metricPositiveRecall.textContent = `${(metrics.positiveRecall * 100).toFixed(1)}%`;
   els.metricNegativeLeakage.textContent = `${(metrics.negativeLeakage * 100).toFixed(1)}%`;
+  els.metricMacroNegativeLeakage.textContent = `${((metrics.macroNegativeLeakage ?? metrics.negativeLeakage) * 100).toFixed(1)}%`;
   const alignment = metrics.alignmentError?.mean;
   els.metricAlignment.textContent = alignment == null ? "-" : `${alignment.toFixed(2)} px`;
 
@@ -548,10 +566,12 @@ function renderHistory() {
     const date = new Date(item.timestamp);
     const positiveRecall = item.metrics?.positiveRecall ?? item.metrics?.recall;
     const negativeLeakage = item.metrics?.negativeLeakage ?? item.metrics?.negativeHitRate;
+    const macroNegativeLeakage = item.metrics?.macroNegativeLeakage ?? negativeLeakage;
     const recallText = positiveRecall == null ? "-" : `${(positiveRecall * 100).toFixed(1)}%`;
     const leakText = negativeLeakage == null ? "-" : `${(negativeLeakage * 100).toFixed(1)}%`;
+    const macroLeakText = macroNegativeLeakage == null ? "-" : `${(macroNegativeLeakage * 100).toFixed(1)}%`;
     const label = item.kind === "auto-tune" ? "全体調整" : item.kind === "local-tune" ? "局所調整" : "比較";
-    li.innerHTML = `<strong>${label}</strong><span>R ${recallText} / Leak ${leakText}</span><small>${date.toLocaleString("ja-JP")}</small>`;
+    li.innerHTML = `<strong>${label}</strong><span>R ${recallText} / Leak ${leakText} / Macro ${macroLeakText}</span><small>${date.toLocaleString("ja-JP")}</small>`;
     els.historyList.appendChild(li);
   }
 }
@@ -584,6 +604,9 @@ function addHistory(kind, metrics, note = "", tuning = null) {
   const cleanRegions = (metrics.regions ?? []).map(region => ({
     rx: region.rx, ry: region.ry, precision: region.precision, recall: region.recall,
     f1: region.f1, referencePixels: region.referencePixels,
+    negativePixels: region.negativePixels ?? 0,
+    negativePrediction: region.negativePrediction ?? 0,
+    negativeLeakage: region.negativeLeakage ?? 0,
   }));
   state.history.push({
     timestamp: new Date().toISOString(),
@@ -602,6 +625,9 @@ function addHistory(kind, metrics, note = "", tuning = null) {
       evaluationMode: metrics.evaluationMode ?? "partial-label",
       positiveRecall: metrics.positiveRecall ?? metrics.recall,
       negativeLeakage: metrics.negativeLeakage ?? metrics.negativeHitRate ?? 0,
+      macroNegativeLeakage: metrics.macroNegativeLeakage ?? metrics.negativeLeakage ?? 0,
+      negativeRegionCount: metrics.negativeRegionCount ?? 0,
+      maxNegativeRegionShare: metrics.maxNegativeRegionShare ?? 0,
       alignmentError: metrics.alignmentError ?? null,
       labelPrecisionProxy: metrics.labelPrecision ?? metrics.precision,
       labelF1Proxy: metrics.labelF1 ?? metrics.f1,
