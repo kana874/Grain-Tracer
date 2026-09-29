@@ -57,6 +57,7 @@ export function createProjectSnapshot(input) {
     referenceMask,
     referenceCenterline,
     negativeMask,
+    manualNegativeMask,
     negativeCenterline,
     closedNegativeSeeds,
     exclusionRects,
@@ -78,7 +79,7 @@ export function createProjectSnapshot(input) {
       centerline: packBinaryMask(referenceCenterline),
     },
     nonBoundary: {
-      mask: packBinaryMask(negativeMask ?? new Uint8Array(referenceMask.length)),
+      mask: packBinaryMask(manualNegativeMask ?? negativeMask ?? new Uint8Array(referenceMask.length)),
       centerline: packBinaryMask(negativeCenterline ?? new Uint8Array(referenceMask.length)),
       closedFillSeeds: (closedNegativeSeeds ?? []).map(seed => ({
         x: Math.round(seed.x),
