@@ -2264,36 +2264,75 @@ els.viewer.addEventListener("wheel", event => {
   applyTransform();
 }, { passive: false });
 
+function beginPan(event, button = event.button) {
+  if (!state.preview || state.dragging) return false;
+  state.dragging = true;
+  state.dragPointerId = event.pointerId;
+  state.dragButton = button;
+  state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
+  els.viewer.classList.add("dragging");
+  els.viewer.setPointerCapture(event.pointerId);
+  event.preventDefault();
+  return true;
+}
+
 els.viewer.addEventListener("pointerdown", event => {
-  if (!state.preview || event.button !== 0) return;
+  if (!state.preview) return;
+
+  // Middle-button drag is a temporary pan gesture in every annotation tool.
+  if (event.button === 1) {
+    beginPan(event, 1);
+    return;
+  }
+  if (event.button !== 0) return;
+
   if (state.tool === "exclusion") { beginRectInteraction(event, "exclusion"); return; }
   if (state.tool === "full-roi") { beginRectInteraction(event, "roi"); return; }
   if (state.tool === "closed-negative-fill") { addClosedNegativeFill(event); return; }
   if (state.tool !== "pan") { beginReferenceDraw(event); return; }
-  state.dragging = true;
-  state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
-  els.viewer.classList.add("dragging");
-  els.viewer.setPointerCapture(event.pointerId);
+  beginPan(event, 0);
 });
+
 els.viewer.addEventListener("pointermove", event => {
+  if (state.dragging && state.dragOrigin && event.pointerId === state.dragPointerId) {
+    state.tx = state.dragOrigin.tx + event.clientX - state.dragOrigin.x;
+    state.ty = state.dragOrigin.ty + event.clientY - state.dragOrigin.y;
+    scheduleTransform();
+    return;
+  }
   if (state.rectInteraction) { continueRectInteraction(event); return; }
-  if (state.drawingReference) { continueReferenceDraw(event); return; }
-  if (!state.dragging || !state.dragOrigin) return;
-  state.tx = state.dragOrigin.tx + event.clientX - state.dragOrigin.x;
-  state.ty = state.dragOrigin.ty + event.clientY - state.dragOrigin.y;
-  applyTransform();
+  if (state.drawingReference) { continueReferenceDraw(event); }
 });
+
 function endPointer(event) {
+  if (state.dragging && event.pointerId === state.dragPointerId) {
+    state.dragging = false;
+    state.dragPointerId = null;
+    state.dragButton = null;
+    state.dragOrigin = null;
+    els.viewer.classList.remove("dragging");
+    if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
+      els.viewer.releasePointerCapture(event.pointerId);
+    }
+    return;
+  }
   if (state.rectInteraction) endRectInteraction(event);
   if (state.drawingReference) endReferenceDraw(event);
-  if (!state.dragging) return;
-  state.dragging = false;
-  state.dragOrigin = null;
-  els.viewer.classList.remove("dragging");
-  if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) els.viewer.releasePointerCapture(event.pointerId);
 }
 els.viewer.addEventListener("pointerup", endPointer);
 els.viewer.addEventListener("pointercancel", endPointer);
+els.viewer.addEventListener("auxclick", event => {
+  if (event.button === 1) event.preventDefault();
+});
+els.viewer.addEventListener("lostpointercapture", event => {
+  if (state.dragging && event.pointerId === state.dragPointerId) {
+    state.dragging = false;
+    state.dragPointerId = null;
+    state.dragButton = null;
+    state.dragOrigin = null;
+    els.viewer.classList.remove("dragging");
+  }
+});
 
 window.addEventListener("keydown", event => {
   if (!state.preview || state.busy) return;
