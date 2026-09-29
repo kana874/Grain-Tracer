@@ -1928,7 +1928,7 @@ async function autoTune() {
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      { validationFraction: 0.20, minComponentPixels: 8 },
+      { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
     );
     const negativeHoldout = buildNegativeHoldout();
     const tuningReference = useCompleteRoi
@@ -2049,7 +2049,7 @@ async function localTune() {
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      { validationFraction: 0.20, minComponentPixels: 8 },
+      { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
     );
     const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
     const negativeHoldout = buildNegativeHoldout();
