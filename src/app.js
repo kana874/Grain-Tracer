@@ -54,6 +54,7 @@ import {
 import {
   combineNegativeMasks,
   rebuildClosedNegativeMask,
+  splitClosedNegativeRegions,
 } from "./closed-negative-fill.js";
 import { computeBoundaryTopology } from "./topology.js";
 
@@ -109,6 +110,7 @@ const els = {
   colorWeight: $("colorWeight"),
   dendriteWeight: $("dendriteWeight"),
   minComponent: $("minComponent"),
+  centerlineNms: $("centerlineNms"),
   overlayOpacity: $("overlayOpacity"),
   localEnabled: $("localEnabled"),
   localStrength: $("localStrength"),
@@ -366,6 +368,7 @@ function currentExtractionOptions() {
     colorWeight: Number(els.colorWeight.value),
     dendriteWeight: Number(els.dendriteWeight.value),
     minComponent: Number(els.minComponent.value),
+    centerlineNms: els.centerlineNms.checked,
   };
 }
 
@@ -408,58 +411,93 @@ function buildNegativeHoldout() {
     return {
       tuningMask: null,
       validationMask: null,
+      tuningPixels: 0,
       validationPixels: 0,
-      split: null,
+      mode: "no-negative-labels",
+      manualSplit: null,
+      closedSplit: null,
     };
   }
 
-  const hasClosedFill = state.closedNegativeCount > 0;
-  if (!state.negativeCenterline || state.negativeCount === 0) {
-    return {
-      tuningMask: state.negativeMask,
-      validationMask: null,
-      validationPixels: 0,
-      split: null,
-    };
+  const width = state.preview.width;
+  const height = state.preview.height;
+  const radius = referenceJudgementRadius();
+
+  let manualTuning = null;
+  let manualValidation = null;
+  let manualSplit = null;
+  if (state.negativeCenterline && state.negativeCount > 0) {
+    manualSplit = splitReferenceCenterline(
+      state.negativeCenterline,
+      width,
+      height,
+      { validationFraction: 0.20, minComponentPixels: 8 },
+    );
+    if (manualSplit.validationPixels >= 20) {
+      manualTuning = dilateBinaryMask(manualSplit.tuneMask, width, height, radius);
+      manualValidation = dilateBinaryMask(manualSplit.validationMask, width, height, radius);
+    } else {
+      manualTuning = state.manualNegativeMask;
+    }
   }
 
-  const split = splitReferenceCenterline(
-    state.negativeCenterline,
-    state.preview.width,
-    state.preview.height,
-    { validationFraction: 0.20, minComponentPixels: 8 },
+  let closedSplit = null;
+  let closedTuning = null;
+  let closedValidation = null;
+  if (state.closedNegativeSeeds.length > 0 && state.referenceMask) {
+    closedSplit = splitClosedNegativeRegions(
+      state.referenceMask,
+      width,
+      height,
+      state.closedNegativeSeeds,
+      {
+        ...closedNegativeFillOptions(),
+        validationFraction: 0.20,
+      },
+      state.closedNegativeRegionIndex,
+    );
+    state.closedNegativeRegionIndex = closedSplit.regionIndex ?? state.closedNegativeRegionIndex;
+    if (closedSplit.validationRegionCount > 0 && closedSplit.validationPixels > 0) {
+      closedTuning = closedSplit.tuningMask;
+      closedValidation = closedSplit.validationMask;
+    } else {
+      closedTuning = state.closedNegativeMask;
+    }
+  }
+
+  const tuningMask = combineNegativeMasks(
+    manualTuning,
+    closedTuning,
+    state.referenceMask,
   );
-
-  // Closed-region Fill is generated from high-confidence grain interiors rather
-  // than a line component, so it remains entirely in the tuning set. Do not
-  // present a leaked pixel holdout as independent validation.
-  if (hasClosedFill || split.validationPixels < 20) {
-    return {
-      tuningMask: state.negativeMask,
-      validationMask: null,
-      validationPixels: 0,
-      split,
-    };
-  }
+  const validationCombined = combineNegativeMasks(
+    manualValidation,
+    closedValidation,
+    state.referenceMask,
+  );
+  const tuningPixels = countMaskPixels(tuningMask);
+  const validationPixels = countMaskPixels(validationCombined);
+  const validationMask = validationPixels >= 20 ? validationCombined : null;
 
   return {
-    tuningMask: dilateBinaryMask(
-      split.tuneMask,
-      state.preview.width,
-      state.preview.height,
-      referenceJudgementRadius(),
-    ),
-    validationMask: dilateBinaryMask(
-      split.validationMask,
-      state.preview.width,
-      state.preview.height,
-      referenceJudgementRadius(),
-    ),
-    validationPixels: split.validationPixels,
-    split,
+    tuningMask: tuningPixels ? tuningMask : state.negativeMask,
+    validationMask,
+    tuningPixels,
+    validationPixels: validationMask ? validationPixels : 0,
+    mode: validationMask ? "independent-region-holdout" : "validation-unavailable",
+    manualSplit,
+    closedSplit,
+    summary: {
+      manualComponentCount: manualSplit?.componentCount ?? 0,
+      manualValidationPixels: manualValidation ? countMaskPixels(manualValidation) : 0,
+      closedRegionCount: closedSplit?.regionCount ?? 0,
+      closedTuningRegionCount: closedSplit?.tuningRegionCount ?? 0,
+      closedValidationRegionCount: closedSplit?.validationRegionCount ?? 0,
+      closedTuningPixels: closedSplit?.tuningPixels ?? (closedTuning ? countMaskPixels(closedTuning) : 0),
+      closedValidationPixels: closedSplit?.validationPixels ?? 0,
+    },
   };
 }
-
 function currentBoundaryOptions() {
   return {
     ...currentExtractionOptions(),
@@ -511,6 +549,7 @@ function applySettings(settings = {}) {
   if (extraction.colorWeight != null) setRangeValue(els.colorWeight, extraction.colorWeight);
   if (extraction.dendriteWeight != null) setRangeValue(els.dendriteWeight, extraction.dendriteWeight);
   if (extraction.minComponent != null) setRangeValue(els.minComponent, extraction.minComponent);
+  els.centerlineNms.checked = extraction.centerlineNms == null ? true : Boolean(extraction.centerlineNms);
   if (local.enabled != null) els.localEnabled.checked = Boolean(local.enabled);
   if (local.localEnabled != null) els.localEnabled.checked = Boolean(local.localEnabled);
   if (local.strength != null) setRangeValue(els.localStrength, local.strength <= 1 ? local.strength * 100 : local.strength);
@@ -599,23 +638,29 @@ function updateTopologyStatus(result = state.lastTopology) {
     els.topologyStatus.textContent = "Topology: 未実行";
     return;
   }
-  const closure = result.seedClosure;
+  const closure = result.regionClosure;
   const r0 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 0);
   const r2 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 2);
   const r3 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 3);
   const endpoint = result.endpointProxy;
-  const seedText = closure?.seedCount
-    ? `Seed Closure 0px ${topologyRateText(r0?.closureRate)} / 2px ${topologyRateText(r2?.closureRate)} / 3px ${topologyRateText(r3?.closureRate)}`
-    : "Seed Closure: 閉領域Fill seedなし";
+  const regionCount = closure?.coreRegionCount || r0?.regionCount || 0;
+  const label = closure?.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
+  const closureText = regionCount
+    ? `${label} 0px ${topologyRateText(r0?.closureRate)} / 2px ${topologyRateText(r2?.closureRate)} / 3px ${topologyRateText(r3?.closureRate)}`
+    : `${label}: 評価領域なし`;
+  const coverageText = r2?.coveredCorePixelFraction
+    ? ` / Core被覆@2px ${topologyRateText(r2.coveredCorePixelFraction)}`
+    : "";
   els.topologyStatus.textContent =
-    `Topology: ${seedText} / Endpoint proxy ${endpoint?.endpointPixels?.toLocaleString?.() ?? endpoint?.endpointPixels ?? 0}`;
+    `Topology v2: ${closureText}${coverageText} / Endpoint proxy ${endpoint?.endpointPixels?.toLocaleString?.() ?? endpoint?.endpointPixels ?? 0}`;
 }
 
 async function runTopologyDiagnostics() {
   if (!state.preview || !state.analysisMask) return null;
+  ensureClosedNegativeFresh();
   setBusy(true);
   try {
-    setStatus("Topology診断中... 境界の閉領域と短いgapを確認しています。", 10);
+    setStatus("Topology v2診断中... 閉領域Coreと短いgapを確認しています。", 10);
     await new Promise(resolve => setTimeout(resolve, 0));
     const startedAt = nowMs();
     const result = computeBoundaryTopology(
@@ -626,15 +671,20 @@ async function runTopologyDiagnostics() {
       {
         bridgeRadii: [0, 1, 2, 3],
         endpointEdgeMargin: 3,
+        closedNegativeMask: state.closedNegativeMask,
+        coreErosionRadius: 2,
+        minCorePixels: 12,
       },
     );
     recordPerformance("topologyMs", startedAt);
     state.lastTopology = result;
     updateTopologyStatus(result);
-    const r0 = result.seedClosure.closureByBridgeRadius.find(item => item.bridgeRadius === 0);
-    const r2 = result.seedClosure.closureByBridgeRadius.find(item => item.bridgeRadius === 2);
+    const closure = result.regionClosure;
+    const r0 = closure.closureByBridgeRadius.find(item => item.bridgeRadius === 0);
+    const r2 = closure.closureByBridgeRadius.find(item => item.bridgeRadius === 2);
+    const basis = closure.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
     setStatus(
-      `Topology診断完了: Seed Closure 0px ${topologyRateText(r0?.closureRate)} → 2px ${topologyRateText(r2?.closureRate)} / Endpoint proxy ${result.endpointProxy.endpointPixels.toLocaleString()} / ${state.performance.topologyMs.toFixed(0)} ms`,
+      `Topology v2完了: ${basis} 0px ${topologyRateText(r0?.closureRate)} → 2px ${topologyRateText(r2?.closureRate)} / Endpoint proxy ${result.endpointProxy.endpointPixels.toLocaleString()} / ${state.performance.topologyMs.toFixed(0)} ms`,
       100,
     );
     return result;
@@ -646,7 +696,6 @@ async function runTopologyDiagnostics() {
     setBusy(false);
   }
 }
-
 function updateMetrics(metrics = null) {
   state.lastMetrics = metrics;
   if (!metrics) {
@@ -1493,7 +1542,13 @@ async function exportDiagnostics() {
         state.preview.width,
         state.preview.height,
         state.closedNegativeSeeds,
-        { bridgeRadii: [0, 1, 2, 3], endpointEdgeMargin: 3 },
+        {
+          bridgeRadii: [0, 1, 2, 3],
+          endpointEdgeMargin: 3,
+          closedNegativeMask: state.closedNegativeMask,
+          coreErosionRadius: 2,
+          minCorePixels: 12,
+        },
       );
       recordPerformance("topologyMs", topologyStartedAt);
       state.lastTopology = topology;
@@ -1508,6 +1563,7 @@ async function exportDiagnostics() {
       fingerprint: state.sourceFingerprint,
     };
     const settings = currentSettings();
+    const negativeHoldout = buildNegativeHoldout();
     const report = buildDiagnosticReport({
       source,
       preview: state.preview,
@@ -1517,7 +1573,9 @@ async function exportDiagnostics() {
       referenceCenterline: state.referenceCenterline,
       negativeMask: state.negativeMask,
       negativeCenterline: state.negativeCenterline,
+      closedNegativeMask: state.closedNegativeMask,
       closedNegativeSeeds: state.closedNegativeSeeds,
+      negativeHoldout,
       exclusionMask: state.exclusionMask,
       exclusionRects: state.exclusionRects,
       fullEvaluationRois: state.fullEvaluationRois,
@@ -2533,6 +2591,7 @@ bindRange(els.ridgeWeight, $("ridgeWeightValue"), extractionSettingChanged);
 bindRange(els.colorWeight, $("colorWeightValue"), extractionSettingChanged);
 bindRange(els.dendriteWeight, $("dendriteWeightValue"), extractionSettingChanged);
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
+els.centerlineNms.addEventListener("change", extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), scheduleAutosave);
 els.overlayOpacity.addEventListener("change", rerenderOverlayOpacity);
 bindRange(els.localStrength, $("localStrengthValue"), featureSettingChanged);
