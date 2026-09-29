@@ -147,7 +147,6 @@ const state = {
   dragPointerId: null,
   dragButton: null,
   drawingReference: false,
-  annotationStartedAt: null,
   dragOrigin: null,
   lastReferencePoint: null,
   currentReferenceEdit: null,
@@ -1083,6 +1082,7 @@ function clearReference() {
 
   state.referenceCenterline.fill(0);
   state.referenceMask.fill(0);
+  state.closedNegativeRegionIndex = null;
   els.referenceCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
   renderNegativeCanvas(true);
   commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "reference", entry }] });
@@ -1327,6 +1327,7 @@ async function exportDiagnostics() {
       fullEvaluationRois: state.fullEvaluationRois,
       localCalibration: state.localCalibration,
       history: state.history,
+      performance: performanceSnapshot(),
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
     });
@@ -1473,6 +1474,7 @@ async function loadBmp(file) {
   state.localCalibration = null;
   updateLocalCalibrationStatus();
   state.history = [];
+  for (const key of Object.keys(state.performance)) state.performance[key] = null;
   renderHistory();
 
   try {
@@ -2029,7 +2031,6 @@ function applyReferenceSegment(from, to) {
 function beginReferenceDraw(event) {
   const point = eventToPreviewPoint(event);
   if (!point) return false;
-  state.annotationStartedAt = nowMs();
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
 
@@ -2056,6 +2057,7 @@ function continueReferenceDraw(event) {
 
 function endReferenceDraw(event) {
   if (!state.drawingReference) return;
+  const annotationCommitStartedAt = nowMs();
   state.drawingReference = false;
   state.lastReferencePoint = null;
 
@@ -2077,10 +2079,7 @@ function endReferenceDraw(event) {
   recalcAnnotationCounts();
   updateMetrics();
   updateControls();
-  if (state.annotationStartedAt != null) {
-    recordPerformance("annotationCommitMs", state.annotationStartedAt);
-    state.annotationStartedAt = null;
-  }
+  recordPerformance("annotationCommitMs", annotationCommitStartedAt);
   setStatus(
     `注釈を更新しました。粒界 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px / ${state.performance.annotationCommitMs?.toFixed(0) ?? "-"} ms`,
   );
