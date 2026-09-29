@@ -891,10 +891,12 @@ async function applySafeGapBridges() {
   const wasComparison = state.comparisonMode;
   if (!state.gapBaseMask) state.gapBaseMask = state.analysisMask.slice();
   state.analysisMask = proposal.mask;
+  const previousApplied = state.gapApplied;
   state.gapApplied = {
     appliedAt: new Date().toISOString(),
-    bridgeCount: proposal.acceptedBridgeCount,
-    addedPixels: proposal.addedPixels,
+    passes: (previousApplied?.passes ?? 0) + 1,
+    bridgeCount: (previousApplied?.bridgeCount ?? 0) + proposal.acceptedBridgeCount,
+    addedPixels: (previousApplied?.addedPixels ?? 0) + proposal.addedPixels,
     settings: proposal.settings,
     rejected: proposal.rejected,
     sourceCandidateCount: proposal.sourceCandidateCount,
