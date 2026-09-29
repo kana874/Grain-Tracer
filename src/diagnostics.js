@@ -438,11 +438,17 @@ export function buildDiagnosticReport(input) {
       validationPixels: split.validationPixels,
       validationFraction: split.validationFraction,
       negative: negativeSplit ? {
-        mode: negativeSplit.mode,
+        mode: hasClosedNegativeFill ? "closed-fill-in-tuning-manual-holdout-omitted" : negativeSplit.mode,
         componentCount: negativeSplit.componentCount,
-        tuningPixels: negativeSplit.tuningPixels,
-        validationPixels: negativeSplit.validationPixels,
-        validationFraction: negativeSplit.validationFraction,
+        tuningPixels: hasClosedNegativeFill ? metrics.negativePixels : negativeSplit.tuningPixels,
+        validationPixels: hasClosedNegativeFill ? 0 : negativeSplit.validationPixels,
+        validationFraction: hasClosedNegativeFill ? 0 : negativeSplit.validationFraction,
+      } : hasClosedNegativeFill ? {
+        mode: "closed-fill-in-tuning-no-manual-negative-holdout",
+        componentCount: 0,
+        tuningPixels: metrics.negativePixels,
+        validationPixels: 0,
+        validationFraction: 0,
       } : null,
     },
     referenceCoverage: {
