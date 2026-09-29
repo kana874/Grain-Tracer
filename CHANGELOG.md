@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.6.4-alpha - 2026-09-29
+
+### Added
+- Optional Ridge-normal Non-Maximum Suppression (NMS) Centerline mode. Boundary candidates are thinned along the estimated boundary normal before connected-component filtering, with midpoint selection for flat response plateaus.
+- Topology v2 based on eroded Closed Negative Fill core regions instead of single fill seed points.
+- Topology v2 separately reports Core Closure and prediction coverage of the core so a thicker diagnostic bridge cannot masquerade as improved topology merely by covering a seed point.
+- Whole-region Closed Negative Fill holdout. Valid filled grain interiors are deterministically split into tuning and validation groups, defaulting to approximately 80/20 by region count.
+- Diagnostic JSON v7 fields for NMS state, Topology v2, Closed Fill holdout region/pixel counts, and independent Negative validation leakage.
+
+### Changed
+- The normal extraction pipeline now applies directional NMS before neighbour-support and minimum-component filtering when Centerline mode is enabled.
+- Auto Tune v2 processed candidate acceptance and MinComponent optimisation use the same NMS-enabled extraction path as the displayed result.
+- Manual Negative line holdout and Closed Fill region holdout are combined without sharing the same Closed Fill region between tuning and validation.
+- Topology bridge probes remain diagnostic-only; they do not alter the displayed extraction mask.
+- App version advanced to `0.3.6.4-alpha`; extraction identifier advanced to `boundary-v6-nms-edge-negref`.
+
+### Validation
+- JavaScript syntax validation passed across all source modules and all app DOM references resolve.
+- Synthetic 3-pixel-wide flat boundary response is reduced by NMS to the centre pixel column, avoiding a deterministic left/right positional bias.
+- Synthetic one-pixel boundary gap is open at 0 px and closed from the 1 px probe onward under Topology v2, with monotonic closure.
+- Synthetic ten-region Closed Fill data split into eight tuning regions and two validation regions with zero pixel overlap.
+
 ## v0.3.6.3-alpha - 2026-09-29
 
 ### Added
