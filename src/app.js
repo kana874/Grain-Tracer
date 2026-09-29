@@ -883,15 +883,20 @@ function refreshNegativeDirty(changedBounds) {
     changedBounds,
   );
   if (!dirty) return;
+  let countDelta = 0;
   for (let y = dirty.y0; y <= dirty.y1; y += 1) {
     const base = y * state.preview.width;
     for (let x = dirty.x0; x <= dirty.x1; x += 1) {
       const p = base + x;
-      state.negativeMask[p] = state.referenceMask?.[p]
+      const before = state.negativeMask[p] ? 1 : 0;
+      const after = state.referenceMask?.[p]
         ? 0
         : (state.manualNegativeMask[p] || state.closedNegativeMask?.[p] ? 1 : 0);
+      state.negativeMask[p] = after;
+      countDelta += after - before;
     }
   }
+  state.combinedNegativeCount = Math.max(0, (state.combinedNegativeCount ?? 0) + countDelta);
   renderReferenceMaskRegion(
     els.negativeCanvas,
     state.negativeMask,
@@ -1846,21 +1851,22 @@ function addClosedNegativeFill(event) {
     setStatus("この位置はすでに閉領域Fillのseedとして登録されています。");
     return false;
   }
-
   if (state.closedNegativeMask?.[p]) {
     setStatus("この閉領域はすでに非粒界Fillされています。");
     return false;
   }
 
-  const result = fillClosedNegativeRegion(
+  const candidateSeeds = [...state.closedNegativeSeeds, seed];
+  const rebuilt = rebuildClosedNegativeMask(
     state.referenceMask,
     state.preview.width,
     state.preview.height,
-    seed,
+    candidateSeeds,
     closedNegativeFillOptions(),
   );
-  if (!result.accepted) {
-    setStatus(closedFillFailureMessage(result.reason));
+  const result = rebuilt.results[rebuilt.results.length - 1];
+  if (!result?.accepted) {
+    setStatus(closedFillFailureMessage(result?.reason));
     return false;
   }
 
@@ -1868,13 +1874,32 @@ function addClosedNegativeFill(event) {
   invalidateAfterReferenceEdit();
   const index = state.closedNegativeSeeds.length;
   state.closedNegativeSeeds.push(seed);
-  renderNegativeCanvas(true);
+  state.closedNegativeMask = rebuilt.mask;
+  state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
+  state.closedNegativeValidCount = rebuilt.validCount;
+  state.closedNegativeInvalidCount = rebuilt.invalidCount;
+  state.performance.closedFillRebuildMs = rebuilt.elapsedMs ?? null;
+  state.manualNegativeMask = dilateBinaryMask(
+    state.negativeCenterline,
+    state.preview.width,
+    state.preview.height,
+    referenceJudgementRadius(),
+  );
+  rebuildCombinedNegativeMask();
+  renderBinaryMaskCanvas(
+    els.negativeCanvas,
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    referenceOpacityRatio(),
+    [255, 138, 0],
+  );
   commitReferenceHistory({ kind: "closed-fill-add", index, seed: { ...seed } });
   recalcAnnotationCounts();
   updateMetrics();
   updateControls();
   setStatus(
-    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域。Undoで取り消せます。`,
+    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域 / rebuild ${state.performance.closedFillRebuildMs?.toFixed(0) ?? "-"} ms。Undoで取り消せます。`,
   );
   scheduleAutosave();
   return true;
