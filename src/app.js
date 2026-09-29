@@ -56,7 +56,7 @@ import {
   rebuildClosedNegativeMask,
   splitClosedNegativeRegions,
 } from "./closed-negative-fill.js";
-import { computeBoundaryTopology } from "./topology.js";
+import { computeBoundaryTopology, proposeShortGapBridges } from "./topology.js";
 
 const $ = id => document.getElementById(id);
 
@@ -68,6 +68,7 @@ const els = {
   canvasStage: $("canvasStage"),
   imageCanvas: $("imageCanvas"),
   overlayCanvas: $("overlayCanvas"),
+  gapCanvas: $("gapCanvas"),
   fullRoiCanvas: $("fullRoiCanvas"),
   exclusionCanvas: $("exclusionCanvas"),
   negativeCanvas: $("negativeCanvas"),
@@ -97,6 +98,13 @@ const els = {
   clearFullRoiButton: $("clearFullRoiButton"),
   showNormalButton: $("showNormalButton"),
   topologyButton: $("topologyButton"),
+  gapPreviewButton: $("gapPreviewButton"),
+  gapApplyButton: $("gapApplyButton"),
+  gapRevertButton: $("gapRevertButton"),
+  gapMaxDistance: $("gapMaxDistance"),
+  gapAngle: $("gapAngle"),
+  gapMinScore: $("gapMinScore"),
+  gapStatus: $("gapStatus"),
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
   exportDiagnosticsButton: $("exportDiagnosticsButton"),
@@ -192,6 +200,9 @@ const state = {
   overlayPeekHidden: false,
   lastMetrics: null,
   lastTopology: null,
+  gapProposal: null,
+  gapBaseMask: null,
+  gapApplied: null,
   localCalibration: null,
   history: [],
   busy: false,
@@ -209,6 +220,7 @@ const state = {
     autosaveSerializeMs: null,
     autosaveWriteMs: null,
     topologyMs: null,
+    gapBridgeMs: null,
   },
 };
 
@@ -283,6 +295,12 @@ function updateControls() {
   els.clearOverlayButton.disabled = disabled || !hasAnalysis;
   els.annotationAssistButton.disabled = disabled || !hasAnalysis;
   els.topologyButton.disabled = disabled || !hasAnalysis;
+  els.gapPreviewButton.disabled = disabled || !hasAnalysis;
+  els.gapApplyButton.disabled = disabled || !state.gapProposal?.acceptedBridgeCount;
+  els.gapRevertButton.disabled = disabled || !state.gapBaseMask;
+  els.gapMaxDistance.disabled = disabled || !hasAnalysis;
+  els.gapAngle.disabled = disabled || !hasAnalysis;
+  els.gapMinScore.disabled = disabled || !hasAnalysis;
   els.panToolButton.disabled = disabled || !hasPreview;
   els.referenceToolButton.disabled = disabled || !hasPreview;
   els.negativeToolButton.disabled = disabled || !hasPreview;
@@ -328,7 +346,7 @@ function resetMetadata() {
 }
 
 function prepareCanvas(width, height) {
-  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.fullRoiCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas]) {
+  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.gapCanvas, els.fullRoiCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas]) {
     canvas.width = width;
     canvas.height = height;
     canvas.style.width = `${width}px`;
@@ -536,6 +554,12 @@ function currentSettings() {
     referenceOpacity: Number(els.referenceOpacity.value),
     overlayOpacity: Number(els.overlayOpacity.value),
     borderAssistedFill: els.borderAssistedFill.checked,
+    gapBridge: {
+      maxDistance: Number(els.gapMaxDistance.value),
+      maxAngleDeg: Number(els.gapAngle.value),
+      minScore: Number(els.gapMinScore.value) / 100,
+      negativeGuardRadius: 1,
+    },
     autosaveEnabled: els.autosaveEnabled.checked,
   };
 }
@@ -572,6 +596,18 @@ function applySettings(settings = {}) {
   if (settings.referenceOpacity != null) setRangeValue(els.referenceOpacity, settings.referenceOpacity);
   if (settings.overlayOpacity != null) setRangeValue(els.overlayOpacity, settings.overlayOpacity);
   if (settings.borderAssistedFill != null) els.borderAssistedFill.checked = Boolean(settings.borderAssistedFill);
+  const gapBridge = settings.gapBridge ?? {};
+  if (gapBridge.maxDistance != null) {
+    els.gapMaxDistance.value = String(gapBridge.maxDistance);
+    $("gapMaxDistanceValue").value = els.gapMaxDistance.value;
+  }
+  if (gapBridge.maxAngleDeg != null) setRangeValue(els.gapAngle, gapBridge.maxAngleDeg);
+  if (gapBridge.minScore != null) {
+    setRangeValue(
+      els.gapMinScore,
+      gapBridge.minScore <= 1 ? gapBridge.minScore * 100 : gapBridge.minScore,
+    );
+  }
   if (settings.autosaveEnabled != null) els.autosaveEnabled.checked = Boolean(settings.autosaveEnabled);
   invalidateFeatures();
 }
@@ -611,6 +647,7 @@ function applyAnnotationAssistView() {
     els.overlayCanvas.style.opacity = state.annotationAssist ? "0.32" : "1";
     els.overlayCanvas.style.visibility = state.overlayPeekHidden ? "hidden" : "visible";
   }
+  if (els.gapCanvas) els.gapCanvas.style.opacity = state.annotationAssist ? "0.88" : "1";
   if (els.negativeCanvas) els.negativeCanvas.style.opacity = state.annotationAssist ? "0.22" : "1";
   if (els.exclusionCanvas) els.exclusionCanvas.style.opacity = state.annotationAssist ? "0.58" : "1";
   if (els.fullRoiCanvas) els.fullRoiCanvas.style.opacity = state.annotationAssist ? "0.78" : "1";
