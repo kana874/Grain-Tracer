@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6.5-alpha / boundary-v7-continuous-nms-border-negref**
+**v0.3.6.6-alpha / boundary-v8-safe-gap-processed-tune**
 
 Current capabilities:
 
@@ -26,7 +26,7 @@ Current capabilities:
 - annotation-assist view that visually attenuates automatic boundaries and Negative overlays without changing analysis data; `H` temporarily hides the automatic overlay and `V` toggles assist view
 - edge-aware scoring that renormalizes the boundary score over geometrically available features near image borders while guarding the outermost 1 preview pixel against frame artifacts
 - optional continuous Ridge-normal non-maximum suppression (NMS): an axial continuous normal is estimated from the four sampled Ridge directions and the boundary score is bilinearly sampled across that normal to reduce thick/double responses to a centreline
-- diagnostic-only Topology v2.1: interior endpoint proxy, closed-fill core closure rates at 0/1/2/3 px bridge probes, explicit image-border-assisted cores, core-coverage diagnostics, and direction-consistent short-gap candidates
+- Topology v2.2: interior endpoint proxy, closed-fill core closure rates at 0/1/2/3 px probes, border-assisted cores, short-gap diagnostics, and an opt-in Safe Gap Bridge preview/application stage that rejects paths through Negative/Exclusion safety masks
 - independent Negative validation holdout: whole Closed Negative Fill regions are split between tuning and validation so one grain interior never leaks into both sets
 - deterministic Positive validation holdout using a 4×4 spatial grid and pixel-balanced cell selection to keep the validation share close to 20% even when one connected reference component is very large
 - optional border-assisted Closed Negative Fill: a user-selected grain may use one image edge or two adjacent image edges as part of its closure, with area/contact safety checks and explicit seed persistence
@@ -37,7 +37,7 @@ Current capabilities:
 - automatic 1 / 2 / 3 / 4 px Multi-Tolerance diagnostics
 - editable rectangular exclusion regions with move, edge/corner resize, Delete, Undo and Redo
 - orange non-boundary annotations for improved visibility on purple/magenta Barker images
-- Auto Tune v2: CPU-only coordinate-descent tuning of Sensitivity / Dark / Ridge / Color / Dendrite / MinComponent, including zero feature weights and ablation diagnostics
+- Auto Tune v2 search trace v3: CPU-only coordinate descent of Sensitivity / Dark / Ridge / Color / Dendrite / MinComponent; raw scoring proposes each coordinate move, processed post-NMS/component scoring must accept it, and Ablation uses the same processed stage as the final objective
 - reference-guided 4×4 local sensitivity calibration with smooth interpolation
 - 4×4 regional evaluation data
 - evaluation history
@@ -85,6 +85,6 @@ Original BMP
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware tuning/bridging, Smart Trace, and final PNG / mask / SVG export remain planned. Topology v2.1 and short-gap candidates remain diagnostic-only until their behaviour is validated on several real micrographs.
+Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware Auto Tune objectives, Smart Trace, and final PNG / mask / SVG export remain planned. Safe Gap Bridge is opt-in and reversible; it is not silently applied by Auto Tune.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
