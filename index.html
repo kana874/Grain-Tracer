@@ -106,7 +106,7 @@
     <aside class="panel right-panel">
       <section>
         <h2>粒界候補抽出</h2>
-        <p class="help">Dark Ridge・方向付き色差・デンドライト方向差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。</p>
+        <p class="help">Dark Ridge・方向付き色差・デンドライト方向差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。画像端では利用可能な特徴量だけでスコアを再正規化し、最外周1pxだけは画像枠誤検出を抑えるため保護します。</p>
 
         <label class="control-row"><span>境界感度</span><output id="sensitivityValue">62</output><input id="sensitivity" type="range" min="1" max="100" value="62"></label>
         <label class="control-row"><span>暗さ</span><output id="darkWeightValue">20</output><input id="darkWeight" type="range" min="0" max="100" value="20"></label>
