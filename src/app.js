@@ -1464,6 +1464,14 @@ function commitReferenceHistory(entry) {
 
 function invalidateAfterReferenceEdit(affectsAnalysis = false) {
   clearLocalCalibration(true);
+  if (state.gapBaseMask) {
+    state.analysisMask = state.gapBaseMask;
+    state.gapBaseMask = null;
+    state.gapApplied = null;
+    if (els.gapStatus) {
+      els.gapStatus.textContent = "Safe Gap: 注釈変更のため適用を自動解除しました";
+    }
+  }
   invalidateTopology();
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
