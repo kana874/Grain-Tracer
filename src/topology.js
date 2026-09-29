@@ -555,11 +555,12 @@ function buildSafeGapProposal(prediction, width, height, diagnostics, options = 
       rejected.noInteriorPixels += 1;
       continue;
     }
-    if (exclusionMask && pixels.some(p => exclusionMask[p])) {
+    const safetyPixels = [endpointA, endpointB, ...pixels];
+    if (exclusionMask && safetyPixels.some(p => exclusionMask[p])) {
       rejected.exclusion += 1;
       continue;
     }
-    if (negativeGuard && pixels.some(p => negativeGuard[p])) {
+    if (negativeGuard && safetyPixels.some(p => negativeGuard[p])) {
       rejected.negative += 1;
       continue;
     }
