@@ -64,14 +64,17 @@ function classifySeedClosures(index, seeds, width, height) {
   }
 
   const evaluable = closed + open;
+  const considered = closed + open + onBoundary;
   return {
     seedCount: (seeds ?? []).length,
     evaluableSeeds: evaluable,
+    consideredSeeds: considered,
     closedSeeds: closed,
     openSeeds: open,
     seedsOnPrediction: onBoundary,
     outsideSeeds: outside,
-    closureRate: evaluable ? closed / evaluable : null,
+    closureRate: considered ? closed / considered : null,
+    evaluableClosureRate: evaluable ? closed / evaluable : null,
   };
 }
 
@@ -135,7 +138,7 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
       baseOpenSeeds: base?.openSeeds ?? 0,
       closureByBridgeRadius,
       recovery,
-      note: "A seed is closed when the connected non-boundary region containing it cannot reach the image edge. Dilated bridge radii are diagnostic probes for small boundary gaps and are not applied to the extraction result.",
+      note: "A seed is closed when the connected non-boundary region containing it cannot reach the image edge. closureRate treats seeds covered by the prediction as not closed; evaluableClosureRate excludes those seeds. Dilated bridge radii are diagnostic probes for small boundary gaps and are not applied to the extraction result.",
     },
     note: "Topology metrics are diagnostic only in v0.3.6.3 and are not part of Auto Tune v2 objective.",
   };
