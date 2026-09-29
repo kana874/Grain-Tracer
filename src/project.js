@@ -84,6 +84,7 @@ export function createProjectSnapshot(input) {
       closedFillSeeds: (closedNegativeSeeds ?? []).map(seed => ({
         x: Math.round(seed.x),
         y: Math.round(seed.y),
+        borderAssisted: Boolean(seed.borderAssisted),
       })),
     },
     exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
@@ -112,6 +113,7 @@ export function restoreReferenceMasks(project) {
       ? project.nonBoundary.closedFillSeeds.map(seed => ({
         x: Math.round(Number(seed.x)),
         y: Math.round(Number(seed.y)),
+        borderAssisted: Boolean(seed.borderAssisted),
       })).filter(seed => Number.isFinite(seed.x) && Number.isFinite(seed.y))
       : [],
     exclusionRects: Array.isArray(project.exclusionRects)
