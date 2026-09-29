@@ -63,6 +63,14 @@ The ridge detector supplies an estimated boundary normal. Colour samples are tak
 
 Local adaptation can be enabled/disabled and has adjustable strength/window size. Ridge and colour features are normalised against their local neighbourhood so that one global absolute threshold is not the only criterion across a spatially uneven image.
 
+### Edge-aware scoring
+
+Ridge, directional colour, and dendrite-difference features require different sampling margins. Earlier versions therefore produced an artificial no-detection band near image borders when one or more high-weight features were unavailable.
+
+v0.3.6.3 keeps the feature extraction kernels unchanged but records the valid geometric margin for each feature. During boundary scoring, only feature channels available at the current pixel contribute to the weighted average, and their weights are renormalised locally. Interior pixels are mathematically unchanged from the previous weighted average.
+
+The outermost one preview pixel remains a protected frame guard so the image frame itself is not promoted into a grain boundary. Neighbour-support filtering is bounds-aware, allowing retained boundary candidates to approach the protected frame instead of being discarded by a fixed one-pixel loop margin.
+
 ## 5. Partial Label evaluation
 
 The visible positive reference stroke can be thick for usability, but evaluation uses a separate thin centerline.
@@ -163,6 +171,8 @@ v0.3.6.2 indexes connected non-reference regions once for the current positive-r
 
 Viewer navigation is independent of the active annotation tool: left-button input keeps the selected tool semantics, while middle-button drag is always a temporary pan gesture. Panning transforms are coalesced through `requestAnimationFrame`.
 
+v0.3.6.3 adds an annotation-assist display mode. It changes canvas presentation only: automatic-boundary/comparison overlays are attenuated to roughly one third of their normal display opacity, Negative overlays are strongly attenuated, and annotation geometry/evaluation data are untouched. Pressing `H` temporarily hides the automatic overlay while the key is held; `V` toggles annotation-assist mode.
+
 Non-boundary examples extend the evaluated area without treating every unlabelled pixel as negative. Exclusion rectangles are also applied before connected-component evaluation so ignored image content cannot support a retained candidate component.
 
 Undo/Redo covers positive/negative line edits, exclusion-region edits, and complete-evaluation ROI edits. Exclusion and ROI rectangles can be selected, moved, resized from all four sides/corners, and deleted after creation or project reload.
@@ -171,7 +181,14 @@ Undo/Redo covers positive/negative line edits, exclusion-region edits, and compl
 
 v0.3.6.2 moves debounced autosave snapshot/write work to browser idle time when `requestIdleCallback` is available, with a timeout fallback. Tool switching no longer rebuilds the full exclusion mask, and opacity sliders defer expensive preview redraws until release. Diagnostic JSON v5 records the latest browser-session timings for feature computation, boundary analysis, comparison, Auto Tune, closed-fill rebuild, annotation commit, and autosave.
 
-## 9. Persistence
+v0.3.6.3 adds on-demand topology diagnostics and records their runtime in Diagnostic JSON v6. Topology is deliberately not part of the Auto Tune v2 objective yet. The first diagnostic uses two conservative signals:
+
+- an interior endpoint proxy counted on the unskeletonized binary prediction, intended only for within-image regression trends;
+- Seed Closure Rate using the existing closed-region Negative Fill seed coordinates. For bridge probes of 0, 1, 2, and 3 preview pixels, the predicted boundary mask is optionally dilated and the seed's connected background region is tested for access to the image edge. Improvement at small bridge radii indicates short-gap sensitivity without actually modifying the extracted mask.
+
+This staging keeps topology observable before it is allowed to influence tuning or automatically bridge gaps.
+
+## 10. Persistence
 
 A `.graintracer.json` project stores:
 
@@ -192,11 +209,12 @@ The 400 MB-class BMP itself is not embedded.
 
 IndexedDB is used for optional autosave and automatic restore when the same BMP fingerprint is opened again.
 
-## 10. Next stages
+## 11. Next stages
 
 - Extend local optimisation from sensitivity to selected Dark/Ridge/Color weights.
 - Local F1 / compensation-map visualisation.
 - Full-resolution overlapping-tile analysis and seam handling.
 - Smart Trace and manual correction workflow.
 - PNG / binary mask / SVG export.
+- Topology-aware Auto Tune objective and direction-consistent short-gap bridge evaluation after diagnostic validation.
 - Closed-grain segmentation and grain metrics.
