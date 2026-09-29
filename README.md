@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6.3-alpha / boundary-v5-edge-aware-negref**
+**v0.3.6.4-alpha / boundary-v6-nms-edge-negref**
 
 Current capabilities:
 
@@ -25,7 +25,9 @@ Current capabilities:
 - idle-time IndexedDB autosave and diagnostic performance timings for feature extraction, analysis, comparison, Auto Tune, annotation, fill rebuild, and autosave
 - annotation-assist view that visually attenuates automatic boundaries and Negative overlays without changing analysis data; `H` temporarily hides the automatic overlay and `V` toggles assist view
 - edge-aware scoring that renormalizes the boundary score over geometrically available features near image borders while guarding the outermost 1 preview pixel against frame artifacts
-- diagnostic-only topology analysis: interior endpoint proxy plus closed-fill seed closure rates at 0/1/2/3 px bridge probes
+- optional Ridge-normal non-maximum suppression (NMS) that reduces thick/double boundary responses to a centerline before connected-component filtering
+- diagnostic-only Topology v2: interior endpoint proxy plus closed-fill core closure rates at 0/1/2/3 px bridge probes, with separate core-coverage diagnostics
+- independent Negative validation holdout: whole Closed Negative Fill regions are split between tuning and validation so one grain interior never leaks into both sets
 - Partial Label evaluation: Positive / Negative / Unknown, with unlabelled predictions excluded from false-positive counts
 - whole-image Positive Recall / Negative Leakage / Alignment Error metrics
 - 4x4 region-balanced Macro Negative Leakage for spatially balanced Partial Label tuning
@@ -72,6 +74,7 @@ Original BMP
   -> directional Lab colour difference
   -> dendrite orientation-difference feature
   -> edge-aware boundary score (available-feature renormalization near borders)
+  -> optional Ridge-normal NMS centerline suppression
   -> Positive / Negative / Unknown Partial Label comparison
   -> exclusion-mask filtering
   -> complete-evaluation ROI + Multi-Tolerance diagnostics
@@ -80,6 +83,6 @@ Original BMP
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware tuning/bridging, Smart Trace, and final PNG / mask / SVG export remain planned.
+Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware tuning/bridging, Smart Trace, and final PNG / mask / SVG export remain planned. Topology v2 remains diagnostic-only until its behaviour is validated on several real micrographs.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
