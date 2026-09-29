@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.6.2-alpha - 2026-09-29
+
+### Added
+- Middle-button drag now temporarily pans the viewer from any annotation tool without changing the selected tool.
+- Diagnostic JSON v5 performance block with latest browser-session timings for feature computation, boundary analysis, comparison, Auto Tune, closed-fill rebuild, annotation commit, and autosave.
+- Closed-region component-index caching so repeated fill seeds reuse the same positive-reference geometry.
+
+### Changed
+- Closed-region Negative Fill rebuild now labels the preview once and resolves all seeds against that shared connected-component index instead of flood-filling the full preview once per seed.
+- The 3 px closed-fill safety dilation now uses an O(N) separable sliding-window pass and is computed once per region index.
+- Tool switching no longer rebuilds the full exclusion mask only to change selection handles.
+- Viewer pan transforms are coalesced with `requestAnimationFrame`.
+- Autosave snapshot creation and IndexedDB writes are deferred to browser idle time after the existing debounce.
+- Reference/overlay opacity sliders defer full-preview redraws until slider release.
+- App version advanced to `0.3.6.2-alpha`; boundary extraction identifier remains `boundary-v4-dendrite-negref`.
+
+### Validation
+- JavaScript syntax validation passed for all source modules.
+- Sliding-window safety dilation matched a brute-force dilation across multiple synthetic dimensions and radii.
+- Synthetic 1800×1320 / 35-seed closed-fill test completed with one initial region-index build and a substantially faster cached rebuild; exact timing is environment dependent.
+- Existing seed-based project persistence remains unchanged and compatible with v0.3.6.1 projects.
+
 ## v0.3.6.1-alpha - 2026-09-29
 
 ### Added
