@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6.2-alpha / boundary-v4-dendrite-negref**
+**v0.3.6.3-alpha / boundary-v5-edge-aware-negref**
 
 Current capabilities:
 
@@ -23,6 +23,9 @@ Current capabilities:
 - closed-region fill acceleration using one connected-region index per positive-reference geometry, reused across seed operations
 - middle-button drag temporary pan in every annotation tool without changing the active tool
 - idle-time IndexedDB autosave and diagnostic performance timings for feature extraction, analysis, comparison, Auto Tune, annotation, fill rebuild, and autosave
+- annotation-assist view that visually attenuates automatic boundaries and Negative overlays without changing analysis data; `H` temporarily hides the automatic overlay and `V` toggles assist view
+- edge-aware scoring that renormalizes the boundary score over geometrically available features near image borders while guarding the outermost 1 preview pixel against frame artifacts
+- diagnostic-only topology analysis: interior endpoint proxy plus closed-fill seed closure rates at 0/1/2/3 px bridge probes
 - Partial Label evaluation: Positive / Negative / Unknown, with unlabelled predictions excluded from false-positive counts
 - whole-image Positive Recall / Negative Leakage / Alignment Error metrics
 - 4x4 region-balanced Macro Negative Leakage for spatially balanced Partial Label tuning
@@ -68,7 +71,7 @@ Original BMP
   -> multi-scale Dark Ridge
   -> directional Lab colour difference
   -> dendrite orientation-difference feature
-  -> boundary score
+  -> edge-aware boundary score (available-feature renormalization near borders)
   -> Positive / Negative / Unknown Partial Label comparison
   -> exclusion-mask filtering
   -> complete-evaluation ROI + Multi-Tolerance diagnostics
@@ -77,6 +80,6 @@ Original BMP
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, Smart Trace, and final PNG / mask / SVG export remain planned.
+Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware tuning/bridging, Smart Trace, and final PNG / mask / SVG export remain planned.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
