@@ -103,7 +103,7 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
   };
 }
 
-export function buildRawBoundaryMask(features, options = {}) {
+function buildBoundaryCandidates(features, options = {}) {
   const sensitivity = options.sensitivity ?? 62;
   const rawWeights = {
     dark: Math.max(0, Number(options.darkWeight ?? 15)),
@@ -112,6 +112,7 @@ export function buildRawBoundaryMask(features, options = {}) {
     dendrite: Math.max(0, Number(options.dendriteWeight ?? 20)),
   };
   const calibration = options.localCalibration ?? null;
+  const score = new Float32Array(features.width * features.height);
   const mask = new Uint8Array(features.width * features.height);
   const margins = features.featureMargins ?? {
     dark: 0,
@@ -154,6 +155,8 @@ export function buildRawBoundaryMask(features, options = {}) {
     const base = y * features.width;
     for (let x = frameGuard; x < features.width - frameGuard; x += 1) {
       const p = base + x;
+      const value = scoreAt(p, x, y);
+      score[p] = value;
       const localSensitivity = calibration?.values?.length
         ? Math.max(1, Math.min(100, sensitivity + interpolateSensitivityDelta(
           calibration,
@@ -163,11 +166,59 @@ export function buildRawBoundaryMask(features, options = {}) {
           features.height,
         )))
         : sensitivity;
-      const threshold = thresholdFromSensitivity(localSensitivity);
-      if (scoreAt(p, x, y) >= threshold) mask[p] = 1;
+      if (value >= thresholdFromSensitivity(localSensitivity)) mask[p] = 1;
     }
   }
-  return mask;
+  return { score, mask };
+}
+
+export function buildRawBoundaryMask(features, options = {}) {
+  return buildBoundaryCandidates(features, options).mask;
+}
+
+export function applyDirectionalNonMaximumSuppression(mask, score, features, options = {}) {
+  if (!mask || !score || mask.length !== score.length) {
+    throw new Error("NMS用の境界候補またはスコアが不正です。");
+  }
+  const { width, height } = features;
+  const out = new Uint8Array(mask.length);
+  const ridgeMargin = Math.max(1, Math.round(
+    options.ridgeMargin ?? features.featureMargins?.ridge ?? 5,
+  ));
+
+  for (let y = 0; y < height; y += 1) {
+    const base = y * width;
+    for (let x = 0; x < width; x += 1) {
+      const p = base + x;
+      if (!mask[p]) continue;
+
+      // Near the image edge the Ridge orientation is geometrically unavailable.
+      // Keep the edge-aware candidate rather than imposing an arbitrary normal.
+      if (x < ridgeMargin || y < ridgeMargin
+        || x >= width - ridgeMargin || y >= height - ridgeMargin) {
+        out[p] = 1;
+        continue;
+      }
+
+      const orientation = features.orientation?.[p] ?? 0;
+      let offset = 1;
+      if (orientation === 1) offset = width + 1;
+      else if (orientation === 2) offset = width;
+      else if (orientation === 3) offset = width - 1;
+
+      const before = p - offset;
+      const after = p + offset;
+      const beforeScore = mask[before] ? score[before] : -1;
+      const afterScore = mask[after] ? score[after] : -1;
+      const center = score[p];
+
+      // Deterministic tie-break keeps one side of a flat 2-3 px plateau instead
+      // of retaining both edges of the same thick response band.
+      if (center > beforeScore && center >= afterScore) out[p] = 1;
+    }
+  }
+
+  return out;
 }
 function neighborSupport(mask, width, height) {
   const out = new Uint8Array(mask.length);
@@ -250,11 +301,17 @@ function applyExclusionInPlace(mask, exclusionMask) {
 
 export async function buildBoundaryMask(features, options = {}) {
   const onProgress = options.onProgress ?? (() => {});
-  onProgress(0.12);
+  onProgress(0.10);
   await new Promise(resolve => setTimeout(resolve, 0));
-  const raw = buildRawBoundaryMask(features, options);
+  const candidates = buildBoundaryCandidates(features, options);
+  applyExclusionInPlace(candidates.mask, options.exclusionMask);
+  onProgress(0.38);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const raw = options.centerlineNms === false
+    ? candidates.mask
+    : applyDirectionalNonMaximumSuppression(candidates.mask, candidates.score, features, options);
   applyExclusionInPlace(raw, options.exclusionMask);
-  onProgress(0.5);
+  onProgress(0.62);
   await new Promise(resolve => setTimeout(resolve, 0));
   const result = applyMinComponent(raw, features.width, features.height, options.minComponent ?? 24);
   applyExclusionInPlace(result, options.exclusionMask);
@@ -652,7 +709,14 @@ function scoreProcessedMask(mask, referenceCenterline, features, options, helper
 }
 
 async function optimizeMinComponent(features, referenceCenterline, config, options, helpers, progress) {
-  const raw = buildRawBoundaryMask(features, config);
+  const candidates = buildBoundaryCandidates(features, {
+    ...config,
+    edgeFrameGuard: options.edgeFrameGuard ?? 1,
+  });
+  applyExclusionInPlace(candidates.mask, options.exclusionMask);
+  const raw = config.centerlineNms === false
+    ? candidates.mask
+    : applyDirectionalNonMaximumSuppression(candidates.mask, candidates.score, features, config);
   applyExclusionInPlace(raw, options.exclusionMask);
   const supported = neighborSupport(raw, features.width, features.height);
   const sizes = computeComponentSizeMap(supported, features.width, features.height);
@@ -715,6 +779,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     colorWeight: clampInt(options.current?.colorWeight ?? 25, 0, 100),
     dendriteWeight: clampInt(options.current?.dendriteWeight ?? 20, 0, 100),
     minComponent: clampInt(options.current?.minComponent ?? 24, 1, 300),
+    centerlineNms: options.current?.centerlineNms !== false,
   };
 
   const helpers = buildFastEvaluationHelpers(
