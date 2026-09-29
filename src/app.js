@@ -814,7 +814,12 @@ function scheduleClosedFillRefresh() {
     state.closedFillRefreshTimer = null;
     const run = () => {
       state.closedFillRefreshIdleHandle = null;
-      if (!state.drawingReference && state.closedNegativeDirty) refreshClosedFillNow();
+      if (!state.closedNegativeDirty) return;
+      if (state.drawingReference || state.dragging || state.rectInteraction || state.busy) {
+        scheduleClosedFillRefresh();
+        return;
+      }
+      refreshClosedFillNow();
     };
     if ("requestIdleCallback" in window) {
       state.closedFillRefreshIdleHandle = window.requestIdleCallback(run, { timeout: 1200 });
@@ -1513,6 +1518,8 @@ async function exportDiagnostics() {
 
 async function loadBmp(file) {
   if (!file) return;
+  cancelScheduledClosedFillRefresh();
+  cancelScheduledAutosave();
   state.abortController?.abort();
   state.abortController = new AbortController();
   setBusy(true);
@@ -1625,6 +1632,7 @@ async function loadBmp(file) {
     state.manualNegativeMask = null;
     state.negativeCenterline = null;
     state.closedNegativeMask = null;
+    state.closedNegativeRegionIndex = null;
     state.closedNegativeSeeds = [];
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
@@ -2186,8 +2194,28 @@ function setSelectedRectIndex(kind, index) {
 }
 
 function renderRectLayer(kind, previewRect = null) {
-  if (kind === "exclusion") rebuildExclusionLayer(previewRect);
-  else rebuildFullRoiLayer(previewRect);
+  if (!state.preview) return;
+  if (kind === "exclusion") {
+    renderExclusionCanvas(
+      els.exclusionCanvas,
+      state.exclusionRects,
+      state.preview.width,
+      state.preview.height,
+      previewRect,
+      state.tool === "exclusion" ? state.selectedExclusionIndex : -1,
+      annotationHandleSize(),
+    );
+  } else {
+    renderFullEvaluationRoiCanvas(
+      els.fullRoiCanvas,
+      state.fullEvaluationRois,
+      state.preview.width,
+      state.preview.height,
+      previewRect,
+      state.tool === "full-roi" ? state.selectedFullRoiIndex : -1,
+      annotationHandleSize(),
+    );
+  }
 }
 
 function rectsEqual(a, b) {
