@@ -5,26 +5,44 @@ function clampInt(value, min, max) {
 function dilateSquare(mask, width, height, radius) {
   const r = Math.max(0, Math.round(radius ?? 0));
   if (!r) return mask.slice();
+
+  // Separable sliding-window max filter: O(width*height), independent of r^2.
+  const horizontal = new Uint8Array(mask.length);
   const out = new Uint8Array(mask.length);
+
   for (let y = 0; y < height; y += 1) {
-    const y0 = Math.max(0, y - r);
-    const y1 = Math.min(height - 1, y + r);
+    const base = y * width;
+    let active = 0;
+    for (let sx = 0; sx <= Math.min(width - 1, r); sx += 1) {
+      if (mask[base + sx]) active += 1;
+    }
     for (let x = 0; x < width; x += 1) {
-      const x0 = Math.max(0, x - r);
-      const x1 = Math.min(width - 1, x + r);
-      let found = false;
-      for (let sy = y0; sy <= y1 && !found; sy += 1) {
-        const base = sy * width;
-        for (let sx = x0; sx <= x1; sx += 1) {
-          if (mask[base + sx]) {
-            found = true;
-            break;
-          }
-        }
+      if (x > 0) {
+        const addX = x + r;
+        if (addX < width && mask[base + addX]) active += 1;
+        const removeX = x - r - 1;
+        if (removeX >= 0 && mask[base + removeX]) active -= 1;
       }
-      if (found) out[y * width + x] = 1;
+      if (active > 0) horizontal[base + x] = 1;
     }
   }
+
+  for (let x = 0; x < width; x += 1) {
+    let active = 0;
+    for (let sy = 0; sy <= Math.min(height - 1, r); sy += 1) {
+      if (horizontal[sy * width + x]) active += 1;
+    }
+    for (let y = 0; y < height; y += 1) {
+      if (y > 0) {
+        const addY = y + r;
+        if (addY < height && horizontal[addY * width + x]) active += 1;
+        const removeY = y - r - 1;
+        if (removeY >= 0 && horizontal[removeY * width + x]) active -= 1;
+      }
+      if (active > 0) out[y * width + x] = 1;
+    }
+  }
+
   return out;
 }
 
@@ -35,113 +53,154 @@ function validateInputs(referenceMask, width, height) {
   if (width <= 0 || height <= 0) throw new Error("プレビュー寸法が不正です。");
 }
 
-export function fillClosedNegativeRegion(referenceMask, width, height, seed, options = {}) {
+export function buildClosedNegativeRegionIndex(referenceMask, width, height, options = {}) {
   validateInputs(referenceMask, width, height);
+  const totalPixels = width * height;
+  const safetyRadius = Math.max(0, Math.round(options.safetyRadius ?? 3));
+  const labels = new Uint32Array(totalPixels);
+  const queue = new Int32Array(totalPixels);
+  const componentSizes = [0];
+  const componentTouchesEdge = [false];
+  let componentCount = 0;
+
+  for (let start = 0; start < totalPixels; start += 1) {
+    if (referenceMask[start] || labels[start]) continue;
+    componentCount += 1;
+    let head = 0;
+    let tail = 0;
+    let touchesEdge = false;
+    queue[tail++] = start;
+    labels[start] = componentCount;
+
+    while (head < tail) {
+      const p = queue[head++];
+      const x = p % width;
+      const y = Math.floor(p / width);
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) touchesEdge = true;
+
+      if (x > 0) {
+        const np = p - 1;
+        if (!referenceMask[np] && !labels[np]) {
+          labels[np] = componentCount;
+          queue[tail++] = np;
+        }
+      }
+      if (x + 1 < width) {
+        const np = p + 1;
+        if (!referenceMask[np] && !labels[np]) {
+          labels[np] = componentCount;
+          queue[tail++] = np;
+        }
+      }
+      if (y > 0) {
+        const np = p - width;
+        if (!referenceMask[np] && !labels[np]) {
+          labels[np] = componentCount;
+          queue[tail++] = np;
+        }
+      }
+      if (y + 1 < height) {
+        const np = p + width;
+        if (!referenceMask[np] && !labels[np]) {
+          labels[np] = componentCount;
+          queue[tail++] = np;
+        }
+      }
+    }
+
+    componentSizes[componentCount] = tail;
+    componentTouchesEdge[componentCount] = touchesEdge;
+  }
+
+  const safetyMask = safetyRadius ? dilateSquare(referenceMask, width, height, safetyRadius) : referenceMask.slice();
+  const safeComponentSizes = new Uint32Array(componentCount + 1);
+  for (let p = 0; p < totalPixels; p += 1) {
+    const label = labels[p];
+    if (label && !safetyMask[p]) safeComponentSizes[label] += 1;
+  }
+
+  return {
+    labels,
+    safetyMask,
+    componentSizes,
+    componentTouchesEdge,
+    safeComponentSizes,
+    componentCount,
+    safetyRadius,
+    width,
+    height,
+  };
+}
+
+function classifySeed(index, width, height, seed, options = {}, selectedLabels = null) {
   const x = clampInt(seed?.x ?? -1, -1, width);
   const y = clampInt(seed?.y ?? -1, -1, height);
   if (x < 0 || y < 0 || x >= width || y >= height) {
-    return { accepted: false, reason: "seed-outside", seed: { x, y }, mask: null, regionPixels: 0, fillPixels: 0 };
+    return { accepted: false, reason: "seed-outside", seed: { x, y }, label: 0, regionPixels: 0, fillPixels: 0 };
   }
 
-  const start = y * width + x;
-  if (referenceMask[start]) {
-    return { accepted: false, reason: "seed-on-boundary", seed: { x, y }, mask: null, regionPixels: 0, fillPixels: 0 };
+  const p = y * width + x;
+  const label = index.labels[p];
+  if (!label) {
+    return { accepted: false, reason: "seed-on-boundary", seed: { x, y }, label: 0, regionPixels: 0, fillPixels: 0 };
   }
 
   const totalPixels = width * height;
   const maxAreaFraction = Math.max(0.01, Math.min(0.90, Number(options.maxAreaFraction ?? 0.35)));
   const maxPixels = Math.max(1, Math.floor(totalPixels * maxAreaFraction));
   const minPixels = Math.max(1, Math.round(options.minPixels ?? 12));
-  const safetyRadius = Math.max(0, Math.round(options.safetyRadius ?? 3));
+  const regionPixels = index.componentSizes[label] ?? 0;
+  const fillPixels = index.safeComponentSizes[label] ?? 0;
 
-  const visited = new Uint8Array(totalPixels);
-  const queue = new Int32Array(totalPixels);
-  let head = 0;
-  let tail = 0;
-  let reachedEdge = false;
-  queue[tail++] = start;
-  visited[start] = 1;
-
-  while (head < tail) {
-    const p = queue[head++];
-    const px = p % width;
-    const py = Math.floor(p / width);
-
-    if (px === 0 || py === 0 || px === width - 1 || py === height - 1) {
-      reachedEdge = true;
-      break;
-    }
-    if (tail > maxPixels) {
-      return {
-        accepted: false,
-        reason: "region-too-large",
-        seed: { x, y },
-        mask: null,
-        regionPixels: tail,
-        fillPixels: 0,
-        maxPixels,
-      };
-    }
-
-    const left = p - 1;
-    const right = p + 1;
-    const up = p - width;
-    const down = p + width;
-    for (const np of [left, right, up, down]) {
-      if (visited[np] || referenceMask[np]) continue;
-      visited[np] = 1;
-      queue[tail++] = np;
-    }
+  if (index.componentTouchesEdge[label]) {
+    return { accepted: false, reason: "open-region", seed: { x, y }, label, regionPixels, fillPixels: 0 };
   }
-
-  if (reachedEdge) {
-    return {
-      accepted: false,
-      reason: "open-region",
-      seed: { x, y },
-      mask: null,
-      regionPixels: tail,
-      fillPixels: 0,
-    };
+  if (regionPixels > maxPixels) {
+    return { accepted: false, reason: "region-too-large", seed: { x, y }, label, regionPixels, fillPixels: 0, maxPixels };
   }
-
-  const safetyMask = safetyRadius ? dilateSquare(referenceMask, width, height, safetyRadius) : referenceMask;
-  const mask = new Uint8Array(totalPixels);
-  let fillPixels = 0;
-  for (let i = 0; i < tail; i += 1) {
-    const p = queue[i];
-    if (safetyMask[p]) continue;
-    mask[p] = 1;
-    fillPixels += 1;
-  }
-
   if (fillPixels < minPixels) {
-    return {
-      accepted: false,
-      reason: "region-too-small",
-      seed: { x, y },
-      mask: null,
-      regionPixels: tail,
-      fillPixels,
-    };
+    return { accepted: false, reason: "region-too-small", seed: { x, y }, label, regionPixels, fillPixels };
+  }
+  if (selectedLabels?.has(label)) {
+    return { accepted: false, reason: "duplicate-region", seed: { x, y }, label, regionPixels, fillPixels: 0 };
   }
 
   return {
     accepted: true,
     reason: null,
     seed: { x, y },
-    mask,
-    regionPixels: tail,
+    label,
+    regionPixels,
     fillPixels,
-    safetyRadius,
+    safetyRadius: index.safetyRadius,
   };
 }
 
-export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = [], options = {}) {
-  validateInputs(referenceMask, width, height);
+export function fillClosedNegativeRegion(referenceMask, width, height, seed, options = {}) {
+  const index = buildClosedNegativeRegionIndex(referenceMask, width, height, options);
+  const result = classifySeed(index, width, height, seed, options);
+  if (!result.accepted) return { ...result, mask: null };
+
+  const mask = new Uint8Array(width * height);
+  for (let p = 0; p < mask.length; p += 1) {
+    if (index.labels[p] === result.label && !index.safetyMask[p]) mask[p] = 1;
+  }
+  return { ...result, mask };
+}
+
+export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = [], options = {}, regionIndex = null) {
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const requestedSafetyRadius = Math.max(0, Math.round(options.safetyRadius ?? 3));
+  const index = regionIndex
+    && regionIndex.width === width
+    && regionIndex.height === height
+    && regionIndex.safetyRadius === requestedSafetyRadius
+    ? regionIndex
+    : buildClosedNegativeRegionIndex(referenceMask, width, height, options);
   const mask = new Uint8Array(width * height);
   const results = [];
-  const seen = new Set();
+  const selectedLabels = new Set();
+  const seenSeeds = new Set();
 
   for (const rawSeed of seeds ?? []) {
     const seed = {
@@ -149,25 +208,39 @@ export function rebuildClosedNegativeMask(referenceMask, width, height, seeds = 
       y: clampInt(rawSeed?.y ?? -1, -1, height),
     };
     const key = `${seed.x},${seed.y}`;
-    if (seen.has(key)) {
-      results.push({ accepted: false, reason: "duplicate-seed", seed, mask: null, regionPixels: 0, fillPixels: 0 });
+    if (seenSeeds.has(key)) {
+      results.push({ accepted: false, reason: "duplicate-seed", seed, label: 0, regionPixels: 0, fillPixels: 0 });
       continue;
     }
-    seen.add(key);
+    seenSeeds.add(key);
 
-    const result = fillClosedNegativeRegion(referenceMask, width, height, seed, options);
-    results.push({ ...result, mask: undefined });
-    if (!result.accepted || !result.mask) continue;
+    const result = classifySeed(index, width, height, seed, options, selectedLabels);
+    results.push(result);
+    if (result.accepted) selectedLabels.add(result.label);
+  }
+
+  let fillPixels = 0;
+  if (selectedLabels.size) {
+    const selectedFlags = new Uint8Array(index.componentCount + 1);
+    for (const label of selectedLabels) selectedFlags[label] = 1;
     for (let p = 0; p < mask.length; p += 1) {
-      if (result.mask[p]) mask[p] = 1;
+      if (!index.safetyMask[p] && selectedFlags[index.labels[p]]) {
+        mask[p] = 1;
+        fillPixels += 1;
+      }
     }
   }
 
+  const finishedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   return {
     mask,
     results,
     validCount: results.filter(item => item.accepted).length,
     invalidCount: results.filter(item => !item.accepted).length,
+    fillPixels,
+    componentCount: index.componentCount,
+    elapsedMs: Math.max(0, finishedAt - startedAt),
+    regionIndex: index,
   };
 }
 

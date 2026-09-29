@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.6.1-alpha</div>
+    <div class="version">v0.3.6.2-alpha</div>
   </header>
 
   <main class="layout">
@@ -45,6 +45,7 @@
           <li>粒を黄色線で完全に囲ったら「閉領域→非粒界」で内側をクリックし、高信頼Negativeとして塗る</li>
           <li>スケールバー・文字などは「除外矩形」で解析対象外にする</li>
           <li>「比較」「Auto Tune v2」で判定との差を確認・最適化する</li>
+          <li>注釈ツール中も中ボタンドラッグで画面移動できる</li>
         </ol>
         <p class="help">v0.3では、お手本の中心線を評価に使うため、ブラシの太さによるRecallのズレを抑えています。</p>
       </section>
@@ -166,7 +167,7 @@
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ファイルを書き出す</button>
-        <p class="help">出力: diagnostic.json v4 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">出力: diagnostic.json v5 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
       </section>
 
       <section>
@@ -192,6 +193,9 @@
           <li class="done">Auto Tune v2（Coordinate Descent / feature=0 / Ablation）</li>
           <li class="done">閉領域Negative Fill / seed保存 / Undo・Redo</li>
           <li class="done">Macro Negative Leakage（4×4地域均等）</li>
+          <li class="done">閉領域Fill高速化（1回の領域分割＋キャッシュ）</li>
+          <li class="done">中ボタンドラッグによる一時パン</li>
+          <li class="done">Idle Autosave / Performance診断</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>

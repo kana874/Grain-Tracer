@@ -230,6 +230,7 @@ export function buildDiagnosticReport(input) {
     fullEvaluationRois,
     localCalibration,
     history,
+    performance,
     algorithmVersion,
     appVersion,
   } = input;
@@ -369,7 +370,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v4",
+    schema: "graintracer-diagnostic-v5",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -389,6 +390,19 @@ export function buildDiagnosticReport(input) {
       localCalibrationGrid: "4x4",
     },
     localCalibration: localCalibration ?? null,
+    performance: {
+      featureComputeMs: performance?.featureComputeMs ?? null,
+      boundaryAnalysisMs: performance?.boundaryAnalysisMs ?? null,
+      comparisonMs: performance?.comparisonMs ?? null,
+      autoTuneMs: performance?.autoTuneMs ?? null,
+      closedFillRebuildMs: performance?.closedFillRebuildMs ?? null,
+      annotationCommitMs: performance?.annotationCommitMs ?? null,
+      autosaveSerializeMs: performance?.autosaveSerializeMs ?? null,
+      autosaveWriteMs: performance?.autosaveWriteMs ?? null,
+      previewPixels: performance?.previewPixels ?? (preview.width * preview.height),
+      closedFillSeedCount: performance?.closedFillSeedCount ?? (closedNegativeSeeds ?? []).length,
+      note: "Latest measured duration per operation in this browser session; null means not measured yet.",
+    },
     evaluation: {
       mode: "partial-label",
       positiveRecall: metrics.positiveRecall,
@@ -505,6 +519,7 @@ export function buildDiagnosticReport(input) {
       "Negative Leakage is pixel-weighted over explicit non-boundary labels.",
       "Macro Negative Leakage is the unweighted mean leakage across 4x4 regions that contain Negative labels and is used by Auto Tune v2 in Partial Label mode.",
       "Closed-region Negative Fill is regenerated from saved seed coordinates and the current positive reference geometry.",
+      "Performance timings are the latest browser-session measurements in milliseconds and are intended for regression diagnosis rather than cross-device benchmarking.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
       "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",
       "Multi-Tolerance diagnostics are reported for 1, 2, 3, and 4 preview pixels.",

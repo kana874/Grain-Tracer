@@ -48,6 +48,7 @@ button.tool-button.active { border-color: var(--accent); background: #173f3c; co
 .viewer { position: relative; overflow: hidden; background-color: #0b0d11; background-image: linear-gradient(45deg, #141820 25%, transparent 25%), linear-gradient(-45deg, #141820 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #141820 75%), linear-gradient(-45deg, transparent 75%, #141820 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; touch-action: none; cursor: grab; }
 .viewer.dragging { cursor: grabbing; }
 .viewer.reference-mode { cursor: crosshair; }
+.viewer.reference-mode.dragging { cursor: grabbing; }
 .canvas-stage { position: absolute; transform-origin: 0 0; display: none; }
 .canvas-stage canvas { position: absolute; inset: 0; image-rendering: auto; }
 #overlayCanvas, #referenceCanvas, #negativeCanvas, #exclusionCanvas, #fullRoiCanvas { pointer-events: none; }

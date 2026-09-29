@@ -159,9 +159,17 @@ Positive and non-boundary labels are mutually exclusive while drawing: painting 
 
 A closed-region Negative Fill tool can convert the interior of a fully closed positive reference loop into high-confidence Negative training data. The user explicitly clicks the intended interior. Flood fill is rejected if it reaches the image edge or exceeds the safety area limit. Filled pixels keep a 3 px safety distance from the positive reference, and Positive always overrides Negative. Project persistence stores seed coordinates rather than the expanded fill mask; fills are regenerated when the positive reference changes or a project is restored.
 
+v0.3.6.2 indexes connected non-reference regions once for the current positive-reference geometry. Multiple closed-fill seeds are resolved against that shared index and the 3 px safety dilation is also computed once. The index is invalidated only when positive-reference geometry changes. This replaces the earlier seed-by-seed full-preview flood-fill rebuild.
+
+Viewer navigation is independent of the active annotation tool: left-button input keeps the selected tool semantics, while middle-button drag is always a temporary pan gesture. Panning transforms are coalesced through `requestAnimationFrame`.
+
 Non-boundary examples extend the evaluated area without treating every unlabelled pixel as negative. Exclusion rectangles are also applied before connected-component evaluation so ignored image content cannot support a retained candidate component.
 
 Undo/Redo covers positive/negative line edits, exclusion-region edits, and complete-evaluation ROI edits. Exclusion and ROI rectangles can be selected, moved, resized from all four sides/corners, and deleted after creation or project reload.
+
+## 9. Performance and responsiveness
+
+v0.3.6.2 moves debounced autosave snapshot/write work to browser idle time when `requestIdleCallback` is available, with a timeout fallback. Tool switching no longer rebuilds the full exclusion mask, and opacity sliders defer expensive preview redraws until release. Diagnostic JSON v5 records the latest browser-session timings for feature computation, boundary analysis, comparison, Auto Tune, closed-fill rebuild, annotation commit, and autosave.
 
 ## 9. Persistence
 

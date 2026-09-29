@@ -53,7 +53,6 @@ import {
 } from "./annotations.js";
 import {
   combineNegativeMasks,
-  fillClosedNegativeRegion,
   rebuildClosedNegativeMask,
 } from "./closed-negative-fill.js";
 
@@ -145,6 +144,8 @@ const state = {
   ty: 0,
   tool: "pan",
   dragging: false,
+  dragPointerId: null,
+  dragButton: null,
   drawingReference: false,
   dragOrigin: null,
   lastReferencePoint: null,
@@ -163,12 +164,18 @@ const state = {
   negativeCenterline: null,
   negativeCount: 0,
   closedNegativeMask: null,
+  closedNegativeRegionIndex: null,
   closedNegativeSeeds: [],
   closedNegativeCount: 0,
   closedNegativeValidCount: 0,
   closedNegativeInvalidCount: 0,
+  closedNegativeDirty: false,
+  closedFillRefreshTimer: null,
+  closedFillRefreshIdleHandle: null,
+  combinedNegativeCount: 0,
   exclusionRects: [],
   exclusionMask: null,
+  exclusionPixelCount: 0,
   fullEvaluationRois: [],
   comparisonMode: false,
   lastMetrics: null,
@@ -177,7 +184,44 @@ const state = {
   busy: false,
   abortController: null,
   autosaveTimer: null,
+  autosaveIdleHandle: null,
+  transformFrame: null,
+  performance: {
+    featureComputeMs: null,
+    boundaryAnalysisMs: null,
+    comparisonMs: null,
+    autoTuneMs: null,
+    closedFillRebuildMs: null,
+    annotationCommitMs: null,
+    autosaveSerializeMs: null,
+    autosaveWriteMs: null,
+  },
 };
+
+function nowMs() {
+  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+}
+
+function recordPerformance(name, startedAt) {
+  state.performance[name] = Math.max(0, nowMs() - startedAt);
+  return state.performance[name];
+}
+
+function performanceSnapshot() {
+  return {
+    ...state.performance,
+    previewPixels: state.preview ? state.preview.width * state.preview.height : 0,
+    closedFillSeedCount: state.closedNegativeSeeds.length,
+  };
+}
+
+function scheduleTransform() {
+  if (state.transformFrame != null) return;
+  state.transformFrame = requestAnimationFrame(() => {
+    state.transformFrame = null;
+    applyTransform();
+  });
+}
 
 function formatBytes(bytes) {
   const units = ["B", "KB", "MB", "GB"];
@@ -670,14 +714,18 @@ function renderNormalOverlay() {
   updateControls();
 }
 
-function renderReferenceCanvas() {
+function renderReferenceCanvas(rebuildMask = true) {
   if (!state.preview || !state.referenceCenterline) return;
-  state.referenceMask = dilateBinaryMask(
-    state.referenceCenterline,
-    state.preview.width,
-    state.preview.height,
-    referenceJudgementRadius(),
-  );
+  if (rebuildMask) {
+    state.referenceMask = dilateBinaryMask(
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      referenceJudgementRadius(),
+    );
+    state.closedNegativeRegionIndex = null;
+    state.closedNegativeDirty = state.closedNegativeSeeds.length > 0;
+  }
   const rgba = new Uint8ClampedArray(state.referenceMask.length * 4);
   for (let p = 0; p < state.referenceMask.length; p += 1) {
     if (!state.referenceMask[p]) continue;
@@ -699,18 +747,90 @@ function closedNegativeFillOptions() {
 }
 
 function rebuildClosedNegativeState() {
-  if (!state.preview || !state.referenceMask) return;
+  if (!state.preview || !state.referenceMask) return null;
+  if (!state.closedNegativeSeeds.length) {
+    if (!state.closedNegativeMask || state.closedNegativeMask.length !== state.preview.width * state.preview.height) {
+      state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
+    } else {
+      state.closedNegativeMask.fill(0);
+    }
+    state.closedNegativeCount = 0;
+    state.closedNegativeValidCount = 0;
+    state.closedNegativeInvalidCount = 0;
+    state.closedNegativeDirty = false;
+    state.performance.closedFillRebuildMs = 0;
+    return null;
+  }
+
+  const startedAt = nowMs();
   const rebuilt = rebuildClosedNegativeMask(
     state.referenceMask,
     state.preview.width,
     state.preview.height,
     state.closedNegativeSeeds,
     closedNegativeFillOptions(),
+    state.closedNegativeRegionIndex,
   );
+  state.closedNegativeRegionIndex = rebuilt.regionIndex ?? null;
   state.closedNegativeMask = rebuilt.mask;
-  state.closedNegativeCount = countMaskPixels(rebuilt.mask);
+  state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
   state.closedNegativeValidCount = rebuilt.validCount;
   state.closedNegativeInvalidCount = rebuilt.invalidCount;
+  state.closedNegativeDirty = false;
+  state.performance.closedFillRebuildMs = rebuilt.elapsedMs ?? recordPerformance("closedFillRebuildMs", startedAt);
+  return rebuilt;
+}
+
+function cancelScheduledClosedFillRefresh() {
+  clearTimeout(state.closedFillRefreshTimer);
+  state.closedFillRefreshTimer = null;
+  if (state.closedFillRefreshIdleHandle != null) {
+    if ("cancelIdleCallback" in window) window.cancelIdleCallback(state.closedFillRefreshIdleHandle);
+    else clearTimeout(state.closedFillRefreshIdleHandle);
+  }
+  state.closedFillRefreshIdleHandle = null;
+}
+
+function refreshClosedFillNow() {
+  cancelScheduledClosedFillRefresh();
+  if (!state.closedNegativeDirty || !state.preview) return;
+  rebuildClosedNegativeState();
+  rebuildCombinedNegativeMask();
+  renderBinaryMaskCanvas(
+    els.negativeCanvas,
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    referenceOpacityRatio(),
+    [255, 138, 0],
+  );
+  updateAnnotationStatus();
+}
+
+function scheduleClosedFillRefresh() {
+  cancelScheduledClosedFillRefresh();
+  if (!state.closedNegativeDirty || !state.closedNegativeSeeds.length || !state.preview) return;
+  state.closedFillRefreshTimer = setTimeout(() => {
+    state.closedFillRefreshTimer = null;
+    const run = () => {
+      state.closedFillRefreshIdleHandle = null;
+      if (!state.closedNegativeDirty) return;
+      if (state.drawingReference || state.dragging || state.rectInteraction || state.busy) {
+        scheduleClosedFillRefresh();
+        return;
+      }
+      refreshClosedFillNow();
+    };
+    if ("requestIdleCallback" in window) {
+      state.closedFillRefreshIdleHandle = window.requestIdleCallback(run, { timeout: 1200 });
+    } else {
+      state.closedFillRefreshIdleHandle = setTimeout(run, 0);
+    }
+  }, 80);
+}
+
+function ensureClosedNegativeFresh() {
+  if (state.closedNegativeDirty) refreshClosedFillNow();
 }
 
 function rebuildCombinedNegativeMask() {
@@ -720,18 +840,21 @@ function rebuildCombinedNegativeMask() {
     state.closedNegativeMask,
     state.referenceMask,
   );
+  state.combinedNegativeCount = countMaskPixels(state.negativeMask);
 }
 
-function renderNegativeCanvas(rebuildClosed = true) {
+function renderNegativeCanvas(rebuildClosed = true, rebuildManual = true) {
   if (!state.preview || !state.negativeCenterline) return;
-  state.manualNegativeMask = dilateBinaryMask(
-    state.negativeCenterline,
-    state.preview.width,
-    state.preview.height,
-    referenceJudgementRadius(),
-  );
+  if (rebuildManual) {
+    state.manualNegativeMask = dilateBinaryMask(
+      state.negativeCenterline,
+      state.preview.width,
+      state.preview.height,
+      referenceJudgementRadius(),
+    );
+  }
   if (rebuildClosed) rebuildClosedNegativeState();
-  rebuildCombinedNegativeMask();
+  if (rebuildClosed || rebuildManual || !state.negativeMask) rebuildCombinedNegativeMask();
   renderBinaryMaskCanvas(
     els.negativeCanvas,
     state.negativeMask,
@@ -757,6 +880,7 @@ function rebuildExclusionLayer(previewRect = null, showSelection = true) {
     state.preview.width,
     state.preview.height,
   );
+  state.exclusionPixelCount = countMaskPixels(state.exclusionMask);
   renderExclusionCanvas(
     els.exclusionCanvas,
     state.exclusionRects,
@@ -786,8 +910,8 @@ function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
 function updateAnnotationStatus() {
   const manualNegative = state.negativeCount ?? 0;
   const closedNegative = state.closedNegativeCount ?? 0;
-  const combinedNegative = state.negativeMask ? countMaskPixels(state.negativeMask) : 0;
-  const excluded = state.exclusionMask ? countMaskPixels(state.exclusionMask) : 0;
+  const combinedNegative = state.combinedNegativeCount ?? 0;
+  const excluded = state.exclusionPixelCount ?? 0;
   const invalidFillText = state.closedNegativeInvalidCount
     ? ` / 無効seed ${state.closedNegativeInvalidCount}`
     : "";
@@ -808,6 +932,8 @@ function referenceOpacityRatio() {
 
 function refreshReferenceDirty(changedBounds) {
   if (!state.preview || !state.referenceCenterline || !state.referenceMask || !changedBounds) return;
+  state.closedNegativeRegionIndex = null;
+  state.closedNegativeDirty = state.closedNegativeSeeds.length > 0;
   const dirty = rebuildReferenceMaskRegion(
     state.referenceCenterline,
     state.referenceMask,
@@ -837,15 +963,20 @@ function refreshNegativeDirty(changedBounds) {
     changedBounds,
   );
   if (!dirty) return;
+  let countDelta = 0;
   for (let y = dirty.y0; y <= dirty.y1; y += 1) {
     const base = y * state.preview.width;
     for (let x = dirty.x0; x <= dirty.x1; x += 1) {
       const p = base + x;
-      state.negativeMask[p] = state.referenceMask?.[p]
+      const before = state.negativeMask[p] ? 1 : 0;
+      const after = state.referenceMask?.[p]
         ? 0
         : (state.manualNegativeMask[p] || state.closedNegativeMask?.[p] ? 1 : 0);
+      state.negativeMask[p] = after;
+      countDelta += after - before;
     }
   }
+  state.combinedNegativeCount = Math.max(0, (state.combinedNegativeCount ?? 0) + countDelta);
   renderReferenceMaskRegion(
     els.negativeCanvas,
     state.negativeMask,
@@ -921,7 +1052,10 @@ function applyReferenceUndoRedo(direction) {
       applyMaskHistoryPart(part, direction);
       if (part.layer === "reference") referenceChanged = true;
     }
-    if (referenceChanged) renderNegativeCanvas(true);
+    if (referenceChanged) {
+      renderNegativeCanvas(false, true);
+      scheduleClosedFillRefresh();
+    }
   } else if (item.kind === "closed-fill-add") {
     if (direction === "undo") state.closedNegativeSeeds.splice(item.index, 1);
     else state.closedNegativeSeeds.splice(item.index, 0, { ...item.seed });
@@ -1023,6 +1157,7 @@ function clearReference() {
 
   state.referenceCenterline.fill(0);
   state.referenceMask.fill(0);
+  state.closedNegativeRegionIndex = null;
   els.referenceCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
   renderNegativeCanvas(true);
   commitReferenceHistory({ kind: "mask-edit", parts: [{ layer: "reference", entry }] });
@@ -1121,16 +1256,49 @@ function buildProject() {
   });
 }
 
-function scheduleAutosave() {
+function cancelScheduledAutosave() {
   clearTimeout(state.autosaveTimer);
+  state.autosaveTimer = null;
+  if (state.autosaveIdleHandle != null) {
+    if ("cancelIdleCallback" in window) window.cancelIdleCallback(state.autosaveIdleHandle);
+    else clearTimeout(state.autosaveIdleHandle);
+  }
+  state.autosaveIdleHandle = null;
+}
+
+async function performAutosave() {
+  state.autosaveIdleHandle = null;
   if (!els.autosaveEnabled.checked || !state.sourceFingerprint || !state.preview) return;
-  state.autosaveTimer = setTimeout(async () => {
-    try {
-      await saveAutosave(state.sourceFingerprint, buildProject());
-      els.projectStatus.textContent = `自動保存済み ${new Date().toLocaleTimeString("ja-JP")}`;
-    } catch (error) {
-      console.warn("autosave failed", error);
-      els.projectStatus.textContent = "自動保存に失敗しました";
+  try {
+    const serializeStartedAt = nowMs();
+    const project = buildProject();
+    state.performance.autosaveSerializeMs = Math.max(0, nowMs() - serializeStartedAt);
+
+    const writeStartedAt = nowMs();
+    await saveAutosave(state.sourceFingerprint, project);
+    state.performance.autosaveWriteMs = Math.max(0, nowMs() - writeStartedAt);
+    els.projectStatus.textContent = `自動保存済み ${new Date().toLocaleTimeString("ja-JP")} / ${state.performance.autosaveSerializeMs.toFixed(0)}+${state.performance.autosaveWriteMs.toFixed(0)} ms`;
+  } catch (error) {
+    console.warn("autosave failed", error);
+    els.projectStatus.textContent = "自動保存に失敗しました";
+  }
+}
+
+function scheduleAutosave() {
+  cancelScheduledAutosave();
+  if (!els.autosaveEnabled.checked || !state.sourceFingerprint || !state.preview) return;
+  state.autosaveTimer = setTimeout(() => {
+    state.autosaveTimer = null;
+    if ("requestIdleCallback" in window) {
+      state.autosaveIdleHandle = window.requestIdleCallback(
+        () => { performAutosave(); },
+        { timeout: 1500 },
+      );
+    } else {
+      state.autosaveIdleHandle = setTimeout(() => {
+        state.autosaveIdleHandle = null;
+        performAutosave();
+      }, 0);
     }
   }, 700);
 }
@@ -1152,6 +1320,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.negativeCenterline = masks.negativeCenterline;
   state.closedNegativeSeeds = masks.closedNegativeSeeds ?? [];
   state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
+  state.closedNegativeRegionIndex = null;
   state.closedNegativeCount = 0;
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
@@ -1206,6 +1375,7 @@ async function importProjectFile(file) {
 
 async function exportDiagnostics() {
   if (!state.preview || !state.analysisMask || !hasReference()) return;
+  ensureClosedNegativeFresh();
   setBusy(true);
   try {
     const features = await ensureFeatures();
@@ -1233,6 +1403,7 @@ async function exportDiagnostics() {
       fullEvaluationRois: state.fullEvaluationRois,
       localCalibration: state.localCalibration,
       history: state.history,
+      performance: performanceSnapshot(),
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
     });
@@ -1347,6 +1518,8 @@ async function exportDiagnostics() {
 
 async function loadBmp(file) {
   if (!file) return;
+  cancelScheduledClosedFillRefresh();
+  cancelScheduledAutosave();
   state.abortController?.abort();
   state.abortController = new AbortController();
   setBusy(true);
@@ -1361,12 +1534,16 @@ async function loadBmp(file) {
   state.manualNegativeMask = null;
   state.negativeCenterline = null;
   state.closedNegativeMask = null;
+  state.closedNegativeRegionIndex = null;
   state.closedNegativeSeeds = [];
   state.closedNegativeCount = 0;
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
+  state.closedNegativeDirty = false;
+  state.combinedNegativeCount = 0;
   state.exclusionRects = [];
   state.exclusionMask = null;
+  state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -1376,6 +1553,7 @@ async function loadBmp(file) {
   state.localCalibration = null;
   updateLocalCalibrationStatus();
   state.history = [];
+  for (const key of Object.keys(state.performance)) state.performance[key] = null;
   renderHistory();
 
   try {
@@ -1400,11 +1578,15 @@ async function loadBmp(file) {
     state.manualNegativeMask = new Uint8Array(preview.width * preview.height);
     state.negativeCenterline = new Uint8Array(preview.width * preview.height);
     state.closedNegativeMask = new Uint8Array(preview.width * preview.height);
+    state.closedNegativeRegionIndex = null;
     state.closedNegativeSeeds = [];
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
+    state.closedNegativeDirty = false;
+    state.combinedNegativeCount = 0;
     state.exclusionMask = new Uint8Array(preview.width * preview.height);
+    state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
     prepareCanvas(preview.width, preview.height);
@@ -1450,11 +1632,15 @@ async function loadBmp(file) {
     state.manualNegativeMask = null;
     state.negativeCenterline = null;
     state.closedNegativeMask = null;
+    state.closedNegativeRegionIndex = null;
     state.closedNegativeSeeds = [];
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
     state.closedNegativeInvalidCount = 0;
+    state.closedNegativeDirty = false;
+    state.combinedNegativeCount = 0;
     state.exclusionMask = null;
+    state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
     state.selectedExclusionIndex = -1;
@@ -1475,12 +1661,14 @@ async function ensureFeatures() {
   const options = currentFeatureOptions();
   const key = JSON.stringify(options);
   if (state.features && state.featuresKey === key) return state.features;
+  const startedAt = nowMs();
   setStatus(`特徴量を計算中... Dark Ridge + 色差 + デンドライト + ${options.localEnabled ? "局所適応" : "全体基準"}`, 1);
   state.features = await computeBoundaryFeatures(state.preview.imageData, {
     ...options,
     onProgress: ratio => setStatus(`特徴量を計算中... ${Math.round(ratio * 100)}%`, ratio * 70),
   });
   state.featuresKey = key;
+  recordPerformance("featureComputeMs", startedAt);
   return state.features;
 }
 
@@ -1490,14 +1678,16 @@ async function analyzePreview() {
   try {
     const features = await ensureFeatures();
     setStatus("粒界候補を解析中...", 72);
+    const analysisStartedAt = nowMs();
     state.analysisMask = await buildBoundaryMask(features, {
       ...currentBoundaryOptions(),
       onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, 72 + ratio * 27),
     });
+    recordPerformance("boundaryAnalysisMs", analysisStartedAt);
     renderNormalOverlay();
     updateMetrics();
     const count = state.analysisMask.reduce((sum, value) => sum + value, 0);
-    setStatus(`粒界候補を表示しました。候補画素: ${count.toLocaleString()}`, 100);
+    setStatus(`粒界候補を表示しました。候補画素: ${count.toLocaleString()} / 解析 ${state.performance.boundaryAnalysisMs.toFixed(0)} ms`, 100);
   } catch (error) {
     console.error(error);
     setStatus(`解析エラー: ${error.message}`, 0);
@@ -1508,6 +1698,8 @@ async function analyzePreview() {
 
 function compareCurrent(record = true) {
   if (!state.preview || !state.analysisMask || !hasReference()) return null;
+  ensureClosedNegativeFresh();
+  const comparisonStartedAt = nowMs();
   const result = renderComparisonOverlay(
     state.analysisMask,
     state.referenceCenterline,
@@ -1539,12 +1731,14 @@ function compareCurrent(record = true) {
   const toleranceText = tol1 && tol4
     ? ` / Recall@1px ${(tol1.positiveRecall * 100).toFixed(1)}% → @4px ${(tol4.positiveRecall * 100).toFixed(1)}%`
     : "";
-  setStatus(`比較完了: Positive Recall ${(result.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(result.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((result.metrics.macroNegativeLeakage ?? result.metrics.negativeLeakage) * 100).toFixed(1)}%${toleranceText}`, 100);
+  recordPerformance("comparisonMs", comparisonStartedAt);
+  setStatus(`比較完了: Positive Recall ${(result.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(result.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((result.metrics.macroNegativeLeakage ?? result.metrics.negativeLeakage) * 100).toFixed(1)}%${toleranceText} / 比較 ${state.performance.comparisonMs.toFixed(0)} ms`, 100);
   return result;
 }
 
 async function autoTune() {
   if (!state.preview || !hasReference()) return;
+  ensureClosedNegativeFresh();
   setBusy(true);
   try {
     const features = await ensureFeatures();
@@ -1568,6 +1762,7 @@ async function autoTune() {
       ? "完全評価ROIのTrue F1"
       : "Positive Recall / Macro Negative Leakage";
     setStatus(`Auto Tune v2: ${objectiveText}を基準にCoordinate Descentで調整中...`, 1);
+    const autoTuneStartedAt = nowMs();
     const result = await autoTuneBoundary(features, tuningReference, {
       ...currentComparisonOptions(),
       negativeMask: tuningNegative,
@@ -1576,6 +1771,7 @@ async function autoTune() {
       current: currentExtractionOptions(),
       onProgress: ratio => setStatus(`Auto Tune v2実行中... ${Math.round(ratio * 100)}%`, ratio * 99),
     });
+    recordPerformance("autoTuneMs", autoTuneStartedAt);
     setRangeValue(els.sensitivity, result.parameters.sensitivity);
     setRangeValue(els.darkWeight, result.parameters.darkWeight);
     setRangeValue(els.ridgeWeight, result.parameters.ridgeWeight);
@@ -1645,7 +1841,7 @@ async function autoTune() {
 
     addHistory("auto-tune", comparison.metrics, note, compactAutoTuneSearch(result.search));
     setStatus(
-      `Auto Tune v2完了: ${objectiveStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent}`,
+      `Auto Tune v2完了: ${objectiveStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent} / ${(state.performance.autoTuneMs / 1000).toFixed(1)} s`,
       100,
     );
   } catch (error) {
@@ -1658,6 +1854,7 @@ async function autoTune() {
 
 async function localTune() {
   if (!state.preview || !hasReference()) return;
+  ensureClosedNegativeFresh();
   setBusy(true);
   try {
     const features = await ensureFeatures();
@@ -1767,8 +1964,24 @@ function setTool(tool) {
   els.fullRoiToolButton.classList.toggle("active", tool === "full-roi");
   els.viewer.classList.toggle("reference-mode", tool !== "pan");
   if (state.preview) {
-    rebuildExclusionLayer();
-    rebuildFullRoiLayer();
+    renderExclusionCanvas(
+      els.exclusionCanvas,
+      state.exclusionRects,
+      state.preview.width,
+      state.preview.height,
+      null,
+      tool === "exclusion" ? state.selectedExclusionIndex : -1,
+      annotationHandleSize(),
+    );
+    renderFullEvaluationRoiCanvas(
+      els.fullRoiCanvas,
+      state.fullEvaluationRois,
+      state.preview.width,
+      state.preview.height,
+      null,
+      tool === "full-roi" ? state.selectedFullRoiIndex : -1,
+      annotationHandleSize(),
+    );
   }
 }
 
@@ -1786,11 +1999,13 @@ function closedFillFailureMessage(reason) {
   if (reason === "open-region") return "閉領域ではありません。黄色のお手本線が完全に閉じているか確認してください。";
   if (reason === "region-too-large") return "閉領域が大きすぎるため安全のためFillしませんでした。";
   if (reason === "region-too-small") return "閉領域が小さすぎるためFillしませんでした。";
+  if (reason === "duplicate-region") return "この閉領域はすでに非粒界Fillされています。";
   return "この位置では閉領域Fillできませんでした。";
 }
 
 function addClosedNegativeFill(event) {
   if (!state.preview || !state.referenceMask || !hasReference()) return false;
+  const annotationStartedAt = nowMs();
   const point = eventToPreviewPoint(event);
   if (!point) return false;
   const seed = { x: Math.round(point.x), y: Math.round(point.y) };
@@ -1800,21 +2015,23 @@ function addClosedNegativeFill(event) {
     setStatus("この位置はすでに閉領域Fillのseedとして登録されています。");
     return false;
   }
-
   if (state.closedNegativeMask?.[p]) {
     setStatus("この閉領域はすでに非粒界Fillされています。");
     return false;
   }
 
-  const result = fillClosedNegativeRegion(
+  const candidateSeeds = [...state.closedNegativeSeeds, seed];
+  const rebuilt = rebuildClosedNegativeMask(
     state.referenceMask,
     state.preview.width,
     state.preview.height,
-    seed,
+    candidateSeeds,
     closedNegativeFillOptions(),
+    state.closedNegativeRegionIndex,
   );
-  if (!result.accepted) {
-    setStatus(closedFillFailureMessage(result.reason));
+  const result = rebuilt.results[rebuilt.results.length - 1];
+  if (!result?.accepted) {
+    setStatus(closedFillFailureMessage(result?.reason));
     return false;
   }
 
@@ -1822,13 +2039,35 @@ function addClosedNegativeFill(event) {
   invalidateAfterReferenceEdit();
   const index = state.closedNegativeSeeds.length;
   state.closedNegativeSeeds.push(seed);
-  renderNegativeCanvas(true);
+  state.closedNegativeRegionIndex = rebuilt.regionIndex ?? state.closedNegativeRegionIndex;
+  state.closedNegativeMask = rebuilt.mask;
+  state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
+  state.closedNegativeValidCount = rebuilt.validCount;
+  state.closedNegativeInvalidCount = rebuilt.invalidCount;
+  state.closedNegativeDirty = false;
+  state.performance.closedFillRebuildMs = rebuilt.elapsedMs ?? null;
+  state.manualNegativeMask = dilateBinaryMask(
+    state.negativeCenterline,
+    state.preview.width,
+    state.preview.height,
+    referenceJudgementRadius(),
+  );
+  rebuildCombinedNegativeMask();
+  renderBinaryMaskCanvas(
+    els.negativeCanvas,
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    referenceOpacityRatio(),
+    [255, 138, 0],
+  );
   commitReferenceHistory({ kind: "closed-fill-add", index, seed: { ...seed } });
   recalcAnnotationCounts();
   updateMetrics();
   updateControls();
+  recordPerformance("annotationCommitMs", annotationStartedAt);
   setStatus(
-    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域。Undoで取り消せます。`,
+    `閉領域を非粒界化しました: ${result.fillPixels.toLocaleString()} px / safety 3px / Fill ${state.closedNegativeValidCount}領域 / rebuild ${state.performance.closedFillRebuildMs?.toFixed(0) ?? "-"} ms / total ${state.performance.annotationCommitMs?.toFixed(0) ?? "-"} ms。Undoで取り消せます。`,
   );
   scheduleAutosave();
   return true;
@@ -1879,6 +2118,7 @@ function applyReferenceSegment(from, to) {
 function beginReferenceDraw(event) {
   const point = eventToPreviewPoint(event);
   if (!point) return false;
+  cancelScheduledClosedFillRefresh();
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
 
@@ -1905,6 +2145,7 @@ function continueReferenceDraw(event) {
 
 function endReferenceDraw(event) {
   if (!state.drawingReference) return;
+  const annotationCommitStartedAt = nowMs();
   state.drawingReference = false;
   state.lastReferencePoint = null;
 
@@ -1921,13 +2162,17 @@ function endReferenceDraw(event) {
   if (negativeEntry) parts.push({ layer: "negative", entry: negativeEntry });
   state.currentReferenceEdit = null;
   if (parts.length) commitReferenceHistory({ kind: "mask-edit", parts });
-  if (referenceEntry) renderNegativeCanvas(true);
+  if (referenceEntry) {
+    renderNegativeCanvas(false, true);
+    scheduleClosedFillRefresh();
+  }
 
   recalcAnnotationCounts();
   updateMetrics();
   updateControls();
+  recordPerformance("annotationCommitMs", annotationCommitStartedAt);
   setStatus(
-    `注釈を更新しました。粒界 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px`,
+    `注釈を更新しました。粒界 ${state.referenceCount.toLocaleString()} px / 非粒界 ${state.negativeCount.toLocaleString()} px / ${state.performance.annotationCommitMs?.toFixed(0) ?? "-"} ms`,
   );
   scheduleAutosave();
   if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
@@ -1949,8 +2194,28 @@ function setSelectedRectIndex(kind, index) {
 }
 
 function renderRectLayer(kind, previewRect = null) {
-  if (kind === "exclusion") rebuildExclusionLayer(previewRect);
-  else rebuildFullRoiLayer(previewRect);
+  if (!state.preview) return;
+  if (kind === "exclusion") {
+    renderExclusionCanvas(
+      els.exclusionCanvas,
+      state.exclusionRects,
+      state.preview.width,
+      state.preview.height,
+      previewRect,
+      state.tool === "exclusion" ? state.selectedExclusionIndex : -1,
+      annotationHandleSize(),
+    );
+  } else {
+    renderFullEvaluationRoiCanvas(
+      els.fullRoiCanvas,
+      state.fullEvaluationRois,
+      state.preview.width,
+      state.preview.height,
+      previewRect,
+      state.tool === "full-roi" ? state.selectedFullRoiIndex : -1,
+      annotationHandleSize(),
+    );
+  }
 }
 
 function rectsEqual(a, b) {
@@ -2139,7 +2404,8 @@ bindRange(els.ridgeWeight, $("ridgeWeightValue"), extractionSettingChanged);
 bindRange(els.colorWeight, $("colorWeightValue"), extractionSettingChanged);
 bindRange(els.dendriteWeight, $("dendriteWeightValue"), extractionSettingChanged);
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
-bindRange(els.overlayOpacity, $("overlayOpacityValue"), () => { rerenderOverlayOpacity(); scheduleAutosave(); });
+bindRange(els.overlayOpacity, $("overlayOpacityValue"), scheduleAutosave);
+els.overlayOpacity.addEventListener("change", rerenderOverlayOpacity);
 bindRange(els.localStrength, $("localStrengthValue"), featureSettingChanged);
 bindRange(els.localWindow, $("localWindowValue"), featureSettingChanged);
 bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
@@ -2148,23 +2414,33 @@ bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
   clearLocalCalibration(true);
   if (state.preview && state.referenceCenterline) {
     renderReferenceCanvas();
-    renderNegativeCanvas();
-    if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent(false);
-    else renderNormalOverlay();
+    renderNegativeCanvas(false, true);
+    scheduleClosedFillRefresh();
+    if (!state.comparisonMode) renderNormalOverlay();
     updateMetrics();
   }
   scheduleAutosave();
 });
-bindRange(els.referenceOpacity, $("referenceOpacityValue"), () => {
+els.referenceBrush.addEventListener("change", () => {
+  if (state.comparisonMode && state.analysisMask && hasReference()) compareCurrent(false);
+});
+bindRange(els.referenceOpacity, $("referenceOpacityValue"), scheduleAutosave);
+els.referenceOpacity.addEventListener("change", () => {
   if (state.preview && state.referenceCenterline) {
-    renderReferenceCanvas();
-    renderNegativeCanvas();
+    // Opacity does not change annotation geometry; redraw only after slider release.
+    renderReferenceCanvas(false);
+    renderNegativeCanvas(false, false);
   }
-  scheduleAutosave();
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
 els.localEnabled.addEventListener("change", featureSettingChanged);
-els.autosaveEnabled.addEventListener("change", () => { if (els.autosaveEnabled.checked) scheduleAutosave(); else els.projectStatus.textContent = "自動保存OFF"; });
+els.autosaveEnabled.addEventListener("change", () => {
+  if (els.autosaveEnabled.checked) scheduleAutosave();
+  else {
+    cancelScheduledAutosave();
+    els.projectStatus.textContent = "自動保存OFF";
+  }
+});
 
 for (const type of ["dragenter", "dragover"]) {
   els.dropZone.addEventListener(type, event => { event.preventDefault(); els.dropZone.classList.add("dragover"); });
@@ -2193,36 +2469,75 @@ els.viewer.addEventListener("wheel", event => {
   applyTransform();
 }, { passive: false });
 
+function beginPan(event, button = event.button) {
+  if (!state.preview || state.dragging) return false;
+  state.dragging = true;
+  state.dragPointerId = event.pointerId;
+  state.dragButton = button;
+  state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
+  els.viewer.classList.add("dragging");
+  els.viewer.setPointerCapture(event.pointerId);
+  event.preventDefault();
+  return true;
+}
+
 els.viewer.addEventListener("pointerdown", event => {
-  if (!state.preview || event.button !== 0) return;
+  if (!state.preview) return;
+
+  // Middle-button drag is a temporary pan gesture in every annotation tool.
+  if (event.button === 1) {
+    beginPan(event, 1);
+    return;
+  }
+  if (event.button !== 0) return;
+
   if (state.tool === "exclusion") { beginRectInteraction(event, "exclusion"); return; }
   if (state.tool === "full-roi") { beginRectInteraction(event, "roi"); return; }
   if (state.tool === "closed-negative-fill") { addClosedNegativeFill(event); return; }
   if (state.tool !== "pan") { beginReferenceDraw(event); return; }
-  state.dragging = true;
-  state.dragOrigin = { x: event.clientX, y: event.clientY, tx: state.tx, ty: state.ty };
-  els.viewer.classList.add("dragging");
-  els.viewer.setPointerCapture(event.pointerId);
+  beginPan(event, 0);
 });
+
 els.viewer.addEventListener("pointermove", event => {
+  if (state.dragging && state.dragOrigin && event.pointerId === state.dragPointerId) {
+    state.tx = state.dragOrigin.tx + event.clientX - state.dragOrigin.x;
+    state.ty = state.dragOrigin.ty + event.clientY - state.dragOrigin.y;
+    scheduleTransform();
+    return;
+  }
   if (state.rectInteraction) { continueRectInteraction(event); return; }
-  if (state.drawingReference) { continueReferenceDraw(event); return; }
-  if (!state.dragging || !state.dragOrigin) return;
-  state.tx = state.dragOrigin.tx + event.clientX - state.dragOrigin.x;
-  state.ty = state.dragOrigin.ty + event.clientY - state.dragOrigin.y;
-  applyTransform();
+  if (state.drawingReference) { continueReferenceDraw(event); }
 });
+
 function endPointer(event) {
+  if (state.dragging && event.pointerId === state.dragPointerId) {
+    state.dragging = false;
+    state.dragPointerId = null;
+    state.dragButton = null;
+    state.dragOrigin = null;
+    els.viewer.classList.remove("dragging");
+    if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) {
+      els.viewer.releasePointerCapture(event.pointerId);
+    }
+    return;
+  }
   if (state.rectInteraction) endRectInteraction(event);
   if (state.drawingReference) endReferenceDraw(event);
-  if (!state.dragging) return;
-  state.dragging = false;
-  state.dragOrigin = null;
-  els.viewer.classList.remove("dragging");
-  if (event?.pointerId != null && els.viewer.hasPointerCapture(event.pointerId)) els.viewer.releasePointerCapture(event.pointerId);
 }
 els.viewer.addEventListener("pointerup", endPointer);
 els.viewer.addEventListener("pointercancel", endPointer);
+els.viewer.addEventListener("auxclick", event => {
+  if (event.button === 1) event.preventDefault();
+});
+els.viewer.addEventListener("lostpointercapture", event => {
+  if (state.dragging && event.pointerId === state.dragPointerId) {
+    state.dragging = false;
+    state.dragPointerId = null;
+    state.dragButton = null;
+    state.dragOrigin = null;
+    els.viewer.classList.remove("dragging");
+  }
+});
 
 window.addEventListener("keydown", event => {
   if (!state.preview || state.busy) return;
