@@ -755,7 +755,6 @@ function rebuildClosedNegativeState() {
     state.closedNegativeRegionIndex,
   );
   state.closedNegativeRegionIndex = rebuilt.regionIndex ?? null;
-  state.closedNegativeRegionIndex = rebuilt.regionIndex ?? state.closedNegativeRegionIndex;
   state.closedNegativeMask = rebuilt.mask;
   state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
   state.closedNegativeValidCount = rebuilt.validCount;
@@ -1246,6 +1245,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.negativeCenterline = masks.negativeCenterline;
   state.closedNegativeSeeds = masks.closedNegativeSeeds ?? [];
   state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
+  state.closedNegativeRegionIndex = null;
   state.closedNegativeCount = 0;
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
@@ -1455,6 +1455,7 @@ async function loadBmp(file) {
   state.manualNegativeMask = null;
   state.negativeCenterline = null;
   state.closedNegativeMask = null;
+  state.closedNegativeRegionIndex = null;
   state.closedNegativeSeeds = [];
   state.closedNegativeCount = 0;
   state.closedNegativeValidCount = 0;
@@ -1496,6 +1497,7 @@ async function loadBmp(file) {
     state.manualNegativeMask = new Uint8Array(preview.width * preview.height);
     state.negativeCenterline = new Uint8Array(preview.width * preview.height);
     state.closedNegativeMask = new Uint8Array(preview.width * preview.height);
+    state.closedNegativeRegionIndex = null;
     state.closedNegativeSeeds = [];
     state.closedNegativeCount = 0;
     state.closedNegativeValidCount = 0;
@@ -1875,8 +1877,24 @@ function setTool(tool) {
   els.fullRoiToolButton.classList.toggle("active", tool === "full-roi");
   els.viewer.classList.toggle("reference-mode", tool !== "pan");
   if (state.preview) {
-    rebuildExclusionLayer();
-    rebuildFullRoiLayer();
+    renderExclusionCanvas(
+      els.exclusionCanvas,
+      state.exclusionRects,
+      state.preview.width,
+      state.preview.height,
+      null,
+      tool === "exclusion" ? state.selectedExclusionIndex : -1,
+      annotationHandleSize(),
+    );
+    renderFullEvaluationRoiCanvas(
+      els.fullRoiCanvas,
+      state.fullEvaluationRois,
+      state.preview.width,
+      state.preview.height,
+      null,
+      tool === "full-roi" ? state.selectedFullRoiIndex : -1,
+      annotationHandleSize(),
+    );
   }
 }
 
@@ -1933,6 +1951,7 @@ function addClosedNegativeFill(event) {
   invalidateAfterReferenceEdit();
   const index = state.closedNegativeSeeds.length;
   state.closedNegativeSeeds.push(seed);
+  state.closedNegativeRegionIndex = rebuilt.regionIndex ?? state.closedNegativeRegionIndex;
   state.closedNegativeMask = rebuilt.mask;
   state.closedNegativeCount = rebuilt.fillPixels ?? countMaskPixels(rebuilt.mask);
   state.closedNegativeValidCount = rebuilt.validCount;
@@ -2291,11 +2310,17 @@ bindRange(els.referenceBrush, $("referenceBrushValue"), () => {
   }
   scheduleAutosave();
 });
+let referenceOpacityFrame = null;
 bindRange(els.referenceOpacity, $("referenceOpacityValue"), () => {
-  if (state.preview && state.referenceCenterline) {
-    renderReferenceCanvas();
-    renderNegativeCanvas();
-  }
+  if (referenceOpacityFrame != null) cancelAnimationFrame(referenceOpacityFrame);
+  referenceOpacityFrame = requestAnimationFrame(() => {
+    referenceOpacityFrame = null;
+    if (state.preview && state.referenceCenterline) {
+      // Opacity does not change annotation geometry; keep closed-region index/masks intact.
+      renderReferenceCanvas(false);
+      renderNegativeCanvas(false, false);
+    }
+  });
   scheduleAutosave();
 });
 bindRange(els.reviewRadius, $("reviewRadiusValue"), scheduleAutosave);
