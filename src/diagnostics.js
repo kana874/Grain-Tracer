@@ -231,6 +231,7 @@ export function buildDiagnosticReport(input) {
     localCalibration,
     history,
     performance,
+    topology,
     algorithmVersion,
     appVersion,
   } = input;
@@ -370,7 +371,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v5",
+    schema: "graintracer-diagnostic-v6",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -387,6 +388,14 @@ export function buildDiagnosticReport(input) {
       dendriteTensorRadius: 7,
       dendriteSampleDistances: [5, 9, 13],
       neighborSupportMinimum: 2,
+      edgeAwareFeatureRenormalization: true,
+      edgeFrameGuard: 1,
+      featureMargins: features.featureMargins ?? {
+        dark: 0,
+        ridge: 5,
+        color: 7,
+        dendrite: 14,
+      },
       localCalibrationGrid: "4x4",
     },
     localCalibration: localCalibration ?? null,
@@ -399,6 +408,7 @@ export function buildDiagnosticReport(input) {
       annotationCommitMs: performance?.annotationCommitMs ?? null,
       autosaveSerializeMs: performance?.autosaveSerializeMs ?? null,
       autosaveWriteMs: performance?.autosaveWriteMs ?? null,
+      topologyMs: performance?.topologyMs ?? null,
       previewPixels: performance?.previewPixels ?? (preview.width * preview.height),
       closedFillSeedCount: performance?.closedFillSeedCount ?? (closedNegativeSeeds ?? []).length,
       note: "Latest measured duration per operation in this browser session; null means not measured yet.",
@@ -465,7 +475,8 @@ export function buildDiagnosticReport(input) {
         validationFraction: 0,
       } : null,
     },
-    referenceCoverage: {
+    topology: topology ?? null,
+        referenceCoverage: {
       regionsWithReference: regionsWithReference.length,
       totalRegions: metrics.regions.length,
       referencePixels: metrics.referencePixels,
@@ -513,6 +524,8 @@ export function buildDiagnosticReport(input) {
     tuningTrace: compactHistory(history),
     notes: [
       "Feature values are normalized to 0..1.",
+      "Near image edges, extraction renormalizes the score over feature channels that are geometrically available; the outermost 1 px remains guarded to suppress image-frame artifacts.",
+      "Topology metrics are diagnostic-only in v0.3.6.3 and are not part of Auto Tune v2.",
       "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",
       "Predictions in Unknown areas are not counted as false positives.",
       "Positive Recall measures how much of the user-labelled boundary centerline is recovered.",
