@@ -58,6 +58,7 @@ import {
 } from "./closed-negative-fill.js";
 import {
   computeBoundaryTopology,
+  computeClosureProfile,
   computeClosureSnapshot,
   proposeExtendedGapBridges,
   proposeShortGapBridges,
@@ -94,6 +95,11 @@ const els = {
   annotationAssistButton: $("annotationAssistButton"),
   analyzeButton: $("analyzeButton"),
   compareButton: $("compareButton"),
+  autoOptimizeButton: $("autoOptimizeButton"),
+  autoOptimizeStatus: $("autoOptimizeStatus"),
+  precisionGuideButton: $("precisionGuideButton"),
+  precisionVerifyButton: $("precisionVerifyButton"),
+  precisionSkipButton: $("precisionSkipButton"),
   autoTuneButton: $("autoTuneButton"),
   localTuneButton: $("localTuneButton"),
   clearLocalCalibrationButton: $("clearLocalCalibrationButton"),
@@ -202,6 +208,11 @@ const state = {
   exclusionMask: null,
   exclusionPixelCount: 0,
   fullEvaluationRois: [],
+  precisionGuide: {
+    active: false,
+    currentRoiIndex: -1,
+    autoRunAfterComplete: false,
+  },
   comparisonMode: false,
   annotationAssist: false,
   overlayPeekHidden: false,
@@ -222,6 +233,7 @@ const state = {
     boundaryAnalysisMs: null,
     comparisonMs: null,
     autoTuneMs: null,
+    autoOptimizeMs: null,
     closedFillRebuildMs: null,
     annotationCommitMs: null,
     autosaveSerializeMs: null,
@@ -285,8 +297,16 @@ function hasExclusions() {
   return state.exclusionRects.length > 0;
 }
 
+function verifiedFullEvaluationRois() {
+  return state.fullEvaluationRois.filter(rect => rect?.verified !== false);
+}
+
+function provisionalFullEvaluationRois() {
+  return state.fullEvaluationRois.filter(rect => rect?.verified === false);
+}
+
 function hasFullEvaluationRois() {
-  return state.fullEvaluationRois.length > 0;
+  return verifiedFullEvaluationRois().length > 0;
 }
 
 function updateControls() {
@@ -320,6 +340,10 @@ function updateControls() {
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
+  els.autoOptimizeButton.disabled = disabled || !hasPreview || !hasRef;
+  els.precisionGuideButton.disabled = disabled || !hasPreview || !hasRef;
+  els.precisionVerifyButton.disabled = disabled || !state.precisionGuide.active;
+  els.precisionSkipButton.disabled = disabled || !state.precisionGuide.active;
   els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
   els.localTuneButton.disabled = disabled || !hasPreview || !hasRef;
   els.clearLocalCalibrationButton.disabled = disabled || !state.localCalibration;
