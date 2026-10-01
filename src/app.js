@@ -2572,7 +2572,7 @@ async function loadBmp(file) {
     state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
-  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
+    state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
     state.selectedExclusionIndex = -1;
     state.selectedFullRoiIndex = -1;
     state.rectInteraction = null;
@@ -3005,6 +3005,29 @@ function restoreOptimizationState(snapshot) {
   updateMetrics();
 }
 
+function tuningStagePassesGuard(before, after) {
+  if (!before || !after) return false;
+  const beforeRecall = before.metrics?.positiveRecall ?? 0;
+  const afterRecall = after.metrics?.positiveRecall ?? 0;
+  const beforeLeak = before.metrics?.macroNegativeLeakage ?? before.metrics?.negativeLeakage ?? 0;
+  const afterLeak = after.metrics?.macroNegativeLeakage ?? after.metrics?.negativeLeakage ?? 0;
+  if (afterRecall < beforeRecall - 0.005) return false;
+  if (afterLeak > beforeLeak + 0.005) return false;
+  if (before.roiMetrics?.roiCount && after.roiMetrics?.roiCount) {
+    if (after.roiMetrics.f1 < before.roiMetrics.f1 - 0.002) return false;
+  }
+  if (before.closureProfile?.regionCount && after.closureProfile?.regionCount) {
+    const topologyDrop =
+      (before.closureProfile.weightedClosureScore ?? 0)
+      - (after.closureProfile.weightedClosureScore ?? 0);
+    const openIncrease =
+      (after.closureProfile.openAfterMaxRadius ?? 0)
+      - (before.closureProfile.openAfterMaxRadius ?? 0);
+    if (topologyDrop > 0.01 || openIncrease > 3) return false;
+  }
+  return true;
+}
+
 function gapProposalPassesGuard(before, after) {
   if (!before || !after) return false;
   const beforeRecall = before.metrics?.positiveRecall ?? 0;
@@ -3126,6 +3149,7 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     ensureClosedNegativeFresh();
     await ensureFeatures();
     baseline = evaluateOptimizationMask(state.analysisMask);
+    const baselineSnapshot = captureOptimizationState(baseline);
     els.autoOptimizeStatus.textContent =
       "自動最適化中: Global Auto Tune → Local Calibration → Topology Guarded Gap の順に評価します。";
     setStatus("自動最適化 1/4: Global Auto Tune...", 5);
@@ -3134,6 +3158,17 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     if (!globalRun) throw new Error("Global Auto Tuneに失敗しました。");
     const globalEvaluation = evaluateOptimizationMask(state.analysisMask);
     const globalSnapshot = captureOptimizationState(globalEvaluation);
+
+    let selectedStage = "global";
+    let selectedEvaluation = globalEvaluation;
+    let selectedSnapshot = globalSnapshot;
+    if (!tuningStagePassesGuard(baseline, globalEvaluation)
+        || optimizationPrimaryScore(globalEvaluation) < optimizationPrimaryScore(baseline) - 0.002) {
+      restoreOptimizationState(baselineSnapshot);
+      selectedStage = "baseline";
+      selectedEvaluation = baseline;
+      selectedSnapshot = baselineSnapshot;
+    }
 
     setStatus("自動最適化 2/4: Local Calibration...", 42);
     const localRun = await localTune({
@@ -3144,10 +3179,13 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     if (!localRun) throw new Error("Local Calibrationに失敗しました。");
     const localEvaluation = evaluateOptimizationMask(state.analysisMask);
 
-    let selectedStage = "local";
-    if (optimizationPrimaryScore(localEvaluation) < optimizationPrimaryScore(globalEvaluation) - 0.002) {
-      restoreOptimizationState(globalSnapshot);
-      selectedStage = "global";
+    if (!tuningStagePassesGuard(selectedEvaluation, localEvaluation)
+        || optimizationPrimaryScore(localEvaluation) < optimizationPrimaryScore(selectedEvaluation) - 0.002) {
+      restoreOptimizationState(selectedSnapshot);
+    } else {
+      selectedStage = "local";
+      selectedEvaluation = localEvaluation;
+      selectedSnapshot = captureOptimizationState(localEvaluation);
     }
 
     setStatus("自動最適化 3/4: Topology Guarded Gap...", 72);
