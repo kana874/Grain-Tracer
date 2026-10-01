@@ -180,19 +180,64 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
     maxDelta,
   ])].sort((a, b) => a - b);
   const weights = normalizedWeights(options);
-  const referenceTolerance = dilateBinaryMask(referenceCenterline, features.width, features.height, tolerance);
   const negativeMask = options.negativeMask ?? null;
   const exclusionMask = options.exclusionMask ?? null;
 
-  // Partial Label mode: only explicit Positive and Negative labels participate.
-  // Unlabelled pixels remain Unknown even when they are spatially close to a Positive stroke.
+  // Local Calibration v2 may use verified complete-evaluation ROIs as true
+  // background/foreground supervision. Outside those ROIs it keeps the
+  // existing Partial Label semantics, so Unknown pixels are still ignored.
+  const fullReference = options.completeReferenceCenterline ?? referenceCenterline;
+  const verifiedRois = (options.verifiedFullEvaluationRois ?? [])
+    .filter(rect => rect?.verified !== false);
+  const verifiedRoiMask = new Uint8Array(features.width * features.height);
+  for (const rect of verifiedRois) {
+    const x0 = clamp(Math.round(Math.min(rect.x0, rect.x1)), 0, features.width - 1);
+    const x1 = clamp(Math.round(Math.max(rect.x0, rect.x1)), 0, features.width - 1);
+    const y0 = clamp(Math.round(Math.min(rect.y0, rect.y1)), 0, features.height - 1);
+    const y1 = clamp(Math.round(Math.max(rect.y0, rect.y1)), 0, features.height - 1);
+    for (let y = y0; y <= y1; y += 1) {
+      verifiedRoiMask.fill(1, y * features.width + x0, y * features.width + x1 + 1);
+    }
+  }
+
+  const objectiveReference = referenceCenterline.slice();
+  let verifiedRoiPixels = 0;
+  for (let p = 0; p < verifiedRoiMask.length; p += 1) {
+    if (!verifiedRoiMask[p] || exclusionMask?.[p]) continue;
+    verifiedRoiPixels += 1;
+    objectiveReference[p] = fullReference[p] ? 1 : 0;
+  }
+
+  const referenceTolerance = dilateBinaryMask(
+    objectiveReference,
+    features.width,
+    features.height,
+    tolerance,
+  );
+
   const evaluationMask = referenceTolerance.slice();
   if (negativeMask) {
     for (let p = 0; p < evaluationMask.length; p += 1) {
       if (!exclusionMask?.[p] && negativeMask[p] && !referenceTolerance[p]) evaluationMask[p] = 1;
     }
   }
-  const helpers = { tolerance, referenceTolerance, evaluationMask, negativeMask, exclusionMask };
+  if (verifiedRoiPixels) {
+    for (let p = 0; p < evaluationMask.length; p += 1) {
+      if (!exclusionMask?.[p] && verifiedRoiMask[p]) evaluationMask[p] = 1;
+    }
+  }
+
+  const objectiveMode = verifiedRoiPixels
+    ? "partial-label+verified-roi"
+    : "partial-label";
+  const helpers = {
+    tolerance,
+    referenceTolerance,
+    evaluationMask,
+    negativeMask,
+    exclusionMask,
+    verifiedRoiMask,
+  };
 
   const raw = new Float32Array(cols * rows);
   const measured = new Uint8Array(cols * rows);
@@ -205,28 +250,42 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
       const index = ry * cols + rx;
       const bounds = buildRegionBounds(features.width, features.height, cols, rows, rx, ry);
       let referencePixels = 0;
+      let regionVerifiedRoiPixels = 0;
       for (let y = bounds.y0; y < bounds.y1; y += 1) {
         const base = y * features.width;
         for (let x = bounds.x0; x < bounds.x1; x += 1) {
           const p = base + x;
-          if (!exclusionMask?.[p]) referencePixels += referenceCenterline[p] ? 1 : 0;
+          if (exclusionMask?.[p]) continue;
+          referencePixels += objectiveReference[p] ? 1 : 0;
+          regionVerifiedRoiPixels += verifiedRoiMask[p] ? 1 : 0;
         }
       }
 
       let best = null;
+      const candidateResults = [];
       if (referencePixels >= minReferencePixels) {
         for (const delta of candidates) {
           const sensitivity = clamp(baseSensitivity + delta, 1, 100);
           const metrics = evaluateRegionSensitivity(
             features,
-            referenceCenterline,
+            objectiveReference,
             helpers,
             bounds,
             sensitivity,
             { weights },
           );
           const adjusted = metrics.f1 - regularization * Math.abs(delta) / Math.max(1, maxDelta);
-          if (!best || adjusted > best.adjusted || (adjusted === best.adjusted && metrics.recall > best.metrics.recall)) {
+          candidateResults.push({
+            delta: sensitivity - baseSensitivity,
+            sensitivity,
+            adjusted,
+            f1: metrics.f1,
+            precision: metrics.precision,
+            recall: metrics.recall,
+          });
+          if (!best
+              || adjusted > best.adjusted
+              || (adjusted === best.adjusted && metrics.recall > best.metrics.recall)) {
             best = { delta: sensitivity - baseSensitivity, sensitivity, metrics, adjusted };
           }
         }
@@ -238,11 +297,15 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
         rx,
         ry,
         referencePixels,
+        verifiedRoiPixels: regionVerifiedRoiPixels,
         measured: Boolean(measured[index]),
         rawDelta: raw[index],
+        selectedSensitivity: best?.sensitivity ?? baseSensitivity,
+        bestAdjustedScore: best?.adjusted ?? null,
         bestF1: best?.metrics.f1 ?? null,
         bestPrecision: best?.metrics.precision ?? null,
         bestRecall: best?.metrics.recall ?? null,
+        candidateResults,
       });
       completed += 1;
       onProgress(completed / total);
@@ -259,12 +322,15 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
   for (let i = 0; i < values.length; i += 1) values[i] = clamp(values[i], -maxDelta, maxDelta);
 
   return {
-    version: 1,
-    kind: "sensitivity-grid",
+    version: 2,
+    kind: "sensitivity-grid-roi-aware",
+    objectiveMode,
     cols,
     rows,
     baseSensitivity,
     maxDelta,
+    verifiedRoiCount: verifiedRois.length,
+    verifiedRoiPixels,
     values: Array.from(values),
     measured: Array.from(measured),
     regions: regionMetrics,
