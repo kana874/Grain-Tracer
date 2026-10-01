@@ -1,7 +1,7 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.6.6-alpha";
-export const ALGORITHM_VERSION = "boundary-v8-safe-gap-processed-tune";
+export const APP_VERSION = "0.3.6.7-alpha";
+export const ALGORITHM_VERSION = "boundary-v9-extended-gap-topology-diagnostic";
 
 export function packBinaryMask(mask) {
   const bytes = new Uint8Array(Math.ceil(mask.length / 8));
