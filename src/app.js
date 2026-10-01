@@ -2879,6 +2879,325 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
   }
 }
 
+
+function cloneOptimizationValue(value) {
+  if (value == null) return value;
+  if (typeof structuredClone === "function") return structuredClone(value);
+  if (ArrayBuffer.isView(value)) return value.slice();
+  return JSON.parse(JSON.stringify(value));
+}
+
+function evaluateOptimizationMask(mask = state.analysisMask) {
+  if (!state.preview || !mask || !hasReference()) return null;
+  ensureClosedNegativeFresh();
+  const metrics = computeRegionalMetrics(
+    mask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    {
+      ...currentComparisonOptions(),
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+      cols: 4,
+      rows: 4,
+    },
+  );
+  const verifiedRois = verifiedFullEvaluationRois();
+  const roiMetrics = verifiedRois.length
+    ? computeFullEvaluationRoiMetrics(
+      mask,
+      state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      verifiedRois,
+      {
+        tolerance: currentComparisonOptions().tolerance,
+        exclusionMask: state.exclusionMask,
+      },
+    )
+    : null;
+  const closureProfile = computeClosureProfile(
+    mask,
+    state.preview.width,
+    state.preview.height,
+    state.closedNegativeSeeds,
+    {
+      ...closureDiagnosticOptions(),
+      bridgeRadii: [0, 1, 2, 3],
+    },
+  );
+  return { metrics, roiMetrics, closureProfile };
+}
+
+function optimizationPrimaryScore(evaluation) {
+  if (!evaluation) return -Infinity;
+  if (evaluation.roiMetrics?.roiCount) return evaluation.roiMetrics.f1;
+  const recall = evaluation.metrics?.positiveRecall ?? 0;
+  const leak = evaluation.metrics?.macroNegativeLeakage
+    ?? evaluation.metrics?.negativeLeakage
+    ?? 0;
+  return recall * 0.72 + (1 - leak) * 0.28;
+}
+
+function compactOptimizationEvaluation(evaluation) {
+  if (!evaluation) return null;
+  return {
+    objective: evaluation.roiMetrics?.roiCount ? "complete-roi-f1" : "partial-label-balanced",
+    score: optimizationPrimaryScore(evaluation),
+    positiveRecall: evaluation.metrics?.positiveRecall ?? null,
+    negativeLeakage: evaluation.metrics?.negativeLeakage ?? null,
+    macroNegativeLeakage: evaluation.metrics?.macroNegativeLeakage ?? null,
+    roiF1: evaluation.roiMetrics?.roiCount ? evaluation.roiMetrics.f1 : null,
+    roiPrecision: evaluation.roiMetrics?.roiCount ? evaluation.roiMetrics.precision : null,
+    roiRecall: evaluation.roiMetrics?.roiCount ? evaluation.roiMetrics.recall : null,
+    topology: evaluation.closureProfile ? {
+      weightedClosureScore: evaluation.closureProfile.weightedClosureScore,
+      meanRequiredRadiusCapped: evaluation.closureProfile.meanRequiredRadiusCapped,
+      minimumRadiusHistogram: evaluation.closureProfile.minimumRadiusHistogram,
+      openAfterMaxRadius: evaluation.closureProfile.openAfterMaxRadius,
+      regionCount: evaluation.closureProfile.regionCount,
+    } : null,
+  };
+}
+
+function captureOptimizationState(evaluation = null) {
+  if (!state.analysisMask) return null;
+  return {
+    parameters: { ...currentExtractionOptions() },
+    localCalibration: cloneOptimizationValue(state.localCalibration),
+    mask: state.analysisMask.slice(),
+    evaluation: evaluation ?? evaluateOptimizationMask(state.analysisMask),
+  };
+}
+
+function restoreOptimizationState(snapshot) {
+  if (!snapshot?.mask) return;
+  setRangeValue(els.sensitivity, snapshot.parameters.sensitivity);
+  setRangeValue(els.darkWeight, snapshot.parameters.darkWeight);
+  setRangeValue(els.ridgeWeight, snapshot.parameters.ridgeWeight);
+  setRangeValue(els.colorWeight, snapshot.parameters.colorWeight);
+  setRangeValue(els.dendriteWeight, snapshot.parameters.dendriteWeight);
+  setRangeValue(els.minComponent, snapshot.parameters.minComponent);
+  els.centerlineNms.checked = snapshot.parameters.centerlineNms !== false;
+  state.localCalibration = cloneOptimizationValue(snapshot.localCalibration);
+  updateLocalCalibrationStatus();
+  resetGapBridgeState(true);
+  state.analysisMask = snapshot.mask.slice();
+  invalidateTopology();
+  renderNormalOverlay();
+  updateMetrics();
+}
+
+function gapProposalPassesGuard(before, after) {
+  if (!before || !after) return false;
+  const beforeRecall = before.metrics?.positiveRecall ?? 0;
+  const afterRecall = after.metrics?.positiveRecall ?? 0;
+  const beforeLeak = before.metrics?.macroNegativeLeakage ?? before.metrics?.negativeLeakage ?? 0;
+  const afterLeak = after.metrics?.macroNegativeLeakage ?? after.metrics?.negativeLeakage ?? 0;
+  if (afterRecall < beforeRecall - 0.001) return false;
+  if (afterLeak > beforeLeak + 0.001) return false;
+  if (before.roiMetrics?.roiCount && after.roiMetrics?.roiCount) {
+    if (after.roiMetrics.f1 < before.roiMetrics.f1 - 0.001) return false;
+  }
+
+  const beforeProfile = before.closureProfile;
+  const afterProfile = after.closureProfile;
+  if (beforeProfile?.regionCount && afterProfile?.regionCount) {
+    const scoreGain =
+      (afterProfile.weightedClosureScore ?? 0) - (beforeProfile.weightedClosureScore ?? 0);
+    const openGain =
+      (beforeProfile.openAfterMaxRadius ?? 0) - (afterProfile.openAfterMaxRadius ?? 0);
+    const radiusGain =
+      (beforeProfile.meanRequiredRadiusCapped ?? Infinity)
+      - (afterProfile.meanRequiredRadiusCapped ?? Infinity);
+    return scoreGain > 0.00025 || openGain > 0 || radiusGain > 0.002;
+  }
+
+  return optimizationPrimaryScore(after) > optimizationPrimaryScore(before) + 0.001;
+}
+
+function optimizationStatusSummary(evaluation) {
+  if (!evaluation) return "-";
+  const metrics = evaluation.metrics;
+  const profile = evaluation.closureProfile;
+  const roi = evaluation.roiMetrics;
+  const base =
+    `Recall ${((metrics?.positiveRecall ?? 0) * 100).toFixed(1)}% / Macro Leak ${((metrics?.macroNegativeLeakage ?? metrics?.negativeLeakage ?? 0) * 100).toFixed(1)}%`;
+  const roiText = roi?.roiCount ? ` / True F1 ${(roi.f1 * 100).toFixed(1)}%` : "";
+  const topologyText = profile?.regionCount
+    ? ` / Topology ${((profile.weightedClosureScore ?? 0) * 100).toFixed(1)}% / Open@3 ${profile.openAfterMaxRadius}`
+    : "";
+  return base + roiText + topologyText;
+}
+
+async function guardedGapOptimizationPass(mode) {
+  if (!state.preview || !state.analysisMask) return { accepted: false, reason: "no-analysis" };
+  if (mode === "extended" && !state.features) await ensureFeatures();
+  const before = evaluateOptimizationMask(state.analysisMask);
+  const proposal = mode === "extended"
+    ? proposeExtendedGapBridges(
+      state.analysisMask,
+      state.preview.width,
+      state.preview.height,
+      topologyOptions(),
+    )
+    : proposeShortGapBridges(
+      state.analysisMask,
+      state.preview.width,
+      state.preview.height,
+      topologyOptions(),
+    );
+  if (!proposal?.acceptedBridgeCount) {
+    return { accepted: false, reason: "no-candidate", proposal, before, after: before };
+  }
+  const after = evaluateOptimizationMask(proposal.mask);
+  const accepted = gapProposalPassesGuard(before, after);
+  if (!accepted) {
+    return { accepted: false, reason: "guard-rejected", proposal, before, after };
+  }
+
+  proposal.evaluation = {
+    before: {
+      positiveRecall: before.metrics.positiveRecall,
+      negativeLeakage: before.metrics.negativeLeakage,
+      macroNegativeLeakage: before.metrics.macroNegativeLeakage,
+    },
+    after: {
+      positiveRecall: after.metrics.positiveRecall,
+      negativeLeakage: after.metrics.negativeLeakage,
+      macroNegativeLeakage: after.metrics.macroNegativeLeakage,
+    },
+  };
+  proposal.topology = evaluateGapTopology(proposal.mask);
+  proposal.closureProfile = {
+    before: compactOptimizationEvaluation(before)?.topology ?? null,
+    after: compactOptimizationEvaluation(after)?.topology ?? null,
+  };
+  state.gapProposal = proposal;
+  await applyGapBridges();
+  return { accepted: true, proposal, before, after };
+}
+
+async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
+  if (!state.preview || !hasReference()) return null;
+
+  if (!state.analysisMask) {
+    setBusy(true);
+    els.autoOptimizeStatus.textContent = "自動最適化の準備として初期粒界を抽出しています。";
+    const mask = await analyzePreview({ manageBusy: false });
+    setBusy(false);
+    if (!mask) return null;
+  }
+
+  if (!skipPrecisionGate && !hasFullEvaluationRois()) {
+    const hasPending = provisionalFullEvaluationRois().length > 0;
+    const started = startPrecisionEvaluationGuide({
+      autoRunAfterComplete: true,
+      forceRegenerate: !hasPending,
+    });
+    if (started) {
+      els.autoOptimizeStatus.textContent +=
+        " 「今回はROIなしで続行」を押せば、精密評価を省略してPartial Labelだけで続行できます。";
+      return { waitingForPrecisionGuide: true };
+    }
+  }
+
+  const startedAt = nowMs();
+  setBusy(true);
+  let baseline = null;
+  try {
+    ensureClosedNegativeFresh();
+    await ensureFeatures();
+    baseline = evaluateOptimizationMask(state.analysisMask);
+    els.autoOptimizeStatus.textContent =
+      "自動最適化中: Global Auto Tune → Local Calibration → Topology Guarded Gap の順に評価します。";
+    setStatus("自動最適化 1/4: Global Auto Tune...", 5);
+
+    const globalRun = await autoTune({ manageBusy: false, recordHistory: false });
+    if (!globalRun) throw new Error("Global Auto Tuneに失敗しました。");
+    const globalEvaluation = evaluateOptimizationMask(state.analysisMask);
+    const globalSnapshot = captureOptimizationState(globalEvaluation);
+
+    setStatus("自動最適化 2/4: Local Calibration...", 42);
+    const localRun = await localTune({
+      manageBusy: false,
+      recordHistory: false,
+      scheduleSave: false,
+    });
+    if (!localRun) throw new Error("Local Calibrationに失敗しました。");
+    const localEvaluation = evaluateOptimizationMask(state.analysisMask);
+
+    let selectedStage = "local";
+    if (optimizationPrimaryScore(localEvaluation) < optimizationPrimaryScore(globalEvaluation) - 0.002) {
+      restoreOptimizationState(globalSnapshot);
+      selectedStage = "global";
+    }
+
+    setStatus("自動最適化 3/4: Topology Guarded Gap...", 72);
+    const safePass = await guardedGapOptimizationPass("safe");
+    const extendedPass = await guardedGapOptimizationPass("extended");
+
+    setStatus("自動最適化 4/4: 最終検証...", 90);
+    const finalEvaluation = evaluateOptimizationMask(state.analysisMask);
+    const topologyStartedAt = nowMs();
+    state.lastTopology = computeBoundaryTopology(
+      state.analysisMask,
+      state.preview.width,
+      state.preview.height,
+      state.closedNegativeSeeds,
+      topologyOptions(),
+    );
+    recordPerformance("topologyMs", topologyStartedAt);
+    updateTopologyStatus(state.lastTopology);
+    const comparison = compareCurrent(false);
+    recordPerformance("autoOptimizeMs", startedAt);
+
+    const safeCount = safePass.accepted ? safePass.proposal.acceptedBridgeCount : 0;
+    const extendedCount = extendedPass.accepted ? extendedPass.proposal.acceptedBridgeCount : 0;
+    const evaluationMode = finalEvaluation.roiMetrics?.roiCount
+      ? `精密評価ROI ${finalEvaluation.roiMetrics.roiCount}領域`
+      : "Partial Label";
+    const note =
+      `one-click-optimize; selected=${selectedStage}; evaluation=${evaluationMode}; safe=${safeCount}; extended=${extendedCount}`;
+    addHistory("auto-optimize", comparison?.metrics ?? finalEvaluation.metrics, note, {
+      version: 1,
+      baseline: compactOptimizationEvaluation(baseline),
+      global: compactOptimizationEvaluation(globalEvaluation),
+      local: compactOptimizationEvaluation(localEvaluation),
+      final: compactOptimizationEvaluation(finalEvaluation),
+      selectedStage,
+      gap: {
+        safe: {
+          accepted: safePass.accepted,
+          reason: safePass.reason ?? null,
+          bridges: safeCount,
+        },
+        extended: {
+          accepted: extendedPass.accepted,
+          reason: extendedPass.reason ?? null,
+          bridges: extendedCount,
+        },
+      },
+    });
+    scheduleAutosave();
+
+    const beforeText = optimizationStatusSummary(baseline);
+    const afterText = optimizationStatusSummary(finalEvaluation);
+    els.autoOptimizeStatus.textContent =
+      `自動最適化完了（${evaluationMode}）: ${beforeText} → ${afterText} / Gap Safe ${safeCount}本・Extended ${extendedCount}本 / ${(state.performance.autoOptimizeMs / 1000).toFixed(1)} s`;
+    setStatus(els.autoOptimizeStatus.textContent, 100);
+    return { baseline, finalEvaluation, safePass, extendedPass, selectedStage };
+  } catch (error) {
+    console.error(error);
+    els.autoOptimizeStatus.textContent = `自動最適化エラー: ${error.message}`;
+    setStatus(els.autoOptimizeStatus.textContent, 0);
+    return null;
+  } finally {
+    setBusy(false);
+  }
+}
+
 function rerenderOverlayOpacity() {
   if (!state.analysisMask || !state.preview) return;
   if (state.comparisonMode && hasReference()) compareCurrent(false);
