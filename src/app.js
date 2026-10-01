@@ -1267,7 +1267,13 @@ function renderHistory() {
     const recallText = positiveRecall == null ? "-" : `${(positiveRecall * 100).toFixed(1)}%`;
     const leakText = negativeLeakage == null ? "-" : `${(negativeLeakage * 100).toFixed(1)}%`;
     const macroLeakText = macroNegativeLeakage == null ? "-" : `${(macroNegativeLeakage * 100).toFixed(1)}%`;
-    const label = item.kind === "auto-tune" ? "全体調整" : item.kind === "local-tune" ? "局所調整" : "比較";
+    const label = item.kind === "auto-optimize"
+      ? "自動最適化"
+      : item.kind === "auto-tune"
+        ? "全体調整"
+        : item.kind === "local-tune"
+          ? "局所調整"
+          : "比較";
     li.innerHTML = `<strong>${label}</strong><span>R ${recallText} / Leak ${leakText} / Macro ${macroLeakText}</span><small>${date.toLocaleString("ja-JP")}</small>`;
     els.historyList.appendChild(li);
   }
@@ -3653,8 +3659,12 @@ els.clearOverlayButton.addEventListener("click", clearOverlay);
 els.annotationAssistButton.addEventListener("click", () => toggleAnnotationAssist());
 els.analyzeButton.addEventListener("click", analyzePreview);
 els.compareButton.addEventListener("click", () => compareCurrent(true));
-els.autoTuneButton.addEventListener("click", autoTune);
-els.localTuneButton.addEventListener("click", localTune);
+els.autoOptimizeButton.addEventListener("click", () => runOneClickOptimization());
+els.precisionGuideButton.addEventListener("click", () => startPrecisionEvaluationGuide({ autoRunAfterComplete: false, forceRegenerate: true }));
+els.precisionVerifyButton.addEventListener("click", verifyCurrentPrecisionRoi);
+els.precisionSkipButton.addEventListener("click", skipPrecisionGuide);
+els.autoTuneButton.addEventListener("click", () => autoTune());
+els.localTuneButton.addEventListener("click", () => localTune());
 els.clearLocalCalibrationButton.addEventListener("click", () => clearLocalCalibration(false));
 els.clearReferenceButton.addEventListener("click", clearReference);
 els.clearNegativeButton.addEventListener("click", clearNegativeReference);
