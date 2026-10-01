@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.8.1-alpha - 2026-10-02
+
+### Added
+- Local Calibration v2.1 adds finer near-zero sensitivity candidates and a per-region Recall guard: a non-zero Local candidate is ineligible when its regional Recall drops by more than 2 percentage points from the cell baseline.
+- Measured Local cells are now hard anchors. In particular, a measured `rawDelta=0` cell remains exactly zero instead of being shifted by neighbouring ROI corrections.
+- Only unmeasured cells receive interpolation, and propagation is limited to immediately adjacent measured cells (including diagonals) with a zero prior.
+- Diagnostic Bundle v1 exports one `.graintracer-diagnostics.zip` containing `manifest.json`, Diagnostic JSON v13, preview, comparison, Ridge, Dendrite, reference, non-boundary, exclusion, and full-ROI images.
+- Dependency-free ZIP32 STORE writer in `src/zip.js`; already-compressed PNG/JPEG files are bundled without redundant Deflate recompression.
+- Legacy individual diagnostic-file export remains available under the diagnostic output section.
+
+### Changed
+- Local calibration kind advanced to `sensitivity-grid-roi-aware-localized` / version 2.1.
+- Diagnostic JSON advanced to `graintracer-diagnostic-v13` and records the Local v2.1 anchor/propagation/Recall-guard policy.
+- App version advanced to `0.3.8.1-alpha`; algorithm identifier advanced to `boundary-v12-localized-local-calibration`.
+- The primary diagnostic button now downloads one ZIP instead of triggering nine separate browser downloads.
+
+### Validation
+- JavaScript syntax validation passes for the modified app, Local Calibration, diagnostics, project and ZIP modules.
+- Synthetic Local-grid regression keeps every measured zero cell at exactly zero; with the previous failing pattern only the three measured non-zero cells plus one adjacent unmeasured cell receive a non-zero correction instead of all 16 cells.
+- Synthetic regional-Recall regression rejects a large F1-improving sensitivity reduction when it would lower the cell Recall by 10 percentage points, leaving the global-sensitivity anchor selected.
+- ZIP32 STORE binary was validated with Python's standard `zipfile`: ASCII and UTF-8 filenames extracted correctly and CRC validation returned no errors.
+
 ## v0.3.8-alpha - 2026-10-02
 
 ### Added

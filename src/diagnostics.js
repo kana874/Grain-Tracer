@@ -360,7 +360,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v12",
+    schema: "graintracer-diagnostic-v13",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -390,6 +390,10 @@ export function buildDiagnosticReport(input) {
       },
       localCalibrationGrid: "4x4",
       localCalibrationObjective: "partial-label-plus-verified-roi-when-available",
+      localCalibrationPolicy: "v2.1-measured-zero-anchor-adjacent-only-propagation-regional-recall-guard",
+      localCalibrationMaxRegionalRecallDrop: 0.02,
+      localCalibrationPropagationRadiusCells: Math.SQRT2,
+      diagnosticBundleSchema: "graintracer-diagnostic-bundle-v1",
       oneClickStageDiagnostics: true,
     },
     localCalibration: localCalibration ?? null,
@@ -573,7 +577,9 @@ export function buildDiagnosticReport(input) {
       "Closed-region Negative Fill holdout is split by whole connected grain-interior regions; a region never contributes pixels to both tuning and validation.",
       "Centerline NMS uses a continuous axial Ridge-normal estimate and bilinear score samples to suppress non-maximal responses before connected-component filtering when enabled.",
       "Auto Tune v2 search trace v4 keeps fast raw scoring for proposal generation and processed acceptance. One-click Optimization keeps that coordinate objective unchanged, then uses the Topology v3 closure profile as a conservative post-processing guard for automatic Gap repair.",
-      "Local Calibration v2 uses verified complete-evaluation ROI pixels as true foreground/background supervision while preserving Partial Label semantics outside verified ROIs.",
+      "Local Calibration v2.1 keeps measured zero-delta cells as hard global-sensitivity anchors, limits interpolation to unmeasured adjacent cells, adds finer near-zero sensitivity candidates, and rejects local candidates whose regional Recall falls more than 2 percentage points below the local baseline.",
+      "Verified complete-evaluation ROI pixels remain true foreground/background supervision while Partial Label semantics are preserved outside verified ROIs.",
+      "Diagnostic ZIP bundle v1 packages manifest.json, diagnostic.json, preview, comparison, Ridge, Dendrite, reference, non-boundary, exclusion, and full-ROI images in one dependency-free ZIP32 STORE archive.",
       "One-click tuning history records Global and Local stage status as accepted, no-change, or rolled-back together with a machine-readable reason and local candidate diagnostics.",
       "Performance timings are the latest browser-session measurements in milliseconds and are intended for regression diagnosis rather than cross-device benchmarking.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
