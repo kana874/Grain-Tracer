@@ -104,6 +104,8 @@ Multi-Tolerance diagnostics automatically recalculate labelled performance at 1,
 
 Formal Precision / Recall / F1 are calculated only inside complete-evaluation ROIs. A complete-evaluation ROI is a rectangle where the user declares that every grain boundary has been labelled; therefore unlabelled pixels inside that ROI can legitimately act as negative background.
 
+v0.3.7 adds a guided precision-evaluation workflow so users do not need to understand or manually position these ROIs. The app ranks 4×4 regions and proposes up to three targets representing low Recall, high Negative Leakage, and typical behaviour. Suggestions are stored with `verified=false` and shown as yellow dashed rectangles. The user is moved to each target, labels every visible boundary in that rectangle, and explicitly confirms completion. Only then does the rectangle become a verified complete-evaluation ROI and become eligible for formal True Precision / Recall / F1 or the complete-ROI tuning objective. A suggestion is never silently promoted to ground truth.
+
 Regional Partial Label metrics are calculated on a 4×4 grid and stored with diagnostic/evaluation data.
 
 ### Independent Negative holdout
@@ -168,7 +170,11 @@ Full
 
 The full search summary is compacted before project/history persistence so repeated Auto Tune runs do not excessively inflate project JSON.
 
-v0.3.6.7 advances the search trace to v4. The optimization objective itself is intentionally unchanged, but the tuner records a compact Closure snapshot before and after tuning whenever Closed Negative Fill data are available. This makes topology regressions visible without allowing a sparse or incomplete topology label set to steer the parameter search. Direct topology-aware optimization remains a later-stage feature.
+v0.3.6.7 advances the search trace to v4. The optimization objective itself is intentionally unchanged, but the tuner records a compact Closure snapshot before and after tuning whenever Closed Negative Fill data are available. This makes topology regressions visible without allowing a sparse or incomplete topology label set to steer the parameter search.
+
+v0.3.7 introduces One-click Optimization as an orchestration layer rather than replacing Auto Tune v2. The pipeline runs global Auto Tune, local sensitivity calibration, topology evaluation, and guarded Gap repair. When verified complete-evaluation ROIs exist, True F1 remains the primary global tuning objective; otherwise Partial Label Recall/Macro Negative Leakage remains the fallback. The one-click layer can compare global and local stages and restores the global state when local calibration degrades the primary score beyond the configured guard.
+
+Automatic Gap application is topology-aware but deliberately conservative. Recall and Macro Negative Leakage act as hard regression guards, verified ROI F1 is also guarded when available, and a Gap proposal must improve the Minimum Closure Radius profile before automatic application. Thus topology influences post-processing acceptance without yet being inserted directly into every coordinate-descent candidate score.
 
 ## 7. Reference-guided local calibration
 
@@ -234,6 +240,8 @@ Gap Preview now keeps a bounded diagnostic sample of accepted and rejected candi
 
 Border-assisted closure is also made explicit in v2.3. The parent Closed Fill records the image-edge set that is allowed to act as a virtual wall. A single edge or two adjacent edges at a corner may be allowed; reaching any other edge is an open leak. Opposite-edge pairs, more than two image edges, or an excessive reachable-area ratio are treated as open/invalid rather than as a closed grain.
 
+v0.3.7 advances the diagnostic to Topology v3.0. Exact 0 px Closure can remain zero even when most regions are only one or two pixels from closing, so a binary exact-closure objective is too sparse for tuning. Topology v3 therefore summarizes the 0/1/2/3 px probes as a Minimum Closure Radius profile. It records the number of regions that first close at each probe radius, regions still open after the largest probe, a capped mean required radius, and a weighted closure score equal to the mean closure rate over the configured probes. This gives the optimization guard a graded signal: moving a region from 3 px to 2 px can count as improvement even before exact 0 px closure is achieved.
+
 ## 10. Persistence
 
 A `.graintracer.json` project stores:
@@ -247,7 +255,7 @@ A `.graintracer.json` project stores:
 - non-boundary display mask and centerline
 - closed-region Negative Fill seed coordinates
 - exclusion rectangles
-- complete-evaluation ROI rectangles
+- complete-evaluation ROI rectangles, including guided provisional/verified metadata
 - evaluation history, including Partial Label and regional metrics
 - reference-guided local sensitivity-calibration grid
 
@@ -262,6 +270,6 @@ IndexedDB is used for optional autosave and automatic restore when the same BMP 
 - Full-resolution overlapping-tile analysis and seam handling.
 - Smart Trace and manual correction workflow.
 - PNG / binary mask / SVG export.
-- Topology-aware Auto Tune objective (v0.3.6.7 records topology diagnostically but does not optimize against it).
-- Broader validation of Safe/Extended Gap on multiple real micrographs, plus stronger dendrite false-positive suppression.
+- Evaluate whether the Minimum Closure Radius profile should later enter the coordinate-descent objective itself; v0.3.7 currently uses it as a post-processing guard.
+- Broader validation of One-click Safe/Extended Gap decisions on multiple real micrographs, plus stronger dendrite false-positive suppression.
 - Closed-grain segmentation and grain metrics.
