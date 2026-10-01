@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.7-alpha - 2026-10-01
+
+### Added
+- One-click Optimization as the primary tuning workflow. A single run orchestrates Global Auto Tune, local sensitivity calibration, final topology evaluation, and guarded Safe/Extended Gap repair.
+- Guided precision-evaluation ROI workflow. When no verified complete ROI exists, GrainTracer proposes up to three difficult/representative regions and guides the user through labelling every visible boundary in each region.
+- Provisional ROI semantics: automatically suggested ROIs are excluded from formal True Precision / Recall / F1 until the user explicitly confirms the ROI is fully labelled. Verified ROI metadata is persisted in project JSON.
+- Topology v3.0 Minimum Closure Radius profile over 0/1/2/3 px probes, with weighted closure score, capped mean required radius, radius histogram, and Open@3 count.
+- Automatic Gap acceptance guard. One-click Safe/Extended repairs are applied only when Positive Recall and Macro Negative Leakage remain within guard limits and the closure profile improves.
+- Diagnostic JSON v11 distinguishes verified/provisional evaluation ROIs and records Topology v3 data through the normal topology/history payloads.
+
+### Changed
+- Manual Compare, Auto Tune, local tuning, Topology and Gap controls remain available but are grouped under the collapsed `詳細チューニング・診断` section.
+- Auto Tune v2 and local calibration can now run as composable stages without independently owning the global busy state or producing duplicate history entries.
+- Complete-ROI formal metrics and Auto Tune use only verified ROIs. Manually created complete ROIs are verified immediately; guided suggestions require explicit confirmation.
+- App version advanced to `0.3.7-alpha`; algorithm identifier advanced to `boundary-v10-one-click-topology-profile`.
+
+### Safety / behaviour
+- The app never treats an automatically selected ROI as complete ground truth by itself. User confirmation is required after all visible boundaries in that rectangle have been labelled.
+- Users may skip the precision-ROI guide and continue One-click Optimization with the existing Partial Label objective.
+- Automatic Gap application is conservative: Recall may not fall by more than 0.1 percentage point, Macro Negative Leakage may not rise by more than 0.1 percentage point, verified-ROI F1 may not regress beyond the same tolerance, and topology must improve.
+- Advanced manual controls remain available for diagnosis and intervention.
+
 ## v0.3.6.7-alpha - 2026-10-01
 
 ### Added
