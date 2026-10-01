@@ -360,7 +360,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v11",
+    schema: "graintracer-diagnostic-v12",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -389,6 +389,8 @@ export function buildDiagnosticReport(input) {
         dendrite: 14,
       },
       localCalibrationGrid: "4x4",
+      localCalibrationObjective: "partial-label-plus-verified-roi-when-available",
+      oneClickStageDiagnostics: true,
     },
     localCalibration: localCalibration ?? null,
     performance: {
@@ -396,6 +398,7 @@ export function buildDiagnosticReport(input) {
       boundaryAnalysisMs: performance?.boundaryAnalysisMs ?? null,
       comparisonMs: performance?.comparisonMs ?? null,
       autoTuneMs: performance?.autoTuneMs ?? null,
+      autoOptimizeMs: performance?.autoOptimizeMs ?? null,
       closedFillRebuildMs: performance?.closedFillRebuildMs ?? null,
       annotationCommitMs: performance?.annotationCommitMs ?? null,
       autosaveSerializeMs: performance?.autosaveSerializeMs ?? null,
@@ -569,7 +572,9 @@ export function buildDiagnosticReport(input) {
       "Closed-region Negative Fill is regenerated from saved seed coordinates and the current positive reference geometry. Seeds may explicitly preserve border-assisted image-frame closure.",
       "Closed-region Negative Fill holdout is split by whole connected grain-interior regions; a region never contributes pixels to both tuning and validation.",
       "Centerline NMS uses a continuous axial Ridge-normal estimate and bilinear score samples to suppress non-maximal responses before connected-component filtering when enabled.",
-      "Auto Tune v2 search trace v4 keeps fast raw scoring for proposal generation and processed acceptance. v0.3.7 One-click Optimization keeps that coordinate objective unchanged, then uses the Topology v3 closure profile as a conservative post-processing guard for automatic Gap repair.",
+      "Auto Tune v2 search trace v4 keeps fast raw scoring for proposal generation and processed acceptance. One-click Optimization keeps that coordinate objective unchanged, then uses the Topology v3 closure profile as a conservative post-processing guard for automatic Gap repair.",
+      "Local Calibration v2 uses verified complete-evaluation ROI pixels as true foreground/background supervision while preserving Partial Label semantics outside verified ROIs.",
+      "One-click tuning history records Global and Local stage status as accepted, no-change, or rolled-back together with a machine-readable reason and local candidate diagnostics.",
       "Performance timings are the latest browser-session measurements in milliseconds and are intended for regression diagnosis rather than cross-device benchmarking.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
       "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",
