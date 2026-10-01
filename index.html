@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.8-alpha</div>
+    <div class="version">v0.3.8.1-alpha</div>
   </header>
 
   <main class="layout">
@@ -138,7 +138,7 @@
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.3.8</strong>
+          <strong class="subpanel-title">自動最適化 v0.3.8.1</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
           <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。精密評価ROIが未作成の場合は、最初の1回だけ評価候補を自動提示します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
@@ -208,8 +208,13 @@
       <section>
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
-        <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ファイルを書き出す</button>
-        <p class="help">出力: diagnostic.json v11 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
+        <p class="help">ZIP出力: manifest.json / diagnostic.json v13 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <details>
+          <summary>個別ファイル出力</summary>
+          <button id="exportDiagnosticsIndividualButton" class="full" type="button" disabled>診断ファイルを個別に書き出す</button>
+          <p class="help">ブラウザの複数ダウンロード制限に備えた従来形式です。通常はZIP出力を使用してください。</p>
+        </details>
       </section>
 
       <section>
