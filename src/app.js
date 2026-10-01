@@ -2823,6 +2823,8 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
     setStatus("調整用お手本＋非粒界例を使って範囲ごとの感度を調整中...", 1);
     const calibration = await tuneLocalSensitivity(features, tuningReference, {
       ...currentComparisonOptions(),
+      completeReferenceCenterline: state.referenceCenterline,
+      verifiedFullEvaluationRois: verifiedFullEvaluationRois(),
       negativeMask: negativeHoldout.tuningMask,
       exclusionMask: state.exclusionMask,
       ...extraction,
@@ -2880,11 +2882,14 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
         : "4x4 partial-label calibration; validation holdout unavailable",
     );
     const measured = calibration.measured.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+    const roiNote = calibration.verifiedRoiCount
+      ? ` / 精密評価ROI ${calibration.verifiedRoiCount}領域併用`
+      : "";
     const validationNote = validationMetrics
       ? ` / 検証 Positive Recall ${(validationMetrics.positiveRecall * 100).toFixed(1)}%${negativeHoldout.validationMask ? ` / Macro Leak ${((validationMetrics.macroNegativeLeakage ?? validationMetrics.negativeLeakage) * 100).toFixed(1)}%` : ""}`
       : "";
     setStatus(
-      `局所調整完了: Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%${validationNote} / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
+      `局所調整完了: Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%${roiNote}${validationNote} / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
       100,
     );
     if (scheduleSave) scheduleAutosave();
@@ -3008,16 +3013,21 @@ function restoreOptimizationState(snapshot) {
   updateMetrics();
 }
 
-function tuningStagePassesGuard(before, after) {
-  if (!before || !after) return false;
+function tuningStageGuardDecision(before, after) {
+  if (!before || !after) return { passed: false, reason: "missing-evaluation" };
   const beforeRecall = before.metrics?.positiveRecall ?? 0;
   const afterRecall = after.metrics?.positiveRecall ?? 0;
   const beforeLeak = before.metrics?.macroNegativeLeakage ?? before.metrics?.negativeLeakage ?? 0;
   const afterLeak = after.metrics?.macroNegativeLeakage ?? after.metrics?.negativeLeakage ?? 0;
-  if (afterRecall < beforeRecall - 0.005) return false;
-  if (afterLeak > beforeLeak + 0.005) return false;
-  if (before.roiMetrics?.roiCount && after.roiMetrics?.roiCount) {
-    if (after.roiMetrics.f1 < before.roiMetrics.f1 - 0.002) return false;
+  if (afterRecall < beforeRecall - 0.005) {
+    return { passed: false, reason: "positive-recall-regression" };
+  }
+  if (afterLeak > beforeLeak + 0.005) {
+    return { passed: false, reason: "macro-negative-leakage-regression" };
+  }
+  if (before.roiMetrics?.roiCount && after.roiMetrics?.roiCount
+      && after.roiMetrics.f1 < before.roiMetrics.f1 - 0.002) {
+    return { passed: false, reason: "verified-roi-f1-regression" };
   }
   if (before.closureProfile?.regionCount && after.closureProfile?.regionCount) {
     const topologyDrop =
@@ -3026,9 +3036,61 @@ function tuningStagePassesGuard(before, after) {
     const openIncrease =
       (after.closureProfile.openAfterMaxRadius ?? 0)
       - (before.closureProfile.openAfterMaxRadius ?? 0);
-    if (topologyDrop > 0.01 || openIncrease > 3) return false;
+    if (topologyDrop > 0.01) {
+      return { passed: false, reason: "weighted-closure-regression" };
+    }
+    if (openIncrease > 3) {
+      return { passed: false, reason: "open-at-3-regression" };
+    }
   }
-  return true;
+  return { passed: true, reason: null };
+}
+
+function tuningStagePassesGuard(before, after) {
+  return tuningStageGuardDecision(before, after).passed;
+}
+
+function summarizeLocalCalibration(calibration) {
+  if (!calibration) return null;
+  const values = calibration.values ?? [];
+  const measured = calibration.measured ?? [];
+  const nonZeroRegions = values.reduce(
+    (sum, value) => sum + (Math.abs(Number(value) || 0) > 1e-6 ? 1 : 0),
+    0,
+  );
+  const maxAbsDelta = values.reduce(
+    (maxValue, value) => Math.max(maxValue, Math.abs(Number(value) || 0)),
+    0,
+  );
+  return {
+    version: calibration.version ?? null,
+    kind: calibration.kind ?? null,
+    objectiveMode: calibration.objectiveMode ?? "partial-label",
+    cols: calibration.cols,
+    rows: calibration.rows,
+    baseSensitivity: calibration.baseSensitivity,
+    maxDelta: calibration.maxDelta ?? null,
+    measuredRegions: measured.reduce((sum, value) => sum + (value ? 1 : 0), 0),
+    nonZeroRegions,
+    maxAbsDelta,
+    verifiedRoiCount: calibration.verifiedRoiCount ?? 0,
+    verifiedRoiPixels: calibration.verifiedRoiPixels ?? 0,
+    values,
+    regions: (calibration.regions ?? []).map(region => ({
+      rx: region.rx,
+      ry: region.ry,
+      measured: region.measured,
+      referencePixels: region.referencePixels,
+      verifiedRoiPixels: region.verifiedRoiPixels ?? 0,
+      rawDelta: region.rawDelta,
+      selectedSensitivity: region.selectedSensitivity ?? null,
+      bestAdjustedScore: region.bestAdjustedScore ?? null,
+      bestF1: region.bestF1,
+      bestPrecision: region.bestPrecision,
+      bestRecall: region.bestRecall,
+      candidateResults: region.candidateResults ?? [],
+    })),
+  };
 }
 
 function gapProposalPassesGuard(before, after) {
@@ -3165,12 +3227,24 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     if (!globalRun) throw new Error("Global Auto Tuneに失敗しました。");
     const globalEvaluation = evaluateOptimizationMask(state.analysisMask);
     const globalSnapshot = captureOptimizationState(globalEvaluation);
+    const globalGuard = tuningStageGuardDecision(baseline, globalEvaluation);
+    const globalPrimaryRegressed =
+      optimizationPrimaryScore(globalEvaluation) < optimizationPrimaryScore(baseline) - 0.002;
+    const globalStage = {
+      status: "accepted",
+      reason: null,
+      guard: globalGuard,
+      primaryScoreRegressed: globalPrimaryRegressed,
+      before: compactOptimizationEvaluation(baseline),
+      after: compactOptimizationEvaluation(globalEvaluation),
+    };
 
     let selectedStage = "global";
     let selectedEvaluation = globalEvaluation;
     let selectedSnapshot = globalSnapshot;
-    if (!tuningStagePassesGuard(baseline, globalEvaluation)
-        || optimizationPrimaryScore(globalEvaluation) < optimizationPrimaryScore(baseline) - 0.002) {
+    if (!globalGuard.passed || globalPrimaryRegressed) {
+      globalStage.status = "rolled-back";
+      globalStage.reason = globalGuard.reason ?? "primary-score-regression";
       restoreOptimizationState(baselineSnapshot);
       selectedStage = "baseline";
       selectedEvaluation = baseline;
@@ -3178,6 +3252,7 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     }
 
     setStatus("自動最適化 2/4: Local Calibration...", 42);
+    const localBaseEvaluation = selectedEvaluation;
     const localRun = await localTune({
       manageBusy: false,
       recordHistory: false,
@@ -3185,9 +3260,29 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     });
     if (!localRun) throw new Error("Local Calibrationに失敗しました。");
     const localEvaluation = evaluateOptimizationMask(state.analysisMask);
+    const localGuard = tuningStageGuardDecision(localBaseEvaluation, localEvaluation);
+    const localPrimaryRegressed =
+      optimizationPrimaryScore(localEvaluation) < optimizationPrimaryScore(localBaseEvaluation) - 0.002;
+    const localCalibrationSummary = summarizeLocalCalibration(localRun.calibration);
+    const localNoChange = (localCalibrationSummary?.nonZeroRegions ?? 0) === 0;
+    const localStage = {
+      status: "accepted",
+      reason: null,
+      guard: localGuard,
+      primaryScoreRegressed: localPrimaryRegressed,
+      noChange: localNoChange,
+      before: compactOptimizationEvaluation(localBaseEvaluation),
+      after: compactOptimizationEvaluation(localEvaluation),
+      calibration: localCalibrationSummary,
+    };
 
-    if (!tuningStagePassesGuard(selectedEvaluation, localEvaluation)
-        || optimizationPrimaryScore(localEvaluation) < optimizationPrimaryScore(selectedEvaluation) - 0.002) {
+    if (!localGuard.passed || localPrimaryRegressed) {
+      localStage.status = "rolled-back";
+      localStage.reason = localGuard.reason ?? "primary-score-regression";
+      restoreOptimizationState(selectedSnapshot);
+    } else if (localNoChange) {
+      localStage.status = "no-change";
+      localStage.reason = "no-better-local-delta";
       restoreOptimizationState(selectedSnapshot);
     } else {
       selectedStage = "local";
@@ -3220,14 +3315,18 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
       ? `精密評価ROI ${finalEvaluation.roiMetrics.roiCount}領域`
       : "Partial Label";
     const note =
-      `one-click-optimize; selected=${selectedStage}; evaluation=${evaluationMode}; safe=${safeCount}; extended=${extendedCount}`;
+      `one-click-optimize; selected=${selectedStage}; evaluation=${evaluationMode}; global=${globalStage.status}; local=${localStage.status}; safe=${safeCount}; extended=${extendedCount}`;
     addHistory("auto-optimize", comparison?.metrics ?? finalEvaluation.metrics, note, {
-      version: 1,
+      version: 2,
       baseline: compactOptimizationEvaluation(baseline),
       global: compactOptimizationEvaluation(globalEvaluation),
       local: compactOptimizationEvaluation(localEvaluation),
       final: compactOptimizationEvaluation(finalEvaluation),
       selectedStage,
+      stages: {
+        global: globalStage,
+        local: localStage,
+      },
       gap: {
         safe: {
           accepted: safePass.accepted,
