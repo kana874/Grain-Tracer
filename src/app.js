@@ -212,6 +212,7 @@ const state = {
     active: false,
     currentRoiIndex: -1,
     autoRunAfterComplete: false,
+    skipForImage: false,
   },
   comparisonMode: false,
   annotationAssist: false,
@@ -1726,6 +1727,7 @@ function startPrecisionEvaluationGuide({ autoRunAfterComplete = false, forceRege
     setStatus("精密評価ガイドには粒界抽出とお手本が必要です。");
     return false;
   }
+  state.precisionGuide.skipForImage = false;
   if (forceRegenerate) {
     state.fullEvaluationRois = state.fullEvaluationRois.filter(
       rect => !(rect?.verified === false && rect?.source === "precision-guide"),
@@ -1790,6 +1792,7 @@ function skipPrecisionGuide() {
   if (!state.precisionGuide.active) return;
   const autoRun = state.precisionGuide.autoRunAfterComplete;
   state.fullEvaluationRois = state.fullEvaluationRois.filter(rect => rect?.verified !== false);
+  state.precisionGuide.skipForImage = true;
   finishPrecisionGuide();
   scheduleAutosave();
   els.autoOptimizeStatus.textContent =
@@ -2111,7 +2114,7 @@ function clearFullEvaluationRois() {
     rects: state.fullEvaluationRois.map(rect => ({ ...rect })),
   };
   state.fullEvaluationRois = [];
-  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
+  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false, skipForImage: false };
   state.selectedFullRoiIndex = -1;
   rebuildFullRoiLayer();
   invalidateEvaluationOnly();
@@ -2220,7 +2223,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.closedNegativeInvalidCount = 0;
   state.exclusionRects = masks.exclusionRects;
   state.fullEvaluationRois = masks.fullEvaluationRois;
-  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
+  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false, skipForImage: false };
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
   state.referenceCount = state.referenceCenterline.reduce((sum, value) => sum + value, 0);
@@ -2466,7 +2469,7 @@ async function loadBmp(file) {
   state.exclusionMask = null;
   state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
-  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
+  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false, skipForImage: false };
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
   state.rectInteraction = null;
@@ -2514,7 +2517,7 @@ async function loadBmp(file) {
     state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
-    state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
+    state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false, skipForImage: false };
     prepareCanvas(preview.width, preview.height);
     els.imageCanvas.getContext("2d").putImageData(preview.imageData, 0, 0);
     els.overlayCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
@@ -2572,7 +2575,7 @@ async function loadBmp(file) {
     state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
-    state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
+    state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false, skipForImage: false };
     state.selectedExclusionIndex = -1;
     state.selectedFullRoiIndex = -1;
     state.rectInteraction = null;
@@ -3129,7 +3132,7 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     if (!mask) return null;
   }
 
-  if (!skipPrecisionGate && !hasFullEvaluationRois()) {
+  if (!skipPrecisionGate && !hasFullEvaluationRois() && !state.precisionGuide.skipForImage) {
     const hasPending = provisionalFullEvaluationRois().length > 0;
     const started = startPrecisionEvaluationGuide({
       autoRunAfterComplete: true,
