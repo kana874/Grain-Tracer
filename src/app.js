@@ -27,7 +27,6 @@ import {
 import {
   buildDiagnosticReport,
   downloadBlob,
-  downloadJson,
   featureMapImageData,
   imageDataToBlob,
 } from "./diagnostics.js";
