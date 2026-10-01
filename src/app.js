@@ -1796,7 +1796,7 @@ function skipPrecisionGuide() {
   finishPrecisionGuide();
   scheduleAutosave();
   els.autoOptimizeStatus.textContent =
-    "精密評価ROIは今回は省略しました。Partial Label評価で自動最適化を続行します。";
+    "この画像では精密評価ROIを省略します。以後の自動最適化はPartial Label評価で実行します。";
   if (autoRun) setTimeout(() => runOneClickOptimization({ skipPrecisionGate: true }), 0);
 }
 
@@ -3140,7 +3140,7 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     });
     if (started) {
       els.autoOptimizeStatus.textContent +=
-        " 「今回はROIなしで続行」を押せば、精密評価を省略してPartial Labelだけで続行できます。";
+        " 「精密評価は後で」を押せば、この画像では精密評価を省略してPartial Labelだけで続行できます。";
       return { waitingForPrecisionGuide: true };
     }
   }
