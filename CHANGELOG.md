@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.8-alpha - 2026-10-02
+
+### Added
+- Local Calibration v2 can use verified complete-evaluation ROIs as true foreground/background supervision. Outside verified ROIs it preserves Partial Label semantics, so Unknown pixels are not silently treated as negatives.
+- Per-cell Local candidate diagnostics record every tested sensitivity delta, adjusted score, Precision, Recall and F1, plus the selected raw delta and ROI pixel coverage.
+- One-click Optimization now records machine-readable Global/Local stage outcomes: `accepted`, `no-change`, or `rolled-back`, with the Guard/score reason that caused the decision.
+- Diagnostic JSON v12 records the v0.3.8 Local objective mode, one-click stage diagnostics, and total One-click Optimization timing.
+
+### Changed
+- A Local Calibration run whose smoothed correction grid is entirely zero is now classified as `no-change` instead of being reported as the selected Local stage. The previous selected snapshot is restored so diagnostics accurately reflect that no local correction was adopted.
+- Local tuning receives the complete reference centerline only inside user-verified complete-evaluation ROIs, preventing held-out Positive pixels inside those ROIs from being misclassified as background during Local optimization.
+- App version advanced to `0.3.8-alpha`; algorithm identifier advanced to `boundary-v11-local-roi-diagnostics`.
+
+### Validation target
+- Re-run `269V2127_1S05C_center` and confirm whether ROI-aware Local Calibration produces non-zero deltas. If it remains zero, the result will now be distinguishable from Guard rollback and will support moving to Dendrite Suppression v2 rather than blindly increasing Local grid resolution.
+
 ## v0.3.7-alpha - 2026-10-01
 
 ### Added
