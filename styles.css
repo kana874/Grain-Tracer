@@ -68,6 +68,15 @@ progress { width: 100%; height: 10px; }
 .check-row input { accent-color: var(--accent); }
 .subpanel { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: #171b22; }
 .subpanel-title { display: block; margin-bottom: 8px; font-size: 12px; }
+.optimize-panel { border-color: #2c9188; background: #14201f; }
+.optimize-main { min-height: 42px; font-weight: 700; }
+.precision-guide-actions { margin-top: 10px; }
+.precision-guide-actions button:last-child { grid-column: 1 / -1; }
+.advanced-tuning { margin: 12px 0; border: 1px solid var(--line); border-radius: 7px; background: #151920; }
+.advanced-tuning > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 10px; user-select: none; }
+.advanced-tuning[open] > summary { border-bottom: 1px solid var(--line); color: var(--text); }
+.advanced-tuning > .button-grid,
+.advanced-tuning > .subpanel { margin: 10px; }
 .button-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .button-grid button { font-size: 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 11px; }
