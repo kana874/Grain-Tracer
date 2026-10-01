@@ -22,6 +22,12 @@
 - Automatic Gap application is conservative: Recall may not fall by more than 0.1 percentage point, Macro Negative Leakage may not rise by more than 0.1 percentage point, verified-ROI F1 may not regress beyond the same tolerance, and topology must improve.
 - Advanced manual controls remain available for diagnosis and intervention.
 
+### Validation
+- JavaScript syntax validation passes across all 16 source modules.
+- All 107 explicit DOM references in `src/app.js` resolve to unique IDs in `index.html`.
+- Synthetic Topology v3 validation confirms that repairing a one-pixel opening raises the weighted closure score from 0.75 to 1.0 and reduces capped mean required radius from 1 px to 0 px.
+- Extended Gap synthetic safety regression still accepts a strong 5 px gap and rejects the same path when it crosses the guarded Negative mask.
+
 ## v0.3.6.7-alpha - 2026-10-01
 
 ### Added
