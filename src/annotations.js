@@ -113,15 +113,28 @@ function renderRectCanvas(
   const draw = (rect, index = -1, preview = false) => {
     if (!rect) return;
     const selected = index === selectedIndex && !preview;
+    const provisional = !preview && rect?.verified === false;
     const x = rect.x0;
     const y = rect.y0;
     const w = rect.x1 - rect.x0 + 1;
     const h = rect.y1 - rect.y0 + 1;
     ctx.save();
-    ctx.fillStyle = preview ? palette.previewFill : selected ? palette.selectedFill : palette.fill;
-    ctx.strokeStyle = preview ? palette.previewStroke : selected ? palette.selectedStroke : palette.stroke;
-    ctx.lineWidth = preview || selected ? 2 : 1;
-    ctx.setLineDash(preview ? [8, 5] : selected ? [] : [5, 4]);
+    ctx.fillStyle = preview
+      ? palette.previewFill
+      : provisional
+        ? (palette.provisionalFill ?? palette.fill)
+        : selected
+          ? palette.selectedFill
+          : palette.fill;
+    ctx.strokeStyle = preview
+      ? palette.previewStroke
+      : provisional
+        ? (palette.provisionalStroke ?? palette.stroke)
+        : selected
+          ? palette.selectedStroke
+          : palette.stroke;
+    ctx.lineWidth = preview || selected || provisional ? 2 : 1;
+    ctx.setLineDash(preview ? [8, 5] : provisional ? [10, 6] : selected ? [] : [5, 4]);
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
 
@@ -190,6 +203,8 @@ export function renderFullEvaluationRoiCanvas(
     previewStroke: "rgba(180, 225, 255, 0.98)",
     handleFill: "rgba(180, 225, 255, 0.98)",
     handleStroke: "rgba(25, 55, 80, 0.98)",
+    provisionalFill: "rgba(255, 216, 74, 0.08)",
+    provisionalStroke: "rgba(255, 216, 74, 0.95)",
   });
 }
 
