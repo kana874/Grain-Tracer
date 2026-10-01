@@ -168,6 +168,8 @@ Full
 
 The full search summary is compacted before project/history persistence so repeated Auto Tune runs do not excessively inflate project JSON.
 
+v0.3.6.7 advances the search trace to v4. The optimization objective itself is intentionally unchanged, but the tuner records a compact Closure snapshot before and after tuning whenever Closed Negative Fill data are available. This makes topology regressions visible without allowing a sparse or incomplete topology label set to steer the parameter search. Direct topology-aware optimization remains a later-stage feature.
+
 ## 7. Reference-guided local calibration
 
 After the global parameters are tuned, GrainTracer can optimise sensitivity independently in a 4×4 grid using only regions that contain enough user reference-centerline pixels.
@@ -226,6 +228,12 @@ Topology v2.1 also enumerates short-gap candidates without modifying the extract
 
 v0.3.6.6 adds Topology v2.2 Safe Gap Bridge as a separate opt-in post-processing stage. Candidate segments must additionally satisfy a user-controlled maximum application distance and minimum score, cannot cross Exclusion pixels or a 1 px dilation of explicit Negative labels, and one endpoint may be consumed by at most one accepted bridge. The bridge mask is previewed separately and is applied only by explicit user action; the user can revert to the pre-bridge extraction mask.
 
+v0.3.6.7 advances this to Topology v2.3. Safe Gap remains unchanged as the conservative first stage. Extended Gap is a second, separately previewed stage for candidates beyond the Safe distance and up to 8 preview pixels. Extended candidates must satisfy endpoint direction, score and safety checks and also retain minimum Ridge/Color response along the missing path. They are never applied automatically.
+
+Gap Preview now keeps a bounded diagnostic sample of accepted and rejected candidates. The overlay distinguishes Safe, Extended, Negative/Exclusion rejection, angle mismatch, distance excess and score/evidence rejection. Every preview also compares the current extraction with the proposed mask using a 0 px Closure snapshot, so the UI and Diagnostic JSON can report the change in closed-region count and Closure Rate before application.
+
+Border-assisted closure is also made explicit in v2.3. The parent Closed Fill records the image-edge set that is allowed to act as a virtual wall. A single edge or two adjacent edges at a corner may be allowed; reaching any other edge is an open leak. Opposite-edge pairs, more than two image edges, or an excessive reachable-area ratio are treated as open/invalid rather than as a closed grain.
+
 ## 10. Persistence
 
 A `.graintracer.json` project stores:
@@ -254,5 +262,6 @@ IndexedDB is used for optional autosave and automatic restore when the same BMP 
 - Full-resolution overlapping-tile analysis and seam handling.
 - Smart Trace and manual correction workflow.
 - PNG / binary mask / SVG export.
-- Topology-aware Auto Tune objective and broader validation of the opt-in Safe Gap Bridge on multiple real micrographs.
+- Topology-aware Auto Tune objective (v0.3.6.7 records topology diagnostically but does not optimize against it).
+- Broader validation of Safe/Extended Gap on multiple real micrographs, plus stronger dendrite false-positive suppression.
 - Closed-grain segmentation and grain metrics.
