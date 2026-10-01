@@ -2113,7 +2113,6 @@ function clearFullEvaluationRois() {
   state.fullEvaluationRois = [];
   state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
   state.selectedFullRoiIndex = -1;
-  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
   rebuildFullRoiLayer();
   invalidateEvaluationOnly();
   commitReferenceHistory(item);
@@ -2515,7 +2514,7 @@ async function loadBmp(file) {
     state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
-  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
+    state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
     prepareCanvas(preview.width, preview.height);
     els.imageCanvas.getContext("2d").putImageData(preview.imageData, 0, 0);
     els.overlayCanvas.getContext("2d").clearRect(0, 0, preview.width, preview.height);
