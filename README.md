@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6.6-alpha / boundary-v8-safe-gap-processed-tune**
+**v0.3.6.7-alpha / boundary-v9-extended-gap-topology-diagnostic**
 
 Current capabilities:
 
@@ -26,7 +26,10 @@ Current capabilities:
 - annotation-assist view that visually attenuates automatic boundaries and Negative overlays without changing analysis data; `H` temporarily hides the automatic overlay and `V` toggles assist view
 - edge-aware scoring that renormalizes the boundary score over geometrically available features near image borders while guarding the outermost 1 preview pixel against frame artifacts
 - optional continuous Ridge-normal non-maximum suppression (NMS): an axial continuous normal is estimated from the four sampled Ridge directions and the boundary score is bilinearly sampled across that normal to reduce thick/double responses to a centreline
-- Topology v2.2: interior endpoint proxy, closed-fill core closure rates at 0/1/2/3 px probes, border-assisted cores, short-gap diagnostics, and an opt-in Safe Gap Bridge preview/application stage that rejects paths through Negative/Exclusion safety masks
+- Topology v2.3: interior endpoint proxy, closed-fill core closure rates at 0/1/2/3 px probes, explicit single-edge/adjacent-corner Border-assisted closure checks, Safe Gap, and opt-in Extended Gap preview up to 8 preview pixels
+- Safe Gap remains the conservative short-gap path; Extended Gap requires endpoint alignment plus Ridge/Color evidence along the missing path and remains manual-preview/manual-apply only
+- Gap Preview classifies candidates by reason: Safe, Extended, Negative/Exclusion rejection, angle mismatch, distance excess, and score/evidence rejection
+- Gap application records before/after closure snapshots, closed-region count change, and closure-rate change for diagnostic JSON export
 - independent Negative validation holdout: whole Closed Negative Fill regions are split between tuning and validation so one grain interior never leaks into both sets
 - deterministic Positive validation holdout using a 4×4 spatial grid and pixel-balanced cell selection to keep the validation share close to 20% even when one connected reference component is very large
 - optional border-assisted Closed Negative Fill: a user-selected grain may use one image edge or two adjacent image edges as part of its closure, with area/contact safety checks and explicit seed persistence
@@ -37,7 +40,7 @@ Current capabilities:
 - automatic 1 / 2 / 3 / 4 px Multi-Tolerance diagnostics
 - editable rectangular exclusion regions with move, edge/corner resize, Delete, Undo and Redo
 - orange non-boundary annotations for improved visibility on purple/magenta Barker images
-- Auto Tune v2 search trace v3: CPU-only coordinate descent of Sensitivity / Dark / Ridge / Color / Dendrite / MinComponent; raw scoring proposes each coordinate move, processed post-NMS/component scoring must accept it, and Ablation uses the same processed stage as the final objective
+- Auto Tune v2 search trace v4: CPU-only coordinate descent of Sensitivity / Dark / Ridge / Color / Dendrite / MinComponent; raw scoring proposes each coordinate move, processed post-NMS/component scoring must accept it, Ablation uses the same processed stage as the final objective, and before/after Closure is recorded as a diagnostic without affecting v0.3.6.7 optimization
 - reference-guided 4×4 local sensitivity calibration with smooth interpolation
 - 4×4 regional evaluation data
 - evaluation history
@@ -81,10 +84,12 @@ Original BMP
   -> exclusion-mask filtering
   -> complete-evaluation ROI + Multi-Tolerance diagnostics
   -> Auto Tune v2 coordinate descent (ROI True F1 when available; otherwise Positive Recall + Macro Negative Leakage)
+  -> Closure diagnosis before/after Auto Tune (diagnostic only in v0.3.6.7)
+  -> Safe / Extended Gap preview with manual application
   -> reference-guided local sensitivity calibration
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, local weight optimisation, compensation-map visualisation, topology-aware Auto Tune objectives, Smart Trace, and final PNG / mask / SVG export remain planned. Safe Gap Bridge is opt-in and reversible; it is not silently applied by Auto Tune.
+Full-resolution overlapping-tile analysis, topology-aware Auto Tune optimization, stronger dendrite false-positive suppression, higher-resolution local calibration, Smart Trace, and final PNG / mask / SVG export remain planned. Safe and Extended Gap Bridge are opt-in and reversible; neither is silently applied by Auto Tune. In v0.3.6.7, topology is recorded for diagnosis only and is not part of the Auto Tune objective.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
