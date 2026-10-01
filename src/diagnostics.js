@@ -358,7 +358,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v9",
+    schema: "graintracer-diagnostic-v10",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -474,7 +474,26 @@ export function buildDiagnosticReport(input) {
     },
     topology: topology ?? null,
     postProcessing: {
-      safeGapBridge: gapBridge ?? null,
+      gapBridge: gapBridge ?? null,
+      safeGapBridge: gapBridge && ((gapBridge.safeBridgeCount ?? 0) > 0 || gapBridge.mode === "safe")
+        ? {
+          bridgeCount: gapBridge.safeBridgeCount ?? gapBridge.bridgeCount ?? 0,
+          applications: (gapBridge.applications ?? []).filter(item => item.mode === "safe"),
+        }
+        : null,
+      extendedGapBridge: gapBridge && ((gapBridge.extendedBridgeCount ?? 0) > 0 || gapBridge.mode === "extended")
+        ? {
+          bridgeCount: gapBridge.extendedBridgeCount ?? gapBridge.bridgeCount ?? 0,
+          applications: (gapBridge.applications ?? []).filter(item => item.mode === "extended"),
+        }
+        : null,
+      topologyDifference: gapBridge ? {
+        before: gapBridge.topologyBefore ?? gapBridge.applications?.[0]?.topology?.before ?? null,
+        after: gapBridge.topologyAfter
+          ?? gapBridge.applications?.[gapBridge.applications.length - 1]?.topology?.after
+          ?? null,
+        delta: gapBridge.topologyDelta ?? null,
+      } : null,
     },
     referenceCoverage: {
       regionsWithReference: regionsWithReference.length,
@@ -532,7 +551,9 @@ export function buildDiagnosticReport(input) {
     notes: [
       "Feature values are normalized to 0..1.",
       "Near image edges, extraction renormalizes the score over feature channels that are geometrically available; the outermost 1 px remains guarded to suppress image-frame artifacts.",
-      "Topology v2.2 uses eroded Closed Negative Fill cores, supports explicitly marked border-assisted cores, reports direction-consistent short-gap candidates, and builds an opt-in Safe Gap Bridge proposal blocked by Negative/Exclusion safety masks.",
+      "Topology v2.3 uses eroded Closed Negative Fill cores, explicitly distinguishes single-edge and adjacent-corner Border-assisted closure, reports direction-consistent short-gap candidates, and builds opt-in Safe/Extended Gap proposals blocked by Negative/Exclusion safety masks.",
+      "Extended Gap evaluates paths beyond the Safe Gap distance up to 8 preview pixels and requires Ridge/Color path evidence; it is preview-only until the user explicitly applies the displayed proposal.",
+      "Gap post-processing stores before/after closure snapshots and closed-region/closure-rate deltas in diagnostic JSON.",
       "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",
       "Predictions in Unknown areas are not counted as false positives.",
       "Positive Recall measures how much of the user-labelled boundary centerline is recovered.",
@@ -542,7 +563,7 @@ export function buildDiagnosticReport(input) {
       "Closed-region Negative Fill is regenerated from saved seed coordinates and the current positive reference geometry. Seeds may explicitly preserve border-assisted image-frame closure.",
       "Closed-region Negative Fill holdout is split by whole connected grain-interior regions; a region never contributes pixels to both tuning and validation.",
       "Centerline NMS uses a continuous axial Ridge-normal estimate and bilinear score samples to suppress non-maximal responses before connected-component filtering when enabled.",
-    "Auto Tune v2 search trace v3 keeps fast raw scoring for proposal generation, but accepts coordinate changes only after post-NMS/neighbor-support/min-component evaluation; ablation uses the same processed stage as the final objective.",
+      "Auto Tune v2 search trace v4 keeps fast raw scoring for proposal generation, accepts coordinate changes only after post-NMS/neighbor-support/min-component evaluation, and records before/after Closure diagnostics without using topology in the v0.3.6.7 optimization objective.",
       "Performance timings are the latest browser-session measurements in milliseconds and are intended for regression diagnosis rather than cross-device benchmarking.",
       "Whole-image Precision/F1 are not formal metrics in Partial Label mode.",
       "True Precision / Recall / F1 are reported only inside complete-evaluation ROIs.",
