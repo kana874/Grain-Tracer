@@ -4,6 +4,7 @@ import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./l
 import { compareBoundaryMasks, computeFullEvaluationRoiMetrics, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
 import { interpolateSensitivityDelta } from "./local-tune.js";
 import { computeDendriteDifference, computeDendriteOrientation } from "./dendrite.js";
+import { computeClosureSnapshot } from "./topology.js";
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -851,6 +852,25 @@ function evaluateProcessedConfiguration(features, referenceCenterline, config, o
   };
 }
 
+function compactClosureSnapshot(snapshot) {
+  if (!snapshot) return null;
+  return {
+    basis: snapshot.basis,
+    regionCount: snapshot.regionCount ?? snapshot.coreRegionCount ?? 0,
+    coreRegionCount: snapshot.coreRegionCount ?? 0,
+    closedRegions: snapshot.closedRegions ?? 0,
+    openRegions: snapshot.openRegions ?? 0,
+    closureRate: snapshot.closureRate ?? null,
+    borderAssistedRegions: snapshot.borderAssistedRegions ?? 0,
+    borderAssistedClosedRegions: snapshot.borderAssistedClosedRegions ?? 0,
+    borderAssistedOpenRegions: snapshot.borderAssistedOpenRegions ?? 0,
+    borderAssistedSingleEdgeRegions: snapshot.borderAssistedSingleEdgeRegions ?? 0,
+    borderAssistedCornerRegions: snapshot.borderAssistedCornerRegions ?? 0,
+    borderAssistedUnexpectedEdgeLeaks: snapshot.borderAssistedUnexpectedEdgeLeaks ?? 0,
+    borderAssistedOversizeLeaks: snapshot.borderAssistedOversizeLeaks ?? 0,
+  };
+}
+
 function compactObjective(objective) {
   return {
     mode: objective.objectiveMode,
@@ -895,12 +915,15 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
   }
 
   const search = {
-    version: 3,
-    strategy: "coordinate-descent-processed-guard",
+    version: 4,
+    strategy: "coordinate-descent-processed-guard-with-topology-diagnostics",
     objectiveMode: helpers.objectiveMode,
     coordinateEvaluation: "raw-proposal-with-processed-acceptance",
     processedEvaluation: "post-nms-neighbor-support-min-component",
     ablationEvaluation: "post-nms-neighbor-support-min-component",
+    topologyEvaluation: options.topologyDiagnostics
+      ? "diagnostic-only-not-used-for-optimization"
+      : "disabled",
     rounds: [],
     ablation: [],
   };
@@ -920,9 +943,20 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     ratio => phaseProgress(ratio),
   );
   completedPhases += 1;
+  const topologyDiagnosticInput = options.topologyDiagnostics ?? null;
+  const baselineTopology = topologyDiagnosticInput
+    ? computeClosureSnapshot(
+      globalBest.mask,
+      features.width,
+      features.height,
+      topologyDiagnosticInput.seeds ?? [],
+      topologyDiagnosticInput.options ?? {},
+    )
+    : null;
   search.baseline = {
     parameters: { ...globalBest.parameters },
     objective: compactObjective(globalBest),
+    topology: compactClosureSnapshot(baselineTopology),
   };
   onProgress(completedPhases / totalPhases);
 
@@ -1070,10 +1104,35 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
       rows: 4,
     },
   );
+  const finalTopology = topologyDiagnosticInput
+    ? computeClosureSnapshot(
+      globalBest.mask,
+      features.width,
+      features.height,
+      topologyDiagnosticInput.seeds ?? [],
+      topologyDiagnosticInput.options ?? {},
+    )
+    : null;
+  const topologyDiagnostics = baselineTopology && finalTopology ? {
+    optimizationUsed: false,
+    before: compactClosureSnapshot(baselineTopology),
+    after: compactClosureSnapshot(finalTopology),
+    delta: {
+      closedRegions: (finalTopology.closedRegions ?? 0) - (baselineTopology.closedRegions ?? 0),
+      openRegions: (finalTopology.openRegions ?? 0) - (baselineTopology.openRegions ?? 0),
+      closureRate: (finalTopology.closureRate ?? 0) - (baselineTopology.closureRate ?? 0),
+      borderAssistedClosedRegions:
+        (finalTopology.borderAssistedClosedRegions ?? 0)
+        - (baselineTopology.borderAssistedClosedRegions ?? 0),
+    },
+    note: "Topology is recorded for diagnosis only in v0.3.6.7 and does not affect Auto Tune parameter selection.",
+  } : null;
   search.final = {
     parameters: { ...globalBest.parameters },
     objective: compactObjective(globalBest),
+    topology: compactClosureSnapshot(finalTopology),
   };
+  search.topology = topologyDiagnostics;
   onProgress(1);
 
   return {
@@ -1081,6 +1140,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     metrics,
     roiMetrics: globalBest.roiMetrics ?? null,
     mask: globalBest.mask,
+    topologyDiagnostics,
     search,
   };
 }
