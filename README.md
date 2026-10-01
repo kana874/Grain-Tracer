@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.8-alpha / boundary-v11-local-roi-diagnostics**
+**v0.3.8.1-alpha / boundary-v12-localized-local-calibration**
 
 Current capabilities:
 
@@ -44,8 +44,9 @@ Current capabilities:
 - editable rectangular exclusion regions with move, edge/corner resize, Delete, Undo and Redo
 - orange non-boundary annotations for improved visibility on purple/magenta Barker images
 - Auto Tune v2 search trace v4 remains available as the global tuning stage; v0.3.7 wraps it with local calibration and topology-guarded post-processing in the One-click Optimization workflow
-- reference-guided 4×4 Local Calibration v2 with smooth interpolation; verified complete-evaluation ROIs contribute true foreground/background supervision while Partial Label semantics remain outside those ROIs
+- reference-guided 4×4 Local Calibration v2.1: verified complete-evaluation ROIs contribute true foreground/background supervision, measured zero-delta cells remain hard anchors, interpolation is limited to unmeasured adjacent cells, and regional Recall guardrails prevent aggressive local sensitivity drops
 - one-click stage diagnostics record whether Global/Local tuning was accepted, produced no change, or was rolled back, including machine-readable reasons and per-cell Local candidate results
+- one-click diagnostic ZIP export packages manifest.json, Diagnostic JSON v13, preview/comparison/feature/reference/annotation images into one dependency-free ZIP bundle; individual-file export remains available as a fallback
 - 4×4 regional evaluation data
 - evaluation history
 - project JSON save/load
@@ -96,6 +97,6 @@ Original BMP
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, stronger dendrite false-positive suppression, higher-resolution/continuous local calibration, Smart Trace, and final PNG / mask / SVG export remain planned. v0.3.8 first strengthens Local Calibration supervision and diagnostics; topology remains a guard for One-click Gap post-processing, while the underlying Auto Tune v2 coordinate-descent objective itself is still based on verified ROI True F1 or Partial Label metrics.
+Full-resolution overlapping-tile analysis, stronger dendrite false-positive suppression, higher-resolution/continuous local calibration, Smart Trace, and final PNG / mask / SVG export remain planned. v0.3.8.1 localizes Local Calibration corrections and adds single-file diagnostic bundle export; topology remains a guard for One-click Gap post-processing, while the underlying Auto Tune v2 coordinate-descent objective itself is still based on verified ROI True F1 or Partial Label metrics.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
