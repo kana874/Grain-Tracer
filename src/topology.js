@@ -926,6 +926,90 @@ export function computeClosureSnapshot(prediction, width, height, seeds = [], op
   };
 }
 
+
+function summarizeClosureProfile(closureByBridgeRadius) {
+  const items = [...(closureByBridgeRadius ?? [])].sort((a, b) => a.bridgeRadius - b.bridgeRadius);
+  const regionCount = items[0]?.regionCount ?? 0;
+  if (!regionCount || !items.length) {
+    return {
+      regionCount,
+      weightedClosureScore: null,
+      meanRequiredRadiusCapped: null,
+      maxRadius: items.at(-1)?.bridgeRadius ?? null,
+      minimumRadiusHistogram: {},
+      openAfterMaxRadius: regionCount,
+    };
+  }
+
+  const rates = items.map(item => item.closureRate ?? 0);
+  const weightedClosureScore = rates.reduce((sum, value) => sum + value, 0) / rates.length;
+  const minimumRadiusHistogram = {};
+  let previousClosed = 0;
+  let weightedRequired = 0;
+  for (const item of items) {
+    const newlyClosed = Math.max(0, (item.closedRegions ?? 0) - previousClosed);
+    minimumRadiusHistogram[String(item.bridgeRadius)] = newlyClosed;
+    weightedRequired += newlyClosed * item.bridgeRadius;
+    previousClosed = Math.max(previousClosed, item.closedRegions ?? 0);
+  }
+  const maxRadius = items.at(-1)?.bridgeRadius ?? 0;
+  const openAfterMaxRadius = Math.max(0, regionCount - previousClosed);
+  minimumRadiusHistogram[">" + maxRadius] = openAfterMaxRadius;
+  weightedRequired += openAfterMaxRadius * (maxRadius + 1);
+
+  return {
+    regionCount,
+    weightedClosureScore,
+    meanRequiredRadiusCapped: weightedRequired / regionCount,
+    maxRadius,
+    minimumRadiusHistogram,
+    openAfterMaxRadius,
+  };
+}
+
+export function computeClosureProfile(prediction, width, height, seeds = [], options = {}) {
+  if (!prediction || prediction.length !== width * height) {
+    throw new Error("Closure Profile用の境界マスクが不正です。");
+  }
+  const bridgeRadii = [...new Set((options.bridgeRadii ?? [0, 1, 2, 3])
+    .map(value => Math.max(0, Math.round(value))))]
+    .sort((a, b) => a - b);
+  const closedNegativeMask = options.closedNegativeMask ?? null;
+  const borderAssistedMask = options.borderAssistedMask ?? null;
+  const coreErosionRadius = Math.max(0, Math.round(options.coreErosionRadius ?? 2));
+  const minCorePixels = Math.max(1, Math.round(options.minCorePixels ?? 12));
+  const coreMask = closedNegativeMask?.length === prediction.length
+    ? erodeSquare(closedNegativeMask, width, height, coreErosionRadius)
+    : null;
+  const coreIndex = coreMask
+    ? buildComponentIndex(coreMask, width, height, minCorePixels, true)
+    : null;
+  const fillIndex = closedNegativeMask?.length === prediction.length
+    ? buildComponentIndex(closedNegativeMask, width, height, 1, true)
+    : null;
+  const coreMeta = coreIndex && fillIndex
+    ? buildCoreParentMetadata(coreIndex, fillIndex, borderAssistedMask)
+    : null;
+  const useCoreRegions = Boolean(coreIndex?.componentCount);
+  const closureByBridgeRadius = [];
+  for (const radius of bridgeRadii) {
+    const wall = radius > 0
+      ? dilateBinaryMask(prediction, width, height, radius)
+      : prediction;
+    const backgroundIndex = buildComponentIndex(wall, width, height, 1, false);
+    const classified = useCoreRegions
+      ? classifyCoreClosure(wall, backgroundIndex, coreIndex, fillIndex, coreMeta, options)
+      : classifySeedFallback(wall, backgroundIndex, seeds, width, height, options);
+    closureByBridgeRadius.push({ bridgeRadius: radius, ...classified });
+  }
+  return {
+    basis: useCoreRegions ? "closed-negative-eroded-core" : "seed-fallback",
+    coreRegionCount: useCoreRegions ? coreIndex.componentCount : 0,
+    closureByBridgeRadius,
+    ...summarizeClosureProfile(closureByBridgeRadius),
+  };
+}
+
 export function computeBoundaryTopology(prediction, width, height, seeds = [], options = {}) {
   if (!prediction || prediction.length !== width * height) {
     throw new Error("Topology診断用の境界マスクが不正です。");
@@ -982,6 +1066,7 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
   const base = closureByBridgeRadius.find(item => item.bridgeRadius === 0)
     ?? closureByBridgeRadius[0]
     ?? null;
+  const closureProfile = summarizeClosureProfile(closureByBridgeRadius);
   const recovery = [];
   let previousClosed = base?.closedRegions ?? 0;
   for (const item of closureByBridgeRadius) {
@@ -998,9 +1083,9 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
   }
 
   return {
-    version: 2,
-    revision: "2.3-extended-gap-closure-diagnostics",
-    mode: "diagnostic-with-opt-in-safe-and-extended-gap",
+    version: 3,
+    revision: "3.0-minimum-closure-profile",
+    mode: "diagnostic-with-closure-profile-and-opt-in-gap",
     endpointProxy: endpoint,
     shortGapCandidates,
     safeGapBridge: {
@@ -1038,8 +1123,9 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
       baseBorderAssistedClosedRegions: base?.borderAssistedClosedRegions ?? 0,
       closureByBridgeRadius,
       recovery,
+      profile: closureProfile,
       note: "Ordinary cores are open when their prediction-background component reaches any image edge. Border-assisted cores explicitly remember the edge set represented by their annotated fill: a single edge or two adjacent corner edges may remain reachable, another edge is a leak, opposite-edge or >2-edge topology is invalid, and excessive reachable area remains open. Core coverage is reported separately.",
     },
-    note: "Topology v2.3 keeps closure probes diagnostic-only, preserves Safe Gap, and adds opt-in Extended Gap diagnostics up to 8 px when Ridge/Color evidence is available. Neither Safe nor Extended bridges are applied until the user explicitly confirms them.",
+    note: "Topology v3.0 adds a Minimum Closure Radius profile. The weighted closure score averages closure rates across 0/1/2/3 px probes so partial topology improvements are measurable even when 0 px closure stays at zero. Safe/Extended Gap remain guarded post-processing stages.",
   };
 }
