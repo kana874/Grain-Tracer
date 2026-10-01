@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.6.7-alpha / boundary-v9-extended-gap-topology-diagnostic**
+**v0.3.7-alpha / boundary-v10-one-click-topology-profile**
 
 Current capabilities:
 
@@ -26,8 +26,11 @@ Current capabilities:
 - annotation-assist view that visually attenuates automatic boundaries and Negative overlays without changing analysis data; `H` temporarily hides the automatic overlay and `V` toggles assist view
 - edge-aware scoring that renormalizes the boundary score over geometrically available features near image borders while guarding the outermost 1 preview pixel against frame artifacts
 - optional continuous Ridge-normal non-maximum suppression (NMS): an axial continuous normal is estimated from the four sampled Ridge directions and the boundary score is bilinearly sampled across that normal to reduce thick/double responses to a centreline
-- Topology v2.3: interior endpoint proxy, closed-fill core closure rates at 0/1/2/3 px probes, explicit single-edge/adjacent-corner Border-assisted closure checks, Safe Gap, and opt-in Extended Gap preview up to 8 preview pixels
-- Safe Gap remains the conservative short-gap path; Extended Gap requires endpoint alignment plus Ridge/Color evidence along the missing path and remains manual-preview/manual-apply only
+- Topology v3.0: interior endpoint proxy plus a Minimum Closure Radius profile over 0/1/2/3 px probes, including weighted closure score, capped mean required radius, and Open@3 counts
+- Safe Gap remains the conservative short-gap path; Extended Gap requires endpoint alignment plus Ridge/Color evidence along the missing path
+- One-click Optimization orchestrates Global Auto Tune, local sensitivity calibration, topology evaluation, and guarded Safe/Extended Gap repair
+- automatic Gap repair is accepted only when Recall/Leakage guards pass and the Minimum Closure Radius profile improves; manual Gap preview/application remains available under advanced diagnostics
+- guided precision-evaluation ROI suggestions select difficult/representative regions automatically; suggestions are provisional until the user confirms every visible boundary in the ROI has been labelled
 - Gap Preview classifies candidates by reason: Safe, Extended, Negative/Exclusion rejection, angle mismatch, distance excess, and score/evidence rejection
 - Gap application records before/after closure snapshots, closed-region count change, and closure-rate change for diagnostic JSON export
 - independent Negative validation holdout: whole Closed Negative Fill regions are split between tuning and validation so one grain interior never leaks into both sets
@@ -36,11 +39,11 @@ Current capabilities:
 - Partial Label evaluation: Positive / Negative / Unknown, with unlabelled predictions excluded from false-positive counts
 - whole-image Positive Recall / Negative Leakage / Alignment Error metrics
 - 4x4 region-balanced Macro Negative Leakage for spatially balanced Partial Label tuning
-- complete-evaluation ROIs that report formal True Precision / Recall / F1 only where the user declares all boundaries labelled
+- verified complete-evaluation ROIs that report formal True Precision / Recall / F1 only where the user declares all boundaries labelled; provisional guided ROI suggestions never contribute to formal metrics until confirmed
 - automatic 1 / 2 / 3 / 4 px Multi-Tolerance diagnostics
 - editable rectangular exclusion regions with move, edge/corner resize, Delete, Undo and Redo
 - orange non-boundary annotations for improved visibility on purple/magenta Barker images
-- Auto Tune v2 search trace v4: CPU-only coordinate descent of Sensitivity / Dark / Ridge / Color / Dendrite / MinComponent; raw scoring proposes each coordinate move, processed post-NMS/component scoring must accept it, Ablation uses the same processed stage as the final objective, and before/after Closure is recorded as a diagnostic without affecting v0.3.6.7 optimization
+- Auto Tune v2 search trace v4 remains available as the global tuning stage; v0.3.7 wraps it with local calibration and topology-guarded post-processing in the One-click Optimization workflow
 - reference-guided 4×4 local sensitivity calibration with smooth interpolation
 - 4×4 regional evaluation data
 - evaluation history
@@ -82,14 +85,16 @@ Original BMP
   -> optional continuous Ridge-normal NMS centreline suppression
   -> Positive / Negative / Unknown Partial Label comparison
   -> exclusion-mask filtering
-  -> complete-evaluation ROI + Multi-Tolerance diagnostics
-  -> Auto Tune v2 coordinate descent (ROI True F1 when available; otherwise Positive Recall + Macro Negative Leakage)
-  -> Closure diagnosis before/after Auto Tune (diagnostic only in v0.3.6.7)
-  -> Safe / Extended Gap preview with manual application
-  -> reference-guided local sensitivity calibration
+  -> guided precision-evaluation ROI suggestions when no verified ROI exists
+  -> One-click Optimization
+       -> Auto Tune v2 coordinate descent (verified ROI True F1 when available; otherwise Positive Recall + Macro Negative Leakage)
+       -> reference-guided local sensitivity calibration
+       -> Topology v3 Minimum Closure Radius profile
+       -> Safe / Extended Gap proposals with Recall/Leakage/Topology guards
+  -> advanced manual comparison / tuning / Gap diagnostics when needed
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, topology-aware Auto Tune optimization, stronger dendrite false-positive suppression, higher-resolution local calibration, Smart Trace, and final PNG / mask / SVG export remain planned. Safe and Extended Gap Bridge are opt-in and reversible; neither is silently applied by Auto Tune. In v0.3.6.7, topology is recorded for diagnosis only and is not part of the Auto Tune objective.
+Full-resolution overlapping-tile analysis, stronger dendrite false-positive suppression, higher-resolution local calibration, Smart Trace, and final PNG / mask / SVG export remain planned. v0.3.7 uses topology as a guard for One-click Gap post-processing, while the underlying Auto Tune v2 coordinate-descent objective itself is still based on verified ROI True F1 or Partial Label metrics.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
