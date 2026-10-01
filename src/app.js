@@ -345,8 +345,8 @@ function updateControls() {
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
-  els.autoOptimizeButton.disabled = disabled || !hasPreview || !hasRef;
-  els.precisionGuideButton.disabled = disabled || !hasAnalysis || !hasRef;
+  els.autoOptimizeButton.disabled = disabled || !hasPreview || !hasRef || state.precisionGuide.active;
+  els.precisionGuideButton.disabled = disabled || !hasAnalysis || !hasRef || state.precisionGuide.active;
   els.precisionVerifyButton.disabled = disabled || !state.precisionGuide.active;
   els.precisionSkipButton.disabled = disabled || !state.precisionGuide.active;
   els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
@@ -3123,6 +3123,10 @@ async function guardedGapOptimizationPass(mode) {
 
 async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
   if (!state.preview || !hasReference()) return null;
+  if (state.precisionGuide.active && !skipPrecisionGate) {
+    setStatus("精密評価ガイドを完了するか「精密評価は後で」を選んでください。");
+    return { waitingForPrecisionGuide: true };
+  }
 
   if (!state.analysisMask) {
     setBusy(true);
