@@ -56,7 +56,12 @@ import {
   rebuildClosedNegativeMask,
   splitClosedNegativeRegions,
 } from "./closed-negative-fill.js";
-import { computeBoundaryTopology, proposeShortGapBridges } from "./topology.js";
+import {
+  computeBoundaryTopology,
+  computeClosureSnapshot,
+  proposeExtendedGapBridges,
+  proposeShortGapBridges,
+} from "./topology.js";
 
 const $ = id => document.getElementById(id);
 
@@ -99,9 +104,11 @@ const els = {
   showNormalButton: $("showNormalButton"),
   topologyButton: $("topologyButton"),
   gapPreviewButton: $("gapPreviewButton"),
+  extendedGapPreviewButton: $("extendedGapPreviewButton"),
   gapApplyButton: $("gapApplyButton"),
   gapRevertButton: $("gapRevertButton"),
   gapMaxDistance: $("gapMaxDistance"),
+  extendedGapMaxDistance: $("extendedGapMaxDistance"),
   gapAngle: $("gapAngle"),
   gapMinScore: $("gapMinScore"),
   gapStatus: $("gapStatus"),
@@ -296,9 +303,11 @@ function updateControls() {
   els.annotationAssistButton.disabled = disabled || !hasAnalysis;
   els.topologyButton.disabled = disabled || !hasAnalysis;
   els.gapPreviewButton.disabled = disabled || !hasAnalysis;
+  els.extendedGapPreviewButton.disabled = disabled || !hasAnalysis;
   els.gapApplyButton.disabled = disabled || !hasAnalysis || !state.gapProposal?.acceptedBridgeCount;
   els.gapRevertButton.disabled = disabled || !hasAnalysis || !state.gapBaseMask;
   els.gapMaxDistance.disabled = disabled || !hasAnalysis;
+  els.extendedGapMaxDistance.disabled = disabled || !hasAnalysis;
   els.gapAngle.disabled = disabled || !hasAnalysis;
   els.gapMinScore.disabled = disabled || !hasAnalysis;
   els.panToolButton.disabled = disabled || !hasPreview;
@@ -556,6 +565,7 @@ function currentSettings() {
     borderAssistedFill: els.borderAssistedFill.checked,
     gapBridge: {
       maxDistance: Number(els.gapMaxDistance.value),
+      extendedMaxDistance: Number(els.extendedGapMaxDistance.value),
       maxAngleDeg: Number(els.gapAngle.value),
       minScore: Number(els.gapMinScore.value) / 100,
       negativeGuardRadius: 1,
@@ -600,6 +610,10 @@ function applySettings(settings = {}) {
   if (gapBridge.maxDistance != null) {
     els.gapMaxDistance.value = String(gapBridge.maxDistance);
     $("gapMaxDistanceValue").value = els.gapMaxDistance.value;
+  }
+  if (gapBridge.extendedMaxDistance != null) {
+    els.extendedGapMaxDistance.value = String(gapBridge.extendedMaxDistance);
+    $("extendedGapMaxDistanceValue").value = els.extendedGapMaxDistance.value;
   }
   if (gapBridge.maxAngleDeg != null) setRangeValue(els.gapAngle, gapBridge.maxAngleDeg);
   if (gapBridge.minScore != null) {
@@ -676,7 +690,7 @@ function clearGapProposal() {
     els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
   }
   if (els.gapStatus && !state.gapApplied) {
-    els.gapStatus.textContent = "Safe Gap: 未プレビュー";
+    els.gapStatus.textContent = "Gap Bridge: 未プレビュー";
   }
 }
 
@@ -685,14 +699,14 @@ function resetGapBridgeState(clearApplied = true) {
   if (clearApplied) {
     state.gapBaseMask = null;
     state.gapApplied = null;
-    if (els.gapStatus) els.gapStatus.textContent = "Safe Gap: 未プレビュー";
+    if (els.gapStatus) els.gapStatus.textContent = "Gap Bridge: 未プレビュー";
   }
 }
 
 function invalidateTopology() {
   state.lastTopology = null;
   clearGapProposal();
-  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2.2: 未実行";
+  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2.3: 未実行";
 }
 
 function topologyRateText(value) {
@@ -702,18 +716,33 @@ function topologyRateText(value) {
 function currentGapBridgeOptions() {
   return {
     gapApplyMaxDistance: Number(els.gapMaxDistance.value),
+    extendedGapMaxDistance: Number(els.extendedGapMaxDistance.value),
     maxGapAngleDeg: Number(els.gapAngle.value),
     minGapScore: Number(els.gapMinScore.value) / 100,
+    extendedMinGapScore: 0.58,
+    extendedMinPathEvidence: 0.34,
     negativeGuardRadius: 1,
     maxAcceptedBridges: 400,
-    maxGapProposalCandidates: 2000,
+    maxExtendedBridges: 240,
+    maxGapProposalCandidates: 2400,
+    maxGapReviewCandidates: 480,
+  };
+}
+
+function closureDiagnosticOptions() {
+  return {
+    closedNegativeMask: state.closedNegativeMask,
+    borderAssistedMask: state.borderAssistedNegativeMask,
+    coreErosionRadius: 2,
+    minCorePixels: 12,
+    maxBorderLeakAreaRatio: 2.0,
   };
 }
 
 function updateTopologyStatus(result = state.lastTopology) {
   if (!els.topologyStatus) return;
   if (!result) {
-    els.topologyStatus.textContent = "Topology v2.2: 未実行";
+    els.topologyStatus.textContent = "Topology v2.3: 未実行";
     return;
   }
   const closure = result.regionClosure;
@@ -723,6 +752,7 @@ function updateTopologyStatus(result = state.lastTopology) {
   const endpoint = result.endpointProxy;
   const gap = result.shortGapCandidates;
   const safe = result.safeGapBridge;
+  const extended = result.extendedGapBridge;
   const regionCount = closure?.coreRegionCount || r0?.regionCount || 0;
   const label = closure?.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
   const closureText = regionCount
@@ -735,19 +765,26 @@ function updateTopologyStatus(result = state.lastTopology) {
     : "";
   const borderText = (r0?.borderAssistedRegions ?? 0)
     ? " / 端部Core " + (r0.borderAssistedClosedRegions ?? 0) + "/" + r0.borderAssistedRegions
+      + " (単辺 " + (r0.borderAssistedSingleEdgeRegions ?? 0)
+      + ", corner " + (r0.borderAssistedCornerRegions ?? 0)
+      + ", 別辺Leak " + (r0.borderAssistedUnexpectedEdgeLeaks ?? 0) + ")"
     : "";
   const gapText = gap
     ? " / Short-gap候補 " + gap.candidateCount.toLocaleString() + "件"
     : "";
   const safeText = safe
-    ? " / Safe候補 " + safe.acceptedBridgeCount.toLocaleString()
+    ? " / Safe " + safe.acceptedBridgeCount.toLocaleString()
       + "本・+" + safe.addedPixels.toLocaleString() + "px"
+    : "";
+  const extendedText = extended
+    ? " / Extended " + extended.acceptedBridgeCount.toLocaleString()
+      + "本・+" + extended.addedPixels.toLocaleString() + "px"
     : "";
   const endpointText = endpoint?.endpointPixels?.toLocaleString?.()
     ?? endpoint?.endpointPixels
     ?? 0;
   els.topologyStatus.textContent =
-    "Topology v2.2: " + closureText + coverageText + borderText + gapText + safeText
+    "Topology v2.3: " + closureText + coverageText + borderText + gapText + safeText + extendedText
     + " / Endpoint proxy " + endpointText;
 }
 
@@ -755,35 +792,101 @@ function topologyOptions() {
   return {
     bridgeRadii: [0, 1, 2, 3],
     endpointEdgeMargin: 3,
-    closedNegativeMask: state.closedNegativeMask,
-    borderAssistedMask: state.borderAssistedNegativeMask,
+    ...closureDiagnosticOptions(),
     negativeMask: state.negativeMask,
     exclusionMask: state.exclusionMask,
-    coreErosionRadius: 2,
-    minCorePixels: 12,
-    maxBorderLeakAreaRatio: 2.0,
     maxGapDistance: 4.25,
     maxGapCandidates: 120,
+    boundaryEvidence: state.features ? {
+      ridge: state.features.ridge,
+      color: state.features.color,
+    } : null,
     ...currentGapBridgeOptions(),
   };
 }
 
-function renderGapProposalMask(mask) {
+function gapDispositionColor(disposition) {
+  if (disposition === "accepted-safe" || disposition === "safe-range") return "#35d07f";
+  if (disposition === "accepted-extended") return "#f2c94c";
+  if (disposition === "rejected-negative" || disposition === "rejected-exclusion") return "#ff5d5d";
+  if (disposition === "rejected-angle") return "#b36cff";
+  if (disposition === "rejected-distance") return "#9aa4b2";
+  return "#ff9f43";
+}
+
+function renderGapProposal(proposal) {
   if (!state.preview || !els.gapCanvas) return;
-  const rgba = new Uint8ClampedArray(mask.length * 4);
-  for (let p = 0; p < mask.length; p += 1) {
-    if (!mask[p]) continue;
-    const i = p * 4;
-    rgba[i] = 255;
-    rgba[i + 1] = 79;
-    rgba[i + 2] = 216;
-    rgba[i + 3] = 245;
+  const ctx = els.gapCanvas.getContext("2d");
+  ctx.clearRect(0, 0, state.preview.width, state.preview.height);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineWidth = 1.6;
+  for (const candidate of proposal?.reviewCandidates ?? []) {
+    ctx.strokeStyle = gapDispositionColor(candidate.disposition);
+    ctx.globalAlpha = candidate.disposition?.startsWith("accepted") || candidate.disposition === "safe-range"
+      ? 0.98
+      : 0.78;
+    ctx.beginPath();
+    ctx.moveTo(candidate.x1 + 0.5, candidate.y1 + 0.5);
+    ctx.lineTo(candidate.x2 + 0.5, candidate.y2 + 0.5);
+    ctx.stroke();
   }
-  els.gapCanvas.getContext("2d").putImageData(
-    new ImageData(rgba, state.preview.width, state.preview.height),
-    0,
-    0,
+  ctx.restore();
+}
+
+function compactGapClosure(snapshot) {
+  if (!snapshot) return null;
+  return {
+    basis: snapshot.basis,
+    regionCount: snapshot.regionCount ?? snapshot.coreRegionCount ?? 0,
+    closedRegions: snapshot.closedRegions ?? 0,
+    openRegions: snapshot.openRegions ?? 0,
+    closureRate: snapshot.closureRate ?? null,
+    borderAssistedRegions: snapshot.borderAssistedRegions ?? 0,
+    borderAssistedClosedRegions: snapshot.borderAssistedClosedRegions ?? 0,
+    borderAssistedOpenRegions: snapshot.borderAssistedOpenRegions ?? 0,
+    borderAssistedSingleEdgeRegions: snapshot.borderAssistedSingleEdgeRegions ?? 0,
+    borderAssistedCornerRegions: snapshot.borderAssistedCornerRegions ?? 0,
+    borderAssistedUnexpectedEdgeLeaks: snapshot.borderAssistedUnexpectedEdgeLeaks ?? 0,
+    borderAssistedOversizeLeaks: snapshot.borderAssistedOversizeLeaks ?? 0,
+  };
+}
+
+function topologyDeltaFromSnapshots(before, after) {
+  if (!before || !after) return null;
+  return {
+    closedRegions: (after.closedRegions ?? 0) - (before.closedRegions ?? 0),
+    openRegions: (after.openRegions ?? 0) - (before.openRegions ?? 0),
+    closureRate: (after.closureRate ?? 0) - (before.closureRate ?? 0),
+    borderAssistedClosedRegions:
+      (after.borderAssistedClosedRegions ?? 0) - (before.borderAssistedClosedRegions ?? 0),
+  };
+}
+
+function evaluateGapTopology(maskAfter) {
+  if (!state.preview || !state.analysisMask || !maskAfter) return null;
+  const options = closureDiagnosticOptions();
+  const before = computeClosureSnapshot(
+    state.analysisMask,
+    state.preview.width,
+    state.preview.height,
+    state.closedNegativeSeeds,
+    options,
   );
+  const after = computeClosureSnapshot(
+    maskAfter,
+    state.preview.width,
+    state.preview.height,
+    state.closedNegativeSeeds,
+    options,
+  );
+  const compactBefore = compactGapClosure(before);
+  const compactAfter = compactGapClosure(after);
+  return {
+    before: compactBefore,
+    after: compactAfter,
+    delta: topologyDeltaFromSnapshots(compactBefore, compactAfter),
+  };
 }
 
 function gapMetricsText(before, after) {
@@ -797,23 +900,49 @@ function gapMetricsText(before, after) {
     + "→" + (after.negativeLeakage * 100).toFixed(1) + "% (" + signed(leakDelta) + ")";
 }
 
-async function previewSafeGapBridges() {
+function gapTopologyText(topology) {
+  if (!topology?.before || !topology?.after) return "";
+  const delta = topology.delta ?? {};
+  const signed = value => (value >= 0 ? "+" : "") + value;
+  return " / Closure " + topologyRateText(topology.before.closureRate)
+    + "→" + topologyRateText(topology.after.closureRate)
+    + " / 閉領域 " + topology.before.closedRegions + "→" + topology.after.closedRegions
+    + " (" + signed(delta.closedRegions ?? 0) + ")";
+}
+
+function gapReviewCount(proposal, disposition) {
+  return (proposal?.reviewCandidates ?? []).reduce(
+    (sum, item) => sum + (item.disposition === disposition ? 1 : 0),
+    0,
+  );
+}
+
+async function previewGapBridges(mode = "safe") {
   if (!state.preview || !state.analysisMask) return null;
   ensureClosedNegativeFresh();
   setBusy(true);
   try {
-    setStatus("Safe Gap候補を評価中...", 20);
+    const extended = mode === "extended";
+    setStatus((extended ? "Extended Gap" : "Safe Gap") + "候補を評価中...", 20);
+    if (extended) await ensureFeatures();
     await new Promise(resolve => setTimeout(resolve, 0));
     const startedAt = nowMs();
-    const proposal = proposeShortGapBridges(
-      state.analysisMask,
-      state.preview.width,
-      state.preview.height,
-      topologyOptions(),
-    );
+    const proposal = extended
+      ? proposeExtendedGapBridges(
+        state.analysisMask,
+        state.preview.width,
+        state.preview.height,
+        topologyOptions(),
+      )
+      : proposeShortGapBridges(
+        state.analysisMask,
+        state.preview.width,
+        state.preview.height,
+        topologyOptions(),
+      );
     recordPerformance("gapBridgeMs", startedAt);
     state.gapProposal = proposal;
-    renderGapProposalMask(proposal.bridgeMask);
+    renderGapProposal(proposal);
 
     let beforeMetrics = null;
     let afterMetrics = null;
@@ -853,19 +982,28 @@ async function previewSafeGapBridges() {
         macroNegativeLeakage: afterMetrics.macroNegativeLeakage,
       },
     } : null;
+    proposal.topology = evaluateGapTopology(proposal.mask);
 
-    const rejected = proposal.rejected;
+    const rejected = proposal.rejected ?? {};
+    const label = extended ? "Extended Gap" : "Safe Gap";
+    const angleRejected = gapReviewCount(proposal, "rejected-angle");
     const detail =
       "候補 " + proposal.sourceCandidateCount.toLocaleString() + "件"
-      + " → 安全判定 " + proposal.acceptedBridgeCount.toLocaleString() + "本"
+      + " → 適用候補 " + proposal.acceptedBridgeCount.toLocaleString() + "本"
       + " / 追加 " + proposal.addedPixels.toLocaleString() + "px"
-      + " / Reject: Negative " + rejected.negative
-      + ", 除外 " + rejected.exclusion
-      + ", 端点競合 " + rejected.endpointConflict;
+      + " / Reject: Negative " + (rejected.negative ?? 0)
+      + ", 除外 " + (rejected.exclusion ?? 0)
+      + ", 角度 " + angleRejected
+      + ", Score " + (rejected.score ?? 0)
+      + (extended ? ", Evidence " + ((rejected.evidence ?? 0) + (rejected.evidenceUnavailable ?? 0)) : "")
+      + ", 距離 " + (rejected.distance ?? 0);
     els.gapStatus.textContent =
-      "Safe Gap: " + detail + gapMetricsText(beforeMetrics, afterMetrics);
+      label + ": " + detail
+      + gapMetricsText(beforeMetrics, afterMetrics)
+      + gapTopologyText(proposal.topology);
     setStatus(
-      "Safe Gapプレビュー完了: " + detail
+      label + "プレビュー完了: " + detail
+        + gapTopologyText(proposal.topology)
         + " / " + state.performance.gapBridgeMs.toFixed(0) + " ms",
       100,
     );
@@ -873,19 +1011,27 @@ async function previewSafeGapBridges() {
     return proposal;
   } catch (error) {
     console.error(error);
-    setStatus("Safe Gapエラー: " + error.message, 0);
+    setStatus("Gap Bridgeエラー: " + error.message, 0);
     return null;
   } finally {
     setBusy(false);
   }
 }
 
-async function applySafeGapBridges() {
+async function previewSafeGapBridges() {
+  return previewGapBridges("safe");
+}
+
+async function previewExtendedGapBridges() {
+  return previewGapBridges("extended");
+}
+
+async function applyGapBridges() {
   if (!state.preview || !state.analysisMask) return;
   let proposal = state.gapProposal;
   if (!proposal) proposal = await previewSafeGapBridges();
   if (!proposal?.acceptedBridgeCount) {
-    setStatus("適用できるSafe Gap候補がありません。");
+    setStatus("適用できるGap候補がありません。");
     return;
   }
 
@@ -893,11 +1039,34 @@ async function applySafeGapBridges() {
   if (!state.gapBaseMask) state.gapBaseMask = state.analysisMask.slice();
   state.analysisMask = proposal.mask;
   const previousApplied = state.gapApplied;
-  state.gapApplied = {
+  const label = proposal.mode === "extended" ? "Extended Gap" : "Safe Gap";
+  const application = {
+    mode: proposal.mode ?? "safe",
     appliedAt: new Date().toISOString(),
+    bridgeCount: proposal.acceptedBridgeCount,
+    addedPixels: proposal.addedPixels,
+    settings: proposal.settings,
+    rejected: proposal.rejected,
+    sourceCandidateCount: proposal.sourceCandidateCount,
+    evaluation: proposal.evaluation ?? null,
+    topology: proposal.topology ?? null,
+  };
+  const topologyBefore = previousApplied?.topologyBefore ?? proposal.topology?.before ?? null;
+  const topologyAfter = proposal.topology?.after ?? previousApplied?.topologyAfter ?? null;
+  state.gapApplied = {
+    mode: previousApplied && previousApplied.mode !== application.mode ? "mixed" : application.mode,
+    appliedAt: application.appliedAt,
     passes: (previousApplied?.passes ?? 0) + 1,
     bridgeCount: (previousApplied?.bridgeCount ?? 0) + proposal.acceptedBridgeCount,
     addedPixels: (previousApplied?.addedPixels ?? 0) + proposal.addedPixels,
+    safeBridgeCount: (previousApplied?.safeBridgeCount ?? 0)
+      + (application.mode === "safe" ? proposal.acceptedBridgeCount : 0),
+    extendedBridgeCount: (previousApplied?.extendedBridgeCount ?? 0)
+      + (application.mode === "extended" ? proposal.acceptedBridgeCount : 0),
+    topologyBefore,
+    topologyAfter,
+    topologyDelta: topologyDeltaFromSnapshots(topologyBefore, topologyAfter),
+    applications: [...(previousApplied?.applications ?? []), application],
     settings: proposal.settings,
     rejected: proposal.rejected,
     sourceCandidateCount: proposal.sourceCandidateCount,
@@ -906,7 +1075,7 @@ async function applySafeGapBridges() {
   state.gapProposal = null;
   els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
   state.lastTopology = null;
-  els.topologyStatus.textContent = "Topology v2.2: Gap適用後は未再診断";
+  els.topologyStatus.textContent = "Topology v2.3: Gap適用後は未再診断";
 
   if (wasComparison && hasReference()) {
     compareCurrent(false);
@@ -915,19 +1084,26 @@ async function applySafeGapBridges() {
     updateMetrics();
   }
   els.gapStatus.textContent =
-    "Safe Gap: 適用済み " + state.gapApplied.bridgeCount.toLocaleString()
-      + "本 / +" + state.gapApplied.addedPixels.toLocaleString()
-      + "px（「Gap適用を戻す」で抽出直後へ復帰）";
+    "Gap Bridge: 適用済み " + state.gapApplied.bridgeCount.toLocaleString()
+      + "本 (Safe " + state.gapApplied.safeBridgeCount.toLocaleString()
+      + " / Extended " + state.gapApplied.extendedBridgeCount.toLocaleString() + ")"
+      + " / +" + state.gapApplied.addedPixels.toLocaleString()
+      + "px" + gapTopologyText({
+        before: state.gapApplied.topologyBefore,
+        after: state.gapApplied.topologyAfter,
+        delta: state.gapApplied.topologyDelta,
+      })
+      + "（「Gap適用を戻す」で抽出直後へ復帰）";
   updateControls();
   setStatus(
-    "Safe Gapを適用しました: " + state.gapApplied.bridgeCount.toLocaleString()
-      + "本 / +" + state.gapApplied.addedPixels.toLocaleString()
+    label + "を適用しました: " + proposal.acceptedBridgeCount.toLocaleString()
+      + "本 / +" + proposal.addedPixels.toLocaleString()
       + "px。必要ならTopologyを再診断してください。",
     100,
   );
 }
 
-function revertSafeGapBridges() {
+function revertGapBridges() {
   if (!state.preview || !state.gapBaseMask) return;
   const wasComparison = state.comparisonMode;
   state.analysisMask = state.gapBaseMask;
@@ -936,8 +1112,8 @@ function revertSafeGapBridges() {
   state.gapProposal = null;
   els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
   state.lastTopology = null;
-  els.topologyStatus.textContent = "Topology v2.2: Gap復帰後は未再診断";
-  els.gapStatus.textContent = "Safe Gap: 適用を戻しました";
+  els.topologyStatus.textContent = "Topology v2.3: Gap復帰後は未再診断";
+  els.gapStatus.textContent = "Gap Bridge: 適用を戻しました";
 
   if (wasComparison && hasReference()) {
     compareCurrent(false);
@@ -946,7 +1122,7 @@ function revertSafeGapBridges() {
     updateMetrics();
   }
   updateControls();
-  setStatus("Safe Gap適用前の粒界マスクへ戻しました。", 100);
+  setStatus("Gap適用前の粒界マスクへ戻しました。", 100);
 }
 
 async function runTopologyDiagnostics() {
@@ -954,7 +1130,8 @@ async function runTopologyDiagnostics() {
   ensureClosedNegativeFresh();
   setBusy(true);
   try {
-    setStatus("Topology v2.2診断中... Core閉鎖・画像端・Safe Gapを確認しています。", 10);
+    if (!state.features) await ensureFeatures();
+    setStatus("Topology v2.3診断中... Core閉鎖・画像端・Safe/Extended Gapを確認しています。", 10);
     await new Promise(resolve => setTimeout(resolve, 0));
     const startedAt = nowMs();
     const result = computeBoundaryTopology(
@@ -973,12 +1150,14 @@ async function runTopologyDiagnostics() {
     const basis = closure.basis === "closed-negative-eroded-core" ? "Core Closure" : "Seed Closure";
     const gapCount = result.shortGapCandidates?.candidateCount ?? 0;
     const safeCount = result.safeGapBridge?.acceptedBridgeCount ?? 0;
+    const extendedCount = result.extendedGapBridge?.acceptedBridgeCount ?? 0;
     setStatus(
-      "Topology v2.2完了: " + basis
+      "Topology v2.3完了: " + basis
         + " 0px " + topologyRateText(r0?.closureRate)
         + " → 2px " + topologyRateText(r2?.closureRate)
         + " / Short-gap " + gapCount.toLocaleString() + "件"
         + " / Safe " + safeCount.toLocaleString() + "本"
+        + " / Extended " + extendedCount.toLocaleString() + "本"
         + " / Endpoint proxy " + result.endpointProxy.endpointPixels.toLocaleString()
         + " / " + state.performance.topologyMs.toFixed(0) + " ms",
       100,
@@ -1069,12 +1248,14 @@ function renderHistory() {
 function compactAutoTuneSearch(search) {
   if (!search) return null;
   return {
-    version: search.version ?? 3,
-    strategy: search.strategy ?? "coordinate-descent-processed-guard",
+    version: search.version ?? 4,
+    strategy: search.strategy ?? "coordinate-descent-processed-guard-with-topology-diagnostics",
     objectiveMode: search.objectiveMode ?? null,
     coordinateEvaluation: search.coordinateEvaluation ?? null,
     processedEvaluation: search.processedEvaluation ?? null,
     ablationEvaluation: search.ablationEvaluation ?? null,
+    topologyEvaluation: search.topologyEvaluation ?? null,
+    topology: search.topology ?? null,
     baseline: search.baseline ?? null,
     final: search.final ?? null,
     rounds: (search.rounds ?? []).map(round => ({
@@ -2287,6 +2468,10 @@ async function autoTune() {
       exclusionMask: state.exclusionMask,
       fullEvaluationRois: useCompleteRoi ? state.fullEvaluationRois : null,
       current: currentExtractionOptions(),
+      topologyDiagnostics: {
+        seeds: state.closedNegativeSeeds,
+        options: closureDiagnosticOptions(),
+      },
       onProgress: ratio => setStatus(`Auto Tune v2実行中... ${Math.round(ratio * 100)}%`, ratio * 99),
     });
     recordPerformance("autoTuneMs", autoTuneStartedAt);
@@ -2363,9 +2548,12 @@ async function autoTune() {
       objectiveStatus = `Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}% / Macro Leakage ${((comparison.metrics.macroNegativeLeakage ?? comparison.metrics.negativeLeakage) * 100).toFixed(1)}%`;
     }
 
+    const topologyStatus = result.topologyDiagnostics?.after?.regionCount
+      ? ` / Closure ${topologyRateText(result.topologyDiagnostics.before?.closureRate)}→${topologyRateText(result.topologyDiagnostics.after?.closureRate)} (閉領域 ${result.topologyDiagnostics.before?.closedRegions ?? 0}→${result.topologyDiagnostics.after?.closedRegions ?? 0})`
+      : "";
     addHistory("auto-tune", comparison.metrics, note, compactAutoTuneSearch(result.search));
     setStatus(
-      `Auto Tune v2完了: ${objectiveStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent} / ${(state.performance.autoTuneMs / 1000).toFixed(1)} s`,
+      `Auto Tune v2完了: ${objectiveStatus}${topologyStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent} / ${(state.performance.autoTuneMs / 1000).toFixed(1)} s`,
       100,
     );
   } catch (error) {
@@ -2926,8 +3114,9 @@ els.clearFullRoiButton.addEventListener("click", clearFullEvaluationRois);
 els.showNormalButton.addEventListener("click", showNormalView);
 els.topologyButton.addEventListener("click", runTopologyDiagnostics);
 els.gapPreviewButton.addEventListener("click", previewSafeGapBridges);
-els.gapApplyButton.addEventListener("click", applySafeGapBridges);
-els.gapRevertButton.addEventListener("click", revertSafeGapBridges);
+els.extendedGapPreviewButton.addEventListener("click", previewExtendedGapBridges);
+els.gapApplyButton.addEventListener("click", applyGapBridges);
+els.gapRevertButton.addEventListener("click", revertGapBridges);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
 els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
@@ -2988,7 +3177,7 @@ const gapSettingChanged = () => {
   clearGapProposal();
   state.lastTopology = null;
   if (els.topologyStatus) {
-    els.topologyStatus.textContent = "Topology v2.2: Gap設定変更後は未実行";
+    els.topologyStatus.textContent = "Topology v2.3: Gap設定変更後は未実行";
   }
   if (gapWasApplied && state.analysisMask) {
     if (wasComparison && hasReference()) compareCurrent(false);
@@ -2996,12 +3185,13 @@ const gapSettingChanged = () => {
       renderNormalOverlay();
       updateMetrics();
     }
-    els.gapStatus.textContent = "Safe Gap: 設定変更のため適用を自動解除しました";
+    els.gapStatus.textContent = "Gap Bridge: 設定変更のため適用を自動解除しました";
   }
   updateControls();
   scheduleAutosave();
 };
 bindRange(els.gapMaxDistance, $("gapMaxDistanceValue"), gapSettingChanged);
+bindRange(els.extendedGapMaxDistance, $("extendedGapMaxDistanceValue"), gapSettingChanged);
 bindRange(els.gapAngle, $("gapAngleValue"), gapSettingChanged);
 bindRange(els.gapMinScore, $("gapMinScoreValue"), gapSettingChanged);
 els.localEnabled.addEventListener("change", featureSettingChanged);
