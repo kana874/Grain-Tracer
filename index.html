@@ -145,9 +145,9 @@
           <div class="button-grid precision-guide-actions">
             <button id="precisionGuideButton" type="button" disabled>精密評価候補を作る</button>
             <button id="precisionVerifyButton" class="primary" type="button" disabled>このROIの入力完了 → 次へ</button>
-            <button id="precisionSkipButton" type="button" disabled>今回はROIなしで続行</button>
+            <button id="precisionSkipButton" type="button" disabled>精密評価は後で（この画像では省略）</button>
           </div>
-          <p class="help">黄破線の候補ROIが表示されたら、その枠内で見える粒界をすべて黄色のお手本線にしてください。「入力完了」を押したROIだけが完全評価ROIとしてTrue Precision / Recall / F1に使われます。候補の自動作成だけでは評価には使用されません。</p>
+          <p class="help">黄破線の候補ROIが表示されたら、その枠内で見える粒界をすべて黄色のお手本線にしてください。「入力完了」を押したROIだけが完全評価ROIとしてTrue Precision / Recall / F1に使われます。候補の自動作成だけでは評価には使用されません。「精密評価は後で」を選ぶと、この画像を開いている間は以後の自動最適化をPartial Labelだけで実行します。</p>
         </div>
 
         <details class="advanced-tuning">
