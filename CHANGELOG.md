@@ -23,8 +23,9 @@
 - Auto Tune Closure data is reported for diagnosis only; direct topology-aware optimization remains deferred to v0.3.7.
 
 ### Validation
-- Added synthetic checks for Extended Gap acceptance with strong path evidence, rejection across guarded Negative pixels, and open-to-closed topology change after a repaired gap.
-- JavaScript syntax and DOM-ID consistency checks are required before release.
+- Synthetic validation confirmed Extended Gap acceptance with strong path evidence, rejection across guarded Negative pixels, and open-to-closed topology change after a repaired gap.
+- Synthetic Border-assisted validation confirmed that a single annotated image edge can remain virtually closed while leakage to an unannotated edge is classified as open.
+- JavaScript syntax validation passed across all source modules, and all explicit app DOM references resolve against the updated HTML.
 
 ## v0.3.6.6-alpha - 2026-09-29
 
