@@ -734,7 +734,7 @@ function resetGapBridgeState(clearApplied = true) {
 function invalidateTopology() {
   state.lastTopology = null;
   clearGapProposal();
-  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v2.3: 未実行";
+  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v3.0: 未実行";
 }
 
 function topologyRateText(value) {
@@ -770,13 +770,14 @@ function closureDiagnosticOptions() {
 function updateTopologyStatus(result = state.lastTopology) {
   if (!els.topologyStatus) return;
   if (!result) {
-    els.topologyStatus.textContent = "Topology v2.3: 未実行";
+    els.topologyStatus.textContent = "Topology v3.0: 未実行";
     return;
   }
   const closure = result.regionClosure;
   const r0 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 0);
   const r2 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 2);
   const r3 = closure?.closureByBridgeRadius?.find(item => item.bridgeRadius === 3);
+  const profile = closure?.profile;
   const endpoint = result.endpointProxy;
   const gap = result.shortGapCandidates;
   const safe = result.safeGapBridge;
@@ -790,6 +791,11 @@ function updateTopologyStatus(result = state.lastTopology) {
     : label + ": 評価領域なし";
   const coverageText = r2?.coveredCorePixelFraction
     ? " / Core被覆@2px " + topologyRateText(r2.coveredCorePixelFraction)
+    : "";
+  const profileText = profile?.regionCount
+    ? " / Profile " + topologyRateText(profile.weightedClosureScore)
+      + " / 平均必要半径≤" + (profile.maxRadius + 1) + "px " + profile.meanRequiredRadiusCapped.toFixed(2) + "px"
+      + " / Open@" + profile.maxRadius + " " + profile.openAfterMaxRadius
     : "";
   const borderText = (r0?.borderAssistedRegions ?? 0)
     ? " / 端部Core " + (r0.borderAssistedClosedRegions ?? 0) + "/" + r0.borderAssistedRegions
@@ -812,7 +818,7 @@ function updateTopologyStatus(result = state.lastTopology) {
     ?? endpoint?.endpointPixels
     ?? 0;
   els.topologyStatus.textContent =
-    "Topology v2.3: " + closureText + coverageText + borderText + gapText + safeText + extendedText
+    "Topology v3.0: " + closureText + profileText + coverageText + borderText + gapText + safeText + extendedText
     + " / Endpoint proxy " + endpointText;
 }
 
@@ -1103,7 +1109,7 @@ async function applyGapBridges() {
   state.gapProposal = null;
   els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
   state.lastTopology = null;
-  els.topologyStatus.textContent = "Topology v2.3: Gap適用後は未再診断";
+  els.topologyStatus.textContent = "Topology v3.0: Gap適用後は未再診断";
 
   if (wasComparison && hasReference()) {
     compareCurrent(false);
@@ -1140,7 +1146,7 @@ function revertGapBridges() {
   state.gapProposal = null;
   els.gapCanvas.getContext("2d").clearRect(0, 0, state.preview.width, state.preview.height);
   state.lastTopology = null;
-  els.topologyStatus.textContent = "Topology v2.3: Gap復帰後は未再診断";
+  els.topologyStatus.textContent = "Topology v3.0: Gap復帰後は未再診断";
   els.gapStatus.textContent = "Gap Bridge: 適用を戻しました";
 
   if (wasComparison && hasReference()) {
@@ -1159,7 +1165,7 @@ async function runTopologyDiagnostics() {
   setBusy(true);
   try {
     if (!state.features) await ensureFeatures();
-    setStatus("Topology v2.3診断中... Core閉鎖・画像端・Safe/Extended Gapを確認しています。", 10);
+    setStatus("Topology v3.0診断中... Core閉鎖・画像端・Safe/Extended Gapを確認しています。", 10);
     await new Promise(resolve => setTimeout(resolve, 0));
     const startedAt = nowMs();
     const result = computeBoundaryTopology(
@@ -1180,7 +1186,7 @@ async function runTopologyDiagnostics() {
     const safeCount = result.safeGapBridge?.acceptedBridgeCount ?? 0;
     const extendedCount = result.extendedGapBridge?.acceptedBridgeCount ?? 0;
     setStatus(
-      "Topology v2.3完了: " + basis
+      "Topology v3.0完了: " + basis
         + " 0px " + topologyRateText(r0?.closureRate)
         + " → 2px " + topologyRateText(r2?.closureRate)
         + " / Short-gap " + gapCount.toLocaleString() + "件"
@@ -1877,7 +1883,7 @@ function invalidateAfterReferenceEdit(affectsAnalysis = false) {
   }
   invalidateTopology();
   if (gapWasApplied && els.gapStatus) {
-    els.gapStatus.textContent = "Safe Gap: 注釈変更のため適用を自動解除しました";
+    els.gapStatus.textContent = "Gap Bridge: 注釈変更のため適用を自動解除しました";
   }
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
@@ -3736,7 +3742,7 @@ const gapSettingChanged = () => {
   clearGapProposal();
   state.lastTopology = null;
   if (els.topologyStatus) {
-    els.topologyStatus.textContent = "Topology v2.3: Gap設定変更後は未実行";
+    els.topologyStatus.textContent = "Topology v3.0: Gap設定変更後は未実行";
   }
   if (gapWasApplied && state.analysisMask) {
     if (wasComparison && hasReference()) compareCurrent(false);
