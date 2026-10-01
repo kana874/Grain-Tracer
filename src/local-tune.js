@@ -96,23 +96,35 @@ function evaluateRegionSensitivity(features, reference, helpers, bounds, sensiti
   };
 }
 
-function smoothMeasuredGrid(raw, measured, cols, rows) {
+function buildLocalizedCalibrationGrid(raw, measured, cols, rows, options = {}) {
   const out = new Float32Array(raw.length);
+  const propagationRadiusCells = options.propagationRadiusCells ?? Math.SQRT2 + 1e-6;
+  const unmeasuredPriorWeight = options.unmeasuredPriorWeight ?? 1.5;
+
   for (let ry = 0; ry < rows; ry += 1) {
     for (let rx = 0; rx < cols; rx += 1) {
       const index = ry * cols + rx;
+
+      // A measured zero is evidence that the global sensitivity already wins in
+      // this cell. Keep every measured cell as a hard anchor instead of letting
+      // neighbouring ROI corrections overwrite that decision.
+      if (measured[index]) {
+        out[index] = raw[index];
+        continue;
+      }
+
+      // Only unmeasured cells are interpolated, and only from immediately
+      // adjacent measured cells. The zero prior prevents a single verified ROI
+      // from propagating a strong correction across the whole 4x4 field.
       let weighted = 0;
-      // Zero is the global-setting prior. This prevents one annotated region from
-      // imposing the same sensitivity correction on the entire image.
-      let weightSum = measured[index] ? 0.35 : 1.8;
+      let weightSum = unmeasuredPriorWeight;
       for (let sy = 0; sy < rows; sy += 1) {
         for (let sx = 0; sx < cols; sx += 1) {
           const si = sy * cols + sx;
           if (!measured[si]) continue;
           const distance = Math.hypot(rx - sx, ry - sy);
-          const weight = measured[index] && si === index
-            ? 4
-            : 1 / ((distance + 0.75) ** 2);
+          if (distance <= 0 || distance > propagationRadiusCells) continue;
+          const weight = 1 / (distance * distance);
           weighted += raw[si] * weight;
           weightSum += weight;
         }
@@ -120,27 +132,7 @@ function smoothMeasuredGrid(raw, measured, cols, rows) {
       out[index] = weightSum ? weighted / weightSum : 0;
     }
   }
-
-  const smoothed = new Float32Array(out.length);
-  for (let ry = 0; ry < rows; ry += 1) {
-    for (let rx = 0; rx < cols; rx += 1) {
-      let sum = 0;
-      let count = 0;
-      for (let dy = -1; dy <= 1; dy += 1) {
-        const ny = ry + dy;
-        if (ny < 0 || ny >= rows) continue;
-        for (let dx = -1; dx <= 1; dx += 1) {
-          const nx = rx + dx;
-          if (nx < 0 || nx >= cols) continue;
-          const w = dx === 0 && dy === 0 ? 2 : 1;
-          sum += out[ny * cols + nx] * w;
-          count += w;
-        }
-      }
-      smoothed[ry * cols + rx] = count ? sum / count : 0;
-    }
-  }
-  return smoothed;
+  return out;
 }
 
 export function interpolateSensitivityDelta(calibration, x, y, width, height) {
@@ -171,12 +163,19 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
   const minReferencePixels = options.minReferencePixels ?? 20;
   const maxDelta = options.maxDelta ?? 18;
   const regularization = options.regularization ?? 0.035;
+  const maxRegionalRecallDrop = options.maxRegionalRecallDrop ?? 0.02;
+  const minAdjustedGain = options.minAdjustedGain ?? 0.001;
+  const propagationRadiusCells = options.propagationRadiusCells ?? Math.SQRT2 + 1e-6;
   const onProgress = options.onProgress ?? (() => {});
+  const coarseDelta = Math.round(maxDelta * 0.55);
+  const fineDelta = Math.max(1, Math.round(maxDelta * 0.22));
   const candidates = [...new Set([
     -maxDelta,
-    -Math.round(maxDelta * 0.55),
+    -coarseDelta,
+    -fineDelta,
     0,
-    Math.round(maxDelta * 0.55),
+    fineDelta,
+    coarseDelta,
     maxDelta,
   ])].sort((a, b) => a - b);
   const weights = normalizedWeights(options);
@@ -262,6 +261,7 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
       }
 
       let best = null;
+      let baselineCandidate = null;
       const candidateResults = [];
       if (referencePixels >= minReferencePixels) {
         for (const delta of candidates) {
@@ -275,22 +275,52 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
             { weights },
           );
           const adjusted = metrics.f1 - regularization * Math.abs(delta) / Math.max(1, maxDelta);
-          candidateResults.push({
+          const candidate = {
             delta: sensitivity - baseSensitivity,
             sensitivity,
             adjusted,
             f1: metrics.f1,
             precision: metrics.precision,
             recall: metrics.recall,
-          });
+            recallDrop: null,
+            eligible: true,
+          };
+          candidateResults.push(candidate);
+          if (candidate.delta === 0) baselineCandidate = candidate;
+        }
+
+        if (!baselineCandidate) {
+          baselineCandidate = candidateResults.reduce(
+            (closest, candidate) =>
+              !closest || Math.abs(candidate.delta) < Math.abs(closest.delta) ? candidate : closest,
+            null,
+          );
+        }
+
+        for (const candidate of candidateResults) {
+          candidate.recallDrop = baselineCandidate
+            ? Math.max(0, baselineCandidate.recall - candidate.recall)
+            : 0;
+          candidate.eligible = !baselineCandidate
+            || candidate.delta === 0
+            || candidate.recall >= baselineCandidate.recall - maxRegionalRecallDrop;
+        }
+
+        best = baselineCandidate;
+        for (const candidate of candidateResults) {
+          if (!candidate.eligible) continue;
+          const improvesEnough = candidate.delta === 0
+            || candidate.adjusted >= baselineCandidate.adjusted + minAdjustedGain;
+          if (!improvesEnough) continue;
           if (!best
-              || adjusted > best.adjusted
-              || (adjusted === best.adjusted && metrics.recall > best.metrics.recall)) {
-            best = { delta: sensitivity - baseSensitivity, sensitivity, metrics, adjusted };
+              || candidate.adjusted > best.adjusted
+              || (candidate.adjusted === best.adjusted && candidate.recall > best.recall)) {
+            best = candidate;
           }
         }
+
         measured[index] = 1;
-        raw[index] = best.delta;
+        raw[index] = best?.delta ?? 0;
       }
 
       regionMetrics.push({
@@ -302,9 +332,15 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
         rawDelta: raw[index],
         selectedSensitivity: best?.sensitivity ?? baseSensitivity,
         bestAdjustedScore: best?.adjusted ?? null,
-        bestF1: best?.metrics.f1 ?? null,
-        bestPrecision: best?.metrics.precision ?? null,
-        bestRecall: best?.metrics.recall ?? null,
+        bestF1: best?.f1 ?? null,
+        bestPrecision: best?.precision ?? null,
+        bestRecall: best?.recall ?? null,
+        baselineF1: baselineCandidate?.f1 ?? null,
+        baselinePrecision: baselineCandidate?.precision ?? null,
+        baselineRecall: baselineCandidate?.recall ?? null,
+        selectionReason: best && best.delta !== 0
+          ? "adjusted-gain-with-regional-recall-guard"
+          : "global-sensitivity-anchor",
         candidateResults,
       });
       completed += 1;
@@ -318,17 +354,23 @@ export async function tuneLocalSensitivity(features, referenceCenterline, option
     throw new Error("局所調整に使えるお手本が不足しています。複数の粒界をもう少し長く描いてください。");
   }
 
-  const values = smoothMeasuredGrid(raw, measured, cols, rows);
+  const values = buildLocalizedCalibrationGrid(raw, measured, cols, rows, {
+    propagationRadiusCells,
+  });
   for (let i = 0; i < values.length; i += 1) values[i] = clamp(values[i], -maxDelta, maxDelta);
 
   return {
-    version: 2,
-    kind: "sensitivity-grid-roi-aware",
+    version: 2.1,
+    kind: "sensitivity-grid-roi-aware-localized",
     objectiveMode,
     cols,
     rows,
     baseSensitivity,
     maxDelta,
+    maxRegionalRecallDrop,
+    minAdjustedGain,
+    propagationRadiusCells,
+    measuredZeroAnchors: true,
     verifiedRoiCount: verifiedRois.length,
     verifiedRoiPixels,
     values: Array.from(values),
