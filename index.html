@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.6.6-alpha</div>
+    <div class="version">v0.3.6.7-alpha</div>
   </header>
 
   <main class="layout">
@@ -147,25 +147,27 @@
           <button id="clearExclusionButton" type="button" disabled>除外全消去</button>
           <button id="clearFullRoiButton" type="button" disabled>ROI全消去</button>
           <button id="showNormalButton" type="button" disabled>通常表示</button>
-          <button id="topologyButton" type="button" disabled>Topology v2.2 / Gap診断</button>
+          <button id="topologyButton" type="button" disabled>Topology v2.3 / Gap診断</button>
         </div>
 
         <div class="subpanel">
-          <strong class="subpanel-title">Safe Gap Bridge（任意適用）</strong>
-          <label class="control-row"><span>最大Gap距離</span><output id="gapMaxDistanceValue">3.25</output><input id="gapMaxDistance" type="range" min="2" max="4.25" step="0.25" value="3.25"></label>
+          <strong class="subpanel-title">Gap Bridge（Safe / Extended・任意適用）</strong>
+          <label class="control-row"><span>Safe最大Gap距離</span><output id="gapMaxDistanceValue">3.25</output><input id="gapMaxDistance" type="range" min="2" max="4.25" step="0.25" value="3.25"></label>
+          <label class="control-row"><span>Extended最大距離</span><output id="extendedGapMaxDistanceValue">8.00</output><input id="extendedGapMaxDistance" type="range" min="3.5" max="8" step="0.25" value="8"></label>
           <label class="control-row"><span>最大向き差</span><output id="gapAngleValue">40</output><input id="gapAngle" type="range" min="15" max="60" step="5" value="40"></label>
-          <label class="control-row"><span>最小Gap Score</span><output id="gapMinScoreValue">78</output><input id="gapMinScore" type="range" min="60" max="95" step="1" value="78"></label>
+          <label class="control-row"><span>Safe最小Gap Score</span><output id="gapMinScoreValue">78</output><input id="gapMinScore" type="range" min="60" max="95" step="1" value="78"></label>
           <div class="button-grid">
-            <button id="gapPreviewButton" type="button" disabled>安全Gap候補を表示</button>
-            <button id="gapApplyButton" class="primary" type="button" disabled>候補を適用</button>
+            <button id="gapPreviewButton" type="button" disabled>Safe候補を表示</button>
+            <button id="extendedGapPreviewButton" type="button" disabled>Extended候補を表示</button>
+            <button id="gapApplyButton" class="primary" type="button" disabled>表示候補を適用</button>
             <button id="gapRevertButton" type="button" disabled>Gap適用を戻す</button>
           </div>
-          <p class="help">端点の向き・距離・Scoreを満たす短い欠線だけを候補化します。非粒界領域の1px近傍と除外領域を横切る候補は拒否し、同じ端点は1回だけ使用します。自動適用はしません。</p>
-          <p id="gapStatus" class="help metric-detail">Safe Gap: 未プレビュー</p>
+          <p class="help">Safeは短い欠線を従来条件で判定します。ExtendedはSafe上限を超えるGap（最大8px）について、端点方向に加えて経路上のRidge/Color応答を確認します。Negative近傍と除外領域はどちらも禁止です。緑＝Safe、黄＝Extended、赤＝Negative/除外、紫＝角度不一致、灰＝距離超過、橙＝Score/Evidence等の棄却です。どちらも自動適用せず、表示後に「表示候補を適用」を押した場合のみ反映します。</p>
+          <p id="gapStatus" class="help metric-detail">Gap Bridge: 未プレビュー</p>
         </div>
         <p id="annotationStatus" class="help metric-detail">非粒界線: 0 px / 閉領域Fill: 0領域 / Negative合計: 0 px / 除外: 0領域 / 完全評価ROI: 0領域</p>
         <p id="localCalibrationStatus" class="help metric-detail">局所補正: 未作成</p>
-        <p id="topologyStatus" class="help metric-detail">Topology v2.1: 未実行</p>
+        <p id="topologyStatus" class="help metric-detail">Topology v2.3: 未実行</p>
 
         <div class="legend">
           <span><i class="swatch tp"></i>一致</span>
@@ -229,6 +231,8 @@
           <li class="done">画像端＋お手本線のBorder-assisted Fill</li>
           <li class="done">Topology v2.1 Border-assisted Core / Short-gap候補診断</li>
           <li class="done">Topology v2.2 Safe Gap Bridge（Negative/除外安全制約・プレビュー・明示適用）</li>
+          <li class="done">Topology v2.3 Extended Gap Preview / Closure差分 / Border-assisted明示判定</li>
+          <li class="done">Auto Tune v2 search trace v4 Closure診断（最適化には未使用）</li>
           <li class="done">Auto Tune v2 processed guard / processed Ablation</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
           <li>フル解像度内部タイル解析</li>
