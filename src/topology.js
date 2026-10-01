@@ -767,7 +767,8 @@ function buildExtendedGapProposal(prediction, width, height, diagnostics, option
   for (const candidate of diagnostics.candidates ?? []) {
     if (candidate.distance <= safeMaxDistance) {
       rejected.safeRange += 1;
-      review(candidate, "safe-range", null);
+      // Extended Preview intentionally omits Safe-range candidates so yellow
+      // candidates cannot be confused with the separately evaluated Safe set.
       continue;
     }
     if (candidate.distance > extendedMaxDistance) {
