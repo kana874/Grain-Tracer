@@ -345,7 +345,7 @@ function updateControls() {
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
   els.autoOptimizeButton.disabled = disabled || !hasPreview || !hasRef;
-  els.precisionGuideButton.disabled = disabled || !hasPreview || !hasRef;
+  els.precisionGuideButton.disabled = disabled || !hasAnalysis || !hasRef;
   els.precisionVerifyButton.disabled = disabled || !state.precisionGuide.active;
   els.precisionSkipButton.disabled = disabled || !state.precisionGuide.active;
   els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
@@ -1599,6 +1599,190 @@ function updateAnnotationStatus() {
     : `${verifiedRois}領域`;
   els.annotationStatus.textContent =
     `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px) / 画像端Fill: ${borderSeeds}領域 (${borderNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${roiText}`;
+}
+
+
+function precisionRoleLabel(role) {
+  if (role === "low-recall") return "見逃しが多い領域";
+  if (role === "high-leakage") return "誤検出が多い領域";
+  return "平均的な領域";
+}
+
+function focusPreviewRect(rect) {
+  if (!state.preview || !rect) return;
+  const viewer = els.viewer.getBoundingClientRect();
+  const w = Math.max(1, rect.x1 - rect.x0 + 1);
+  const h = Math.max(1, rect.y1 - rect.y0 + 1);
+  const margin = 56;
+  state.scale = Math.max(
+    0.05,
+    Math.min(4, (viewer.width - margin * 2) / w, (viewer.height - margin * 2) / h),
+  );
+  const cx = (rect.x0 + rect.x1) / 2;
+  const cy = (rect.y0 + rect.y1) / 2;
+  state.tx = viewer.width / 2 - cx * state.scale;
+  state.ty = viewer.height / 2 - cy * state.scale;
+  applyTransform();
+}
+
+function precisionGuideCandidates() {
+  if (!state.preview || !state.analysisMask || !hasReference()) return [];
+  const metrics = computeRegionalMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    {
+      ...currentComparisonOptions(),
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+      cols: 4,
+      rows: 4,
+    },
+  );
+  const usable = metrics.regions.filter(region => region.referencePixels >= 40);
+  if (!usable.length) return [];
+
+  const selected = [];
+  const add = (region, role) => {
+    if (!region || selected.some(item => item.region.rx === region.rx && item.region.ry === region.ry)) return;
+    selected.push({ region, role });
+  };
+  add([...usable].sort((a, b) => a.positiveRecall - b.positiveRecall)[0], "low-recall");
+  add(
+    [...usable]
+      .filter(region => region.negativePixels > 0)
+      .sort((a, b) => b.negativeLeakage - a.negativeLeakage)[0],
+    "high-leakage",
+  );
+  add(
+    [...usable].sort((a, b) => {
+      const da = Math.abs(a.positiveRecall - metrics.positiveRecall)
+        + Math.abs(a.negativeLeakage - metrics.negativeLeakage);
+      const db = Math.abs(b.positiveRecall - metrics.positiveRecall)
+        + Math.abs(b.negativeLeakage - metrics.negativeLeakage);
+      return da - db;
+    })[0],
+    "representative",
+  );
+  for (const region of usable) {
+    if (selected.length >= 3) break;
+    add(region, "representative");
+  }
+
+  return selected.slice(0, 3).map(({ region, role }) => {
+    const cellWidth = Math.max(1, region.x1 - region.x0);
+    const cellHeight = Math.max(1, region.y1 - region.y0);
+    const targetWidth = Math.max(120, Math.min(320, Math.round(cellWidth * 0.64)));
+    const targetHeight = Math.max(90, Math.min(240, Math.round(cellHeight * 0.64)));
+    const cx = (region.x0 + region.x1) / 2;
+    const cy = (region.y0 + region.y1) / 2;
+    const x0 = Math.max(0, Math.round(cx - targetWidth / 2));
+    const y0 = Math.max(0, Math.round(cy - targetHeight / 2));
+    const x1 = Math.min(state.preview.width - 1, x0 + targetWidth - 1);
+    const y1 = Math.min(state.preview.height - 1, y0 + targetHeight - 1);
+    return {
+      x0, y0, x1, y1,
+      verified: false,
+      source: "precision-guide",
+      guideRole: role,
+      suggestedAt: new Date().toISOString(),
+    };
+  });
+}
+
+function activatePrecisionGuideIndex(index) {
+  if (index < 0 || index >= state.fullEvaluationRois.length) return false;
+  const rect = state.fullEvaluationRois[index];
+  if (rect?.verified !== false) return false;
+  state.precisionGuide.active = true;
+  state.precisionGuide.currentRoiIndex = index;
+  state.selectedFullRoiIndex = index;
+  rebuildFullRoiLayer();
+  setTool("reference");
+  focusPreviewRect(rect);
+  const pending = provisionalFullEvaluationRois().length;
+  const role = precisionRoleLabel(rect.guideRole);
+  els.autoOptimizeStatus.textContent =
+    `精密評価ガイド: ${role}を表示中。黄破線の枠内で、見える粒界をすべて黄色のお手本線にしてから「このROIの入力完了」を押してください。残り ${pending}領域。`;
+  updateControls();
+  return true;
+}
+
+function startPrecisionEvaluationGuide({ autoRunAfterComplete = false, forceRegenerate = true } = {}) {
+  if (!state.preview || !state.analysisMask || !hasReference()) {
+    setStatus("精密評価ガイドには粒界抽出とお手本が必要です。");
+    return false;
+  }
+  if (forceRegenerate) {
+    state.fullEvaluationRois = state.fullEvaluationRois.filter(
+      rect => !(rect?.verified === false && rect?.source === "precision-guide"),
+    );
+  }
+  let provisional = state.fullEvaluationRois
+    .map((rect, index) => ({ rect, index }))
+    .filter(item => item.rect?.verified === false);
+  if (!provisional.length) {
+    const suggestions = precisionGuideCandidates();
+    if (!suggestions.length) {
+      setStatus("精密評価ROI候補を作成できませんでした。お手本を増やしてから再実行してください。");
+      return false;
+    }
+    for (const rect of suggestions) state.fullEvaluationRois.push(rect);
+    provisional = state.fullEvaluationRois
+      .map((rect, index) => ({ rect, index }))
+      .filter(item => item.rect?.verified === false);
+  }
+  state.precisionGuide.autoRunAfterComplete = Boolean(autoRunAfterComplete);
+  rebuildFullRoiLayer();
+  scheduleAutosave();
+  return activatePrecisionGuideIndex(provisional[0].index);
+}
+
+function finishPrecisionGuide() {
+  state.precisionGuide.active = false;
+  state.precisionGuide.currentRoiIndex = -1;
+  state.selectedFullRoiIndex = -1;
+  rebuildFullRoiLayer();
+  updateMetrics(state.lastMetrics);
+  updateControls();
+}
+
+function verifyCurrentPrecisionRoi() {
+  if (!state.precisionGuide.active) return;
+  const index = state.precisionGuide.currentRoiIndex;
+  const rect = state.fullEvaluationRois[index];
+  if (!rect || rect.verified !== false) return;
+  rect.verified = true;
+  rect.source = "precision-guide-verified";
+  rect.verifiedAt = new Date().toISOString();
+  rebuildFullRoiLayer();
+  invalidateEvaluationOnly();
+  scheduleAutosave();
+
+  const next = state.fullEvaluationRois.findIndex(item => item?.verified === false);
+  if (next >= 0) {
+    activatePrecisionGuideIndex(next);
+    return;
+  }
+
+  const autoRun = state.precisionGuide.autoRunAfterComplete;
+  finishPrecisionGuide();
+  els.autoOptimizeStatus.textContent =
+    `精密評価データの準備完了: ${verifiedFullEvaluationRois().length}領域を確認済み。以後の自動最適化ではTrue F1を自動使用します。`;
+  setStatus("精密評価ROIの確認が完了しました。", 100);
+  if (autoRun) setTimeout(() => runOneClickOptimization({ skipPrecisionGate: true }), 0);
+}
+
+function skipPrecisionGuide() {
+  if (!state.precisionGuide.active) return;
+  const autoRun = state.precisionGuide.autoRunAfterComplete;
+  state.fullEvaluationRois = state.fullEvaluationRois.filter(rect => rect?.verified !== false);
+  finishPrecisionGuide();
+  scheduleAutosave();
+  els.autoOptimizeStatus.textContent =
+    "精密評価ROIは今回は省略しました。Partial Label評価で自動最適化を続行します。";
+  if (autoRun) setTimeout(() => runOneClickOptimization({ skipPrecisionGate: true }), 0);
 }
 
 function resetReferenceHistory() {
