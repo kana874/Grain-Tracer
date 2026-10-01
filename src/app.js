@@ -31,6 +31,7 @@ import {
   featureMapImageData,
   imageDataToBlob,
 } from "./diagnostics.js";
+import { buildStoredZip } from "./zip.js";
 import {
   applyReferenceHistoryEntry,
   buildClearReferenceEntry,
@@ -121,6 +122,7 @@ const els = {
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
   exportDiagnosticsButton: $("exportDiagnosticsButton"),
+  exportDiagnosticsIndividualButton: $("exportDiagnosticsIndividualButton"),
   autosaveEnabled: $("autosaveEnabled"),
   zoomLabel: $("zoomLabel"),
   statusText: $("statusText"),
@@ -360,6 +362,7 @@ function updateControls() {
   els.saveProjectButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
   els.loadProjectButton.disabled = disabled || !hasPreview;
   els.exportDiagnosticsButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
+  els.exportDiagnosticsIndividualButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
 }
 
 function setBusy(busy) {
@@ -2273,7 +2276,7 @@ async function importProjectFile(file) {
   }
 }
 
-async function exportDiagnostics() {
+async function exportDiagnostics(mode = "zip") {
   if (!state.preview || !state.analysisMask || !hasReference()) return;
   ensureClosedNegativeFresh();
   setBusy(true);
@@ -2376,56 +2379,100 @@ async function exportDiagnostics() {
     );
     const base = (state.file?.name ?? "graintracer").replace(/\.bmp$/i, "");
 
-    setStatus("診断JSONを作成中...", 82);
-    downloadJson(report, `${base}.graintracer-diagnostic.json`);
-    await new Promise(resolve => setTimeout(resolve, 120));
+    setStatus("診断データを作成中...", 82);
+    const artifacts = [
+      {
+        name: "diagnostic.json",
+        individualName: `${base}.graintracer-diagnostic.json`,
+        blob: new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
+      },
+      {
+        name: "preview.jpg",
+        individualName: `${base}.graintracer-preview.jpg`,
+        blob: await imageDataToBlob(state.preview.imageData, "image/jpeg", 0.90),
+      },
+      {
+        name: "comparison.png",
+        individualName: `${base}.graintracer-comparison.png`,
+        blob: await imageDataToBlob(comparison.imageData, "image/png"),
+      },
+      {
+        name: "ridge.png",
+        individualName: `${base}.graintracer-ridge.png`,
+        blob: await imageDataToBlob(ridgeImage, "image/png"),
+      },
+      {
+        name: "dendrite.png",
+        individualName: `${base}.graintracer-dendrite.png`,
+        blob: await imageDataToBlob(dendriteImage, "image/png"),
+      },
+      {
+        name: "reference.png",
+        individualName: `${base}.graintracer-reference.png`,
+        blob: await imageDataToBlob(referenceImage, "image/png"),
+      },
+      {
+        name: "non-boundary.png",
+        individualName: `${base}.graintracer-non-boundary.png`,
+        blob: await imageDataToBlob(negativeImage, "image/png"),
+      },
+      {
+        name: "exclusion.png",
+        individualName: `${base}.graintracer-exclusion.png`,
+        blob: await imageDataToBlob(exclusionImage, "image/png"),
+      },
+      {
+        name: "full-roi.png",
+        individualName: `${base}.graintracer-full-roi.png`,
+        blob: await imageDataToBlob(fullRoiImage, "image/png"),
+      },
+    ];
 
-    setStatus("診断画像を書き出し中...", 88);
-    downloadBlob(
-      await imageDataToBlob(state.preview.imageData, "image/jpeg", 0.90),
-      `${base}.graintracer-preview.jpg`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 120));
-    downloadBlob(
-      await imageDataToBlob(comparison.imageData, "image/png"),
-      `${base}.graintracer-comparison.png`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 120));
-    downloadBlob(
-      await imageDataToBlob(ridgeImage, "image/png"),
-      `${base}.graintracer-ridge.png`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 120));
-    downloadBlob(
-      await imageDataToBlob(dendriteImage, "image/png"),
-      `${base}.graintracer-dendrite.png`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 120));
-    downloadBlob(
-      await imageDataToBlob(referenceImage, "image/png"),
-      `${base}.graintracer-reference.png`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 120));
-    downloadBlob(
-      await imageDataToBlob(negativeImage, "image/png"),
-      `${base}.graintracer-non-boundary.png`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 120));
-    downloadBlob(
-      await imageDataToBlob(exclusionImage, "image/png"),
-      `${base}.graintracer-exclusion.png`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 120));
-    downloadBlob(
-      await imageDataToBlob(fullRoiImage, "image/png"),
-      `${base}.graintracer-full-roi.png`,
-    );
+    if (mode === "individual") {
+      setStatus("診断ファイルを個別に書き出し中...", 90);
+      for (const artifact of artifacts) {
+        downloadBlob(artifact.blob, artifact.individualName);
+        await new Promise(resolve => setTimeout(resolve, 120));
+      }
+    } else {
+      setStatus("診断ZIPを作成中...", 90);
+      const generatedAt = new Date().toISOString();
+      const manifest = {
+        schema: "graintracer-diagnostic-bundle-v1",
+        generatedAt,
+        appVersion: APP_VERSION,
+        algorithmVersion: ALGORITHM_VERSION,
+        diagnosticSchema: report.schema,
+        sourceName: source.name,
+        sourceFingerprint: source.fingerprint,
+        compression: "store",
+        files: artifacts.map(artifact => ({
+          name: artifact.name,
+          type: artifact.blob.type || "application/octet-stream",
+          size: artifact.blob.size,
+        })),
+      };
+      const zipBlob = await buildStoredZip([
+        {
+          name: "manifest.json",
+          data: JSON.stringify(manifest, null, 2),
+          modifiedAt: new Date(generatedAt),
+        },
+        ...artifacts.map(artifact => ({
+          name: artifact.name,
+          data: artifact.blob,
+          modifiedAt: new Date(generatedAt),
+        })),
+      ], { modifiedAt: new Date(generatedAt) });
+      downloadBlob(zipBlob, `${base}.graintracer-diagnostics.zip`);
+    }
 
     const roiText = report.evaluation.fullEvaluationRoi?.roiCount
       ? ` / ROI True F1 ${(report.evaluation.fullEvaluationRoi.f1 * 100).toFixed(1)}%`
       : "";
+    const outputText = mode === "individual" ? "診断個別出力完了" : "診断ZIP出力完了";
     setStatus(
-      `診断出力完了: Positive Recall ${(report.evaluation.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(report.evaluation.negativeLeakage * 100).toFixed(1)}%${roiText}`,
+      `${outputText}: Positive Recall ${(report.evaluation.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(report.evaluation.negativeLeakage * 100).toFixed(1)}%${roiText}`,
       100,
     );
   } catch (error) {
@@ -2436,6 +2483,7 @@ async function exportDiagnostics() {
     setBusy(false);
   }
 }
+
 
 async function loadBmp(file) {
   if (!file) return;
@@ -3070,6 +3118,10 @@ function summarizeLocalCalibration(calibration) {
     rows: calibration.rows,
     baseSensitivity: calibration.baseSensitivity,
     maxDelta: calibration.maxDelta ?? null,
+    maxRegionalRecallDrop: calibration.maxRegionalRecallDrop ?? null,
+    minAdjustedGain: calibration.minAdjustedGain ?? null,
+    propagationRadiusCells: calibration.propagationRadiusCells ?? null,
+    measuredZeroAnchors: calibration.measuredZeroAnchors ?? false,
     measuredRegions: measured.reduce((sum, value) => sum + (value ? 1 : 0), 0),
     nonZeroRegions,
     maxAbsDelta,
@@ -3088,6 +3140,10 @@ function summarizeLocalCalibration(calibration) {
       bestF1: region.bestF1,
       bestPrecision: region.bestPrecision,
       bestRecall: region.bestRecall,
+      baselineF1: region.baselineF1 ?? null,
+      baselinePrecision: region.baselinePrecision ?? null,
+      baselineRecall: region.baselineRecall ?? null,
+      selectionReason: region.selectionReason ?? null,
       candidateResults: region.candidateResults ?? [],
     })),
   };
@@ -3832,7 +3888,8 @@ els.gapApplyButton.addEventListener("click", applyGapBridges);
 els.gapRevertButton.addEventListener("click", revertGapBridges);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
-els.exportDiagnosticsButton.addEventListener("click", exportDiagnostics);
+els.exportDiagnosticsButton.addEventListener("click", () => exportDiagnostics("zip"));
+els.exportDiagnosticsIndividualButton.addEventListener("click", () => exportDiagnostics("individual"));
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.negativeToolButton.addEventListener("click", () => setTool("negative-reference"));
