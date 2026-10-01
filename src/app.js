@@ -2586,9 +2586,9 @@ async function ensureFeatures() {
   return state.features;
 }
 
-async function analyzePreview() {
-  if (!state.preview) return;
-  setBusy(true);
+async function analyzePreview({ manageBusy = true } = {}) {
+  if (!state.preview) return null;
+  if (manageBusy) setBusy(true);
   try {
     const features = await ensureFeatures();
     setStatus("粒界候補を解析中...", 72);
@@ -2604,11 +2604,13 @@ async function analyzePreview() {
     updateMetrics();
     const count = state.analysisMask.reduce((sum, value) => sum + value, 0);
     setStatus(`粒界候補を表示しました。候補画素: ${count.toLocaleString()} / 解析 ${state.performance.boundaryAnalysisMs.toFixed(0)} ms`, 100);
+    return state.analysisMask;
   } catch (error) {
     console.error(error);
     setStatus(`解析エラー: ${error.message}`, 0);
+    return null;
   } finally {
-    setBusy(false);
+    if (manageBusy) setBusy(false);
   }
 }
 
@@ -2653,10 +2655,10 @@ function compareCurrent(record = true) {
   return result;
 }
 
-async function autoTune() {
-  if (!state.preview || !hasReference()) return;
+async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
+  if (!state.preview || !hasReference()) return null;
   ensureClosedNegativeFresh();
-  setBusy(true);
+  if (manageBusy) setBusy(true);
   try {
     const features = await ensureFeatures();
     const useCompleteRoi = hasFullEvaluationRois();
@@ -2769,23 +2771,25 @@ async function autoTune() {
     const topologyStatus = result.topologyDiagnostics?.after?.regionCount
       ? ` / Closure ${topologyRateText(result.topologyDiagnostics.before?.closureRate)}→${topologyRateText(result.topologyDiagnostics.after?.closureRate)} (閉領域 ${result.topologyDiagnostics.before?.closedRegions ?? 0}→${result.topologyDiagnostics.after?.closedRegions ?? 0})`
       : "";
-    addHistory("auto-tune", comparison.metrics, note, compactAutoTuneSearch(result.search));
+    if (recordHistory) addHistory("auto-tune", comparison.metrics, note, compactAutoTuneSearch(result.search));
     setStatus(
       `Auto Tune v2完了: ${objectiveStatus}${topologyStatus} / 感度 ${result.parameters.sensitivity} / Dark ${result.parameters.darkWeight} / Ridge ${result.parameters.ridgeWeight} / Color ${result.parameters.colorWeight} / Dendrite ${result.parameters.dendriteWeight ?? 0} / Min ${result.parameters.minComponent} / ${(state.performance.autoTuneMs / 1000).toFixed(1)} s`,
       100,
     );
+    return { result, comparison, validationMetrics, roiMetrics, objectiveStatus };
   } catch (error) {
     console.error(error);
     setStatus(`自動調整エラー: ${error.message}`, 0);
+    return null;
   } finally {
-    setBusy(false);
+    if (manageBusy) setBusy(false);
   }
 }
 
-async function localTune() {
-  if (!state.preview || !hasReference()) return;
+async function localTune({ manageBusy = true, recordHistory = true, scheduleSave = true } = {}) {
+  if (!state.preview || !hasReference()) return null;
   ensureClosedNegativeFresh();
-  setBusy(true);
+  if (manageBusy) setBusy(true);
   try {
     const features = await ensureFeatures();
     const extraction = currentExtractionOptions();
@@ -2849,7 +2853,7 @@ async function localTune() {
         },
       )
       : null;
-    addHistory(
+    if (recordHistory) addHistory(
       "local-tune",
       comparison.metrics,
       validationMetrics
@@ -2864,12 +2868,14 @@ async function localTune() {
       `局所調整完了: Positive Recall ${(comparison.metrics.positiveRecall * 100).toFixed(1)}% / Negative Leakage ${(comparison.metrics.negativeLeakage * 100).toFixed(1)}%${validationNote} / お手本校正 ${measured}/${calibration.cols * calibration.rows}領域`,
       100,
     );
-    scheduleAutosave();
+    if (scheduleSave) scheduleAutosave();
+    return { calibration, comparison, validationMetrics };
   } catch (error) {
     console.error(error);
     setStatus(`局所調整エラー: ${error.message}`, 0);
+    return null;
   } finally {
-    setBusy(false);
+    if (manageBusy) setBusy(false);
   }
 }
 
