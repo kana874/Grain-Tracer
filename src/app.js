@@ -309,6 +309,10 @@ function hasFullEvaluationRois() {
   return verifiedFullEvaluationRois().length > 0;
 }
 
+function hasAnyFullEvaluationRois() {
+  return state.fullEvaluationRois.length > 0;
+}
+
 function updateControls() {
   const hasPreview = Boolean(state.preview);
   const hasAnalysis = Boolean(state.analysisMask);
@@ -350,7 +354,7 @@ function updateControls() {
   els.clearReferenceButton.disabled = disabled || !hasRef;
   els.clearNegativeButton.disabled = disabled || !hasNegativeReference();
   els.clearExclusionButton.disabled = disabled || !hasExclusions();
-  els.clearFullRoiButton.disabled = disabled || !hasFullEvaluationRois();
+  els.clearFullRoiButton.disabled = disabled || !hasAnyFullEvaluationRois();
   els.showNormalButton.disabled = disabled || !state.comparisonMode;
   els.saveProjectButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
   els.loadProjectButton.disabled = disabled || !hasPreview;
@@ -1230,7 +1234,7 @@ function updateMetrics(metrics = null) {
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      state.fullEvaluationRois,
+      verifiedFullEvaluationRois(),
       {
         tolerance: currentComparisonOptions().tolerance,
         exclusionMask: state.exclusionMask,
@@ -1588,8 +1592,13 @@ function updateAnnotationStatus() {
   const invalidFillText = state.closedNegativeInvalidCount
     ? ` / 無効seed ${state.closedNegativeInvalidCount}`
     : "";
+  const verifiedRois = verifiedFullEvaluationRois().length;
+  const provisionalRois = provisionalFullEvaluationRois().length;
+  const roiText = provisionalRois
+    ? `${verifiedRois}確認済み + ${provisionalRois}候補`
+    : `${verifiedRois}領域`;
   els.annotationStatus.textContent =
-    `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px) / 画像端Fill: ${borderSeeds}領域 (${borderNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${state.fullEvaluationRois.length}領域`;
+    `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px) / 画像端Fill: ${borderSeeds}領域 (${borderNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${roiText}`;
 }
 
 function resetReferenceHistory() {
@@ -1899,7 +1908,7 @@ function clearExclusions() {
 }
 
 function clearFullEvaluationRois() {
-  if (!state.preview || !hasFullEvaluationRois()) return;
+  if (!state.preview || !hasAnyFullEvaluationRois()) return;
   if (state.comparisonMode) showNormalView();
   const item = {
     kind: "roi-clear",
@@ -1907,6 +1916,7 @@ function clearFullEvaluationRois() {
   };
   state.fullEvaluationRois = [];
   state.selectedFullRoiIndex = -1;
+  state.precisionGuide = { active: false, currentRoiIndex: -1, autoRunAfterComplete: false };
   rebuildFullRoiLayer();
   invalidateEvaluationOnly();
   commitReferenceHistory(item);
@@ -2490,7 +2500,7 @@ async function autoTune() {
       ...currentComparisonOptions(),
       negativeMask: tuningNegative,
       exclusionMask: state.exclusionMask,
-      fullEvaluationRois: useCompleteRoi ? state.fullEvaluationRois : null,
+      fullEvaluationRois: useCompleteRoi ? verifiedFullEvaluationRois() : null,
       current: currentExtractionOptions(),
       topologyDiagnostics: {
         seeds: state.closedNegativeSeeds,
@@ -2545,7 +2555,7 @@ async function autoTune() {
         state.referenceCenterline,
         state.preview.width,
         state.preview.height,
-        state.fullEvaluationRois,
+        verifiedFullEvaluationRois(),
         {
           tolerance: currentComparisonOptions().tolerance,
           exclusionMask: state.exclusionMask,
@@ -3026,14 +3036,17 @@ function continueRectInteraction(event) {
   }
 
   const rects = getRectCollection(interaction.kind);
-  rects[interaction.index] = transformRect(
-    interaction.before,
-    interaction.start,
-    point,
-    interaction.mode,
-    state.preview.width,
-    state.preview.height,
-  );
+  rects[interaction.index] = {
+    ...interaction.before,
+    ...transformRect(
+      interaction.before,
+      interaction.start,
+      point,
+      interaction.mode,
+      state.preview.width,
+      state.preview.height,
+    ),
+  };
   renderRectLayer(interaction.kind);
 }
 
@@ -3051,9 +3064,12 @@ function endRectInteraction(event) {
     const rect = interaction.previewRect;
     if (rect && rectArea(rect) >= 9) {
       const index = rects.length;
-      rects.push({ ...rect });
+      const storedRect = isExclusion
+        ? { ...rect }
+        : { ...rect, verified: true, source: "manual" };
+      rects.push(storedRect);
       setSelectedRectIndex(interaction.kind, index);
-      commitReferenceHistory({ kind: historyPrefix + "-add", index, rect: { ...rect } });
+      commitReferenceHistory({ kind: historyPrefix + "-add", index, rect: { ...storedRect } });
       changed = true;
     }
   } else {
