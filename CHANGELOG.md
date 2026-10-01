@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.3.6.7-alpha - 2026-10-01
+
+### Added
+- Two-stage Gap Bridge workflow: the existing conservative Safe Gap path is retained and a separate Extended Gap Preview can inspect gaps beyond the Safe limit up to 8 preview pixels.
+- Extended Gap requires endpoint direction consistency, minimum candidate score, Ridge/Color response along the missing path, and the existing Negative/Exclusion safety guards.
+- Gap Preview reason classification and colour coding: green for Safe, yellow for Extended, red for Negative/Exclusion rejection, purple for angle mismatch, gray for distance excess, and orange for score/evidence or other rejection.
+- Before/after topology snapshots for each Gap proposal, including Closure Rate and the number of newly closed regions.
+- Auto Tune v2 search trace v4 records Closure diagnostics before and after tuning. Topology is diagnostic-only in this release and does not change parameter selection.
+- Diagnostic JSON v10 stores Safe/Extended application history and a dedicated before/after topology difference payload.
+
+### Changed
+- Topology advanced to v2.3 (`2.3-extended-gap-closure-diagnostics`).
+- Border-assisted closure now explicitly distinguishes a single allowed image edge from a two-adjacent-edge corner case. Reaching an unannotated edge, an opposite-edge pair, more than two edges, or an excessive reachable-area ratio keeps the region open.
+- Gap application metadata now retains Safe and Extended bridge counts separately while preserving one-click reversion to the extraction mask before the first Gap application.
+- App version advanced to `0.3.6.7-alpha`; algorithm identifier advanced to `boundary-v9-extended-gap-topology-diagnostic`.
+
+### Safety / behaviour
+- Safe Gap and Extended Gap are never applied automatically by Auto Tune or Topology diagnostics.
+- Extended Gap is preview-only until the user explicitly presses the apply button.
+- Negative and Exclusion constraints remain hard rejects for both stages.
+- Auto Tune Closure data is reported for diagnosis only; direct topology-aware optimization remains deferred to v0.3.7.
+
+### Validation
+- Added synthetic checks for Extended Gap acceptance with strong path evidence, rejection across guarded Negative pixels, and open-to-closed topology change after a repaired gap.
+- JavaScript syntax and DOM-ID consistency checks are required before release.
+
 ## v0.3.6.6-alpha - 2026-09-29
 
 ### Added
