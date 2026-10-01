@@ -4,6 +4,16 @@ function clampInt(value, min, max) {
   return Math.max(min, Math.min(max, Math.round(Number(value) || 0)));
 }
 
+function edgeSideCount(edgeMask) {
+  let count = 0;
+  for (const bit of [1, 2, 4, 8]) if (edgeMask & bit) count += 1;
+  return count;
+}
+
+function hasOppositeEdgePair(edgeMask) {
+  return Boolean(((edgeMask & 1) && (edgeMask & 4)) || ((edgeMask & 2) && (edgeMask & 8)));
+}
+
 function countInteriorEndpointProxy(mask, width, height, edgeMargin = 3) {
   const margin = Math.max(0, Math.round(edgeMargin));
   let endpointPixels = 0;
@@ -221,6 +231,11 @@ function classifyCoreClosure(
   let borderAssistedRegions = 0;
   let borderAssistedClosedRegions = 0;
   let borderAssistedOpenRegions = 0;
+  let borderAssistedSingleEdgeRegions = 0;
+  let borderAssistedCornerRegions = 0;
+  let borderAssistedUnexpectedEdgeLeaks = 0;
+  let borderAssistedOversizeLeaks = 0;
+  let borderAssistedInvalidEdgeTopology = 0;
   let maxObservedBorderLeakAreaRatio = 0;
 
   for (let coreLabel = 1; coreLabel < coreIndex.active.length; coreLabel += 1) {
@@ -231,10 +246,22 @@ function classifyCoreClosure(
 
     const fillLabel = coreMeta.parentFillLabel[coreLabel] ?? 0;
     const isBorderAssisted = Boolean(coreMeta.borderAssisted[coreLabel]);
-    if (isBorderAssisted) borderAssistedRegions += 1;
+    const allowedEdgeMask = isBorderAssisted ? (fillIndex?.edgeMasks?.[fillLabel] ?? 0) : 0;
+    const allowedEdgeSides = edgeSideCount(allowedEdgeMask);
+    const cornerAssisted = allowedEdgeSides === 2 && !hasOppositeEdgePair(allowedEdgeMask);
+    const invalidBorderTopology = isBorderAssisted
+      && (!allowedEdgeMask || allowedEdgeSides > 2 || hasOppositeEdgePair(allowedEdgeMask));
+    if (isBorderAssisted) {
+      borderAssistedRegions += 1;
+      if (allowedEdgeSides === 1) borderAssistedSingleEdgeRegions += 1;
+      else if (cornerAssisted) borderAssistedCornerRegions += 1;
+      else if (invalidBorderTopology) borderAssistedInvalidEdgeTopology += 1;
+    }
 
-    let isOpen = false;
-    if (!isFullyCovered) {
+    let isOpen = invalidBorderTopology;
+    let leakedUnexpectedEdge = false;
+    let leakedOversize = false;
+    if (!isFullyCovered && !isOpen) {
       const bgLabels = backgroundLabels[coreLabel];
       for (const bgLabel of bgLabels) {
         const bgEdgeMask = backgroundIndex.edgeMasks[bgLabel] ?? 0;
@@ -246,8 +273,11 @@ function classifyCoreClosure(
           continue;
         }
 
-        const allowedEdgeMask = fillIndex?.edgeMasks?.[fillLabel] ?? 0;
+        // Border-assisted closure is explicit: only the same annotated edge
+        // (or the two adjacent edges of an annotated corner region) may remain
+        // reachable. Reaching any other side means the region is still open.
         if (bgEdgeMask & ~allowedEdgeMask) {
+          leakedUnexpectedEdge = true;
           isOpen = true;
           break;
         }
@@ -257,11 +287,14 @@ function classifyCoreClosure(
         const areaRatio = reachableArea / expectedArea;
         maxObservedBorderLeakAreaRatio = Math.max(maxObservedBorderLeakAreaRatio, areaRatio);
         if (areaRatio > maxBorderLeakAreaRatio) {
+          leakedOversize = true;
           isOpen = true;
           break;
         }
       }
     }
+    if (leakedUnexpectedEdge) borderAssistedUnexpectedEdgeLeaks += 1;
+    if (leakedOversize) borderAssistedOversizeLeaks += 1;
 
     if (isOpen) {
       openRegions += 1;
@@ -286,6 +319,11 @@ function classifyCoreClosure(
     borderAssistedRegions,
     borderAssistedClosedRegions,
     borderAssistedOpenRegions,
+    borderAssistedSingleEdgeRegions,
+    borderAssistedCornerRegions,
+    borderAssistedUnexpectedEdgeLeaks,
+    borderAssistedOversizeLeaks,
+    borderAssistedInvalidEdgeTopology,
     maxBorderLeakAreaRatio,
     maxObservedBorderLeakAreaRatio,
   };
@@ -416,6 +454,7 @@ function collectEndpointCandidates(mask, width, height, options = {}) {
   };
 
   const candidates = [];
+  const angleRejectedSamples = [];
   for (let i = 0; i < endpoints.length; i += 1) {
     const a = endpoints[i];
     const bx = Math.floor(a.x / cellSize);
@@ -436,12 +475,9 @@ function collectEndpointCandidates(mask, width, height, options = {}) {
           const vy = dy / distance;
           const facingA = a.outX * vx + a.outY * vy;
           const facingB = b.outX * -vx + b.outY * -vy;
-          if (facingA < minFacing || facingB < minFacing) continue;
-          if (lineCrossesExistingBoundary(a, b)) continue;
-
           const alignment = Math.min(facingA, facingB);
           const distanceScore = 1 - Math.min(1, (distance - 1) / Math.max(0.5, maxGapDistance - 1));
-          candidates.push({
+          const candidate = {
             x1: a.x,
             y1: a.y,
             x2: b.x,
@@ -450,7 +486,16 @@ function collectEndpointCandidates(mask, width, height, options = {}) {
             alignment,
             score: alignment * 0.75 + distanceScore * 0.25,
             estimatedMissingPixels: Math.max(1, Math.round(distance) - 1),
-          });
+          };
+          if (facingA < minFacing || facingB < minFacing) {
+            if (angleRejectedSamples.length < maxCandidates) {
+              angleRejectedSamples.push({ ...candidate, rejectionReason: "angle" });
+            }
+            continue;
+          }
+          if (lineCrossesExistingBoundary(a, b)) continue;
+
+          candidates.push(candidate);
         }
       }
     }
@@ -463,6 +508,8 @@ function collectEndpointCandidates(mask, width, height, options = {}) {
     maxGapDistance,
     maxGapAngleDeg,
     candidates: candidates.slice(0, maxCandidates),
+    angleRejectedCount: angleRejectedSamples.length,
+    angleRejectedSamples,
     truncated: candidates.length > maxCandidates,
     note: "Direction-consistent short-gap candidates are diagnostic only. No pixels are connected automatically.",
   };
@@ -521,7 +568,16 @@ function buildSafeGapProposal(prediction, width, height, diagnostics, options = 
   const mask = prediction.slice();
   const bridgeMask = new Uint8Array(prediction.length);
   const acceptedCandidates = [];
+  const reviewCandidates = [];
   const usedEndpoints = new Set();
+  const maxReviewCandidates = Math.max(40, Math.min(1200, Math.round(options.maxGapReviewCandidates ?? 360)));
+  const review = (candidate, disposition, rejectionReason = null, extra = {}) => {
+    if (reviewCandidates.length >= maxReviewCandidates) return;
+    reviewCandidates.push({ ...candidate, disposition, rejectionReason, ...extra });
+  };
+  for (const candidate of diagnostics.angleRejectedSamples ?? []) {
+    review(candidate, "rejected-angle", "angle");
+  }
   const rejected = {
     distance: 0,
     score: 0,
@@ -536,10 +592,12 @@ function buildSafeGapProposal(prediction, width, height, diagnostics, options = 
   for (const candidate of diagnostics.candidates ?? []) {
     if (candidate.distance > applyMaxDistance) {
       rejected.distance += 1;
+      review(candidate, "rejected-distance", "distance");
       continue;
     }
     if (candidate.score < minScore) {
       rejected.score += 1;
+      review(candidate, "rejected-score", "score");
       continue;
     }
 
@@ -547,25 +605,30 @@ function buildSafeGapProposal(prediction, width, height, diagnostics, options = 
     const endpointB = candidate.y2 * width + candidate.x2;
     if (usedEndpoints.has(endpointA) || usedEndpoints.has(endpointB)) {
       rejected.endpointConflict += 1;
+      review(candidate, "rejected-endpoint-conflict", "endpoint-conflict");
       continue;
     }
 
     const pixels = rasterizeGapInterior(candidate, width, height);
     if (!pixels.length) {
       rejected.noInteriorPixels += 1;
+      review(candidate, "rejected-empty", "no-interior-pixels");
       continue;
     }
     const safetyPixels = [endpointA, endpointB, ...pixels];
     if (exclusionMask && safetyPixels.some(p => exclusionMask[p])) {
       rejected.exclusion += 1;
+      review(candidate, "rejected-exclusion", "exclusion");
       continue;
     }
     if (negativeGuard && safetyPixels.some(p => negativeGuard[p])) {
       rejected.negative += 1;
+      review(candidate, "rejected-negative", "negative");
       continue;
     }
     if (acceptedCandidates.length >= maxAcceptedBridges) {
       rejected.limit += 1;
+      review(candidate, "rejected-limit", "limit");
       continue;
     }
 
@@ -582,16 +645,20 @@ function buildSafeGapProposal(prediction, width, height, diagnostics, options = 
     usedEndpoints.add(endpointA);
     usedEndpoints.add(endpointB);
     addedPixels += candidateAddedPixels;
-    acceptedCandidates.push({
+    const accepted = {
       ...candidate,
       addedPixels: candidateAddedPixels,
-    });
+    };
+    acceptedCandidates.push(accepted);
+    review(accepted, "accepted-safe");
   }
 
   return {
+    mode: "safe",
     mask,
     bridgeMask,
     acceptedCandidates,
+    reviewCandidates,
     sourceCandidateCount: diagnostics.candidateCount ?? 0,
     consideredCandidateCount: diagnostics.candidates?.length ?? 0,
     acceptedBridgeCount: acceptedCandidates.length,
@@ -625,6 +692,239 @@ export function proposeShortGapBridges(prediction, width, height, options = {}) 
   return buildSafeGapProposal(prediction, width, height, diagnostics, options);
 }
 
+
+function pathBoundaryEvidence(pixels, evidence) {
+  if (!pixels?.length || !evidence) return null;
+  const ridge = evidence.ridge?.length ? evidence.ridge : null;
+  const color = evidence.color?.length ? evidence.color : null;
+  if (!ridge && !color) return null;
+  let sum = 0;
+  let count = 0;
+  for (const p of pixels) {
+    let local = 0;
+    let weight = 0;
+    if (ridge) {
+      local += (ridge[p] ?? 0) / 255 * 0.65;
+      weight += 0.65;
+    }
+    if (color) {
+      local += (color[p] ?? 0) / 255 * 0.35;
+      weight += 0.35;
+    }
+    if (weight > 0) {
+      sum += local / weight;
+      count += 1;
+    }
+  }
+  return count ? sum / count : null;
+}
+
+function buildExtendedGapProposal(prediction, width, height, diagnostics, options = {}) {
+  const safeMaxDistance = Math.max(1.5, Number(options.gapApplyMaxDistance ?? 3.25));
+  const extendedMaxDistance = Math.max(
+    safeMaxDistance + 0.25,
+    Math.min(8, Number(options.extendedGapMaxDistance ?? 8)),
+  );
+  const minScore = Math.max(0, Math.min(1, Number(options.extendedMinGapScore ?? 0.58)));
+  const minPathEvidence = Math.max(0, Math.min(1, Number(options.extendedMinPathEvidence ?? 0.34)));
+  const negativeGuardRadius = Math.max(0, Math.min(4, Math.round(options.negativeGuardRadius ?? 1)));
+  const maxAcceptedBridges = Math.max(1, Math.min(1000, Math.round(options.maxExtendedBridges ?? 240)));
+  const negativeMask = options.negativeMask?.length === prediction.length ? options.negativeMask : null;
+  const exclusionMask = options.exclusionMask?.length === prediction.length ? options.exclusionMask : null;
+  const negativeGuard = negativeMask && negativeGuardRadius > 0
+    ? dilateBinaryMask(negativeMask, width, height, negativeGuardRadius)
+    : negativeMask;
+  const evidence = options.boundaryEvidence ?? null;
+
+  const mask = prediction.slice();
+  const bridgeMask = new Uint8Array(prediction.length);
+  const acceptedCandidates = [];
+  const reviewCandidates = [];
+  const usedEndpoints = new Set();
+  const maxReviewCandidates = Math.max(40, Math.min(1600, Math.round(options.maxGapReviewCandidates ?? 480)));
+  const review = (candidate, disposition, rejectionReason = null, extra = {}) => {
+    if (reviewCandidates.length >= maxReviewCandidates) return;
+    reviewCandidates.push({ ...candidate, disposition, rejectionReason, ...extra });
+  };
+  for (const candidate of diagnostics.angleRejectedSamples ?? []) {
+    review(candidate, "rejected-angle", "angle");
+  }
+
+  const rejected = {
+    safeRange: 0,
+    distance: 0,
+    score: 0,
+    evidence: 0,
+    evidenceUnavailable: 0,
+    negative: 0,
+    exclusion: 0,
+    endpointConflict: 0,
+    noInteriorPixels: 0,
+    limit: 0,
+  };
+  let addedPixels = 0;
+
+  for (const candidate of diagnostics.candidates ?? []) {
+    if (candidate.distance <= safeMaxDistance) {
+      rejected.safeRange += 1;
+      review(candidate, "safe-range", null);
+      continue;
+    }
+    if (candidate.distance > extendedMaxDistance) {
+      rejected.distance += 1;
+      review(candidate, "rejected-distance", "distance");
+      continue;
+    }
+    if (candidate.score < minScore) {
+      rejected.score += 1;
+      review(candidate, "rejected-score", "score");
+      continue;
+    }
+
+    const endpointA = candidate.y1 * width + candidate.x1;
+    const endpointB = candidate.y2 * width + candidate.x2;
+    if (usedEndpoints.has(endpointA) || usedEndpoints.has(endpointB)) {
+      rejected.endpointConflict += 1;
+      review(candidate, "rejected-endpoint-conflict", "endpoint-conflict");
+      continue;
+    }
+
+    const pixels = rasterizeGapInterior(candidate, width, height);
+    if (!pixels.length) {
+      rejected.noInteriorPixels += 1;
+      review(candidate, "rejected-empty", "no-interior-pixels");
+      continue;
+    }
+    const safetyPixels = [endpointA, endpointB, ...pixels];
+    if (exclusionMask && safetyPixels.some(p => exclusionMask[p])) {
+      rejected.exclusion += 1;
+      review(candidate, "rejected-exclusion", "exclusion");
+      continue;
+    }
+    if (negativeGuard && safetyPixels.some(p => negativeGuard[p])) {
+      rejected.negative += 1;
+      review(candidate, "rejected-negative", "negative");
+      continue;
+    }
+
+    const pathEvidence = pathBoundaryEvidence(pixels, evidence);
+    if (pathEvidence == null) {
+      rejected.evidenceUnavailable += 1;
+      review(candidate, "rejected-evidence", "evidence-unavailable");
+      continue;
+    }
+    if (pathEvidence < minPathEvidence) {
+      rejected.evidence += 1;
+      review(candidate, "rejected-evidence", "evidence", { pathEvidence });
+      continue;
+    }
+    if (acceptedCandidates.length >= maxAcceptedBridges) {
+      rejected.limit += 1;
+      review(candidate, "rejected-limit", "limit", { pathEvidence });
+      continue;
+    }
+
+    let candidateAddedPixels = 0;
+    for (const p of pixels) {
+      if (!mask[p]) {
+        mask[p] = 1;
+        bridgeMask[p] = 1;
+        candidateAddedPixels += 1;
+      }
+    }
+    if (!candidateAddedPixels) continue;
+
+    usedEndpoints.add(endpointA);
+    usedEndpoints.add(endpointB);
+    addedPixels += candidateAddedPixels;
+    const accepted = {
+      ...candidate,
+      pathEvidence,
+      addedPixels: candidateAddedPixels,
+    };
+    acceptedCandidates.push(accepted);
+    review(accepted, "accepted-extended", null, { pathEvidence });
+  }
+
+  return {
+    mode: "extended",
+    mask,
+    bridgeMask,
+    acceptedCandidates,
+    reviewCandidates,
+    sourceCandidateCount: diagnostics.candidateCount ?? 0,
+    consideredCandidateCount: diagnostics.candidates?.length ?? 0,
+    acceptedBridgeCount: acceptedCandidates.length,
+    addedPixels,
+    rejected,
+    truncated: Boolean(diagnostics.truncated),
+    settings: {
+      safeMaxDistance,
+      extendedMaxDistance,
+      minScore,
+      minPathEvidence,
+      negativeGuardRadius,
+      maxGapAngleDeg: diagnostics.maxGapAngleDeg,
+      detectionMaxDistance: diagnostics.maxGapDistance,
+      maxAcceptedBridges,
+    },
+  };
+}
+
+export function proposeExtendedGapBridges(prediction, width, height, options = {}) {
+  if (!prediction || prediction.length !== width * height) {
+    throw new Error("Extended Gap Bridge用の境界マスクが不正です。");
+  }
+  const extendedMaxDistance = Math.max(
+    Number(options.gapApplyMaxDistance ?? 3.25) + 0.25,
+    Math.min(8, Number(options.extendedGapMaxDistance ?? 8)),
+  );
+  const diagnostics = collectEndpointCandidates(prediction, width, height, {
+    ...options,
+    maxGapDistance: extendedMaxDistance,
+    maxGapCandidates: options.maxGapProposalCandidates ?? 2400,
+  });
+  return buildExtendedGapProposal(prediction, width, height, diagnostics, options);
+}
+
+export function computeClosureSnapshot(prediction, width, height, seeds = [], options = {}) {
+  if (!prediction || prediction.length !== width * height) {
+    throw new Error("Closure診断用の境界マスクが不正です。");
+  }
+  const closedNegativeMask = options.closedNegativeMask ?? null;
+  const borderAssistedMask = options.borderAssistedMask ?? null;
+  const coreErosionRadius = Math.max(0, Math.round(options.coreErosionRadius ?? 2));
+  const minCorePixels = Math.max(1, Math.round(options.minCorePixels ?? 12));
+  const coreMask = closedNegativeMask?.length === prediction.length
+    ? erodeSquare(closedNegativeMask, width, height, coreErosionRadius)
+    : null;
+  const coreIndex = coreMask
+    ? buildComponentIndex(coreMask, width, height, minCorePixels, true)
+    : null;
+  const fillIndex = closedNegativeMask?.length === prediction.length
+    ? buildComponentIndex(closedNegativeMask, width, height, 1, true)
+    : null;
+  const coreMeta = coreIndex && fillIndex
+    ? buildCoreParentMetadata(coreIndex, fillIndex, borderAssistedMask)
+    : null;
+  const useCoreRegions = Boolean(coreIndex?.componentCount);
+  const backgroundIndex = buildComponentIndex(prediction, width, height, 1, false);
+  const classified = useCoreRegions
+    ? classifyCoreClosure(prediction, backgroundIndex, coreIndex, fillIndex, coreMeta, options)
+    : classifySeedFallback(prediction, backgroundIndex, seeds, width, height, options);
+
+  return {
+    basis: useCoreRegions ? "closed-negative-eroded-core" : "seed-fallback",
+    seedCount: (seeds ?? []).length,
+    borderAssistedSeedCount: (seeds ?? []).filter(seed => seed?.borderAssisted).length,
+    coreErosionRadius: useCoreRegions ? coreErosionRadius : null,
+    minCorePixels: useCoreRegions ? minCorePixels : null,
+    coreRegionCount: useCoreRegions ? coreIndex.componentCount : 0,
+    corePixels: useCoreRegions ? coreIndex.componentPixels : 0,
+    ...classified,
+  };
+}
+
 export function computeBoundaryTopology(prediction, width, height, seeds = [], options = {}) {
   if (!prediction || prediction.length !== width * height) {
     throw new Error("Topology診断用の境界マスクが不正です。");
@@ -641,6 +941,9 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
   );
   const shortGapCandidates = collectEndpointCandidates(prediction, width, height, options);
   const safeGapProposal = proposeShortGapBridges(prediction, width, height, options);
+  const extendedGapProposal = options.boundaryEvidence
+    ? proposeExtendedGapBridges(prediction, width, height, options)
+    : null;
 
   const closedNegativeMask = options.closedNegativeMask ?? null;
   const borderAssistedMask = options.borderAssistedMask ?? null;
@@ -695,8 +998,8 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
 
   return {
     version: 2,
-    revision: "2.2-safe-gap-bridge",
-    mode: "diagnostic-with-opt-in-safe-gap",
+    revision: "2.3-extended-gap-closure-diagnostics",
+    mode: "diagnostic-with-opt-in-safe-and-extended-gap",
     endpointProxy: endpoint,
     shortGapCandidates,
     safeGapBridge: {
@@ -709,6 +1012,16 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
       settings: safeGapProposal.settings,
       acceptedCandidates: safeGapProposal.acceptedCandidates.slice(0, 160),
     },
+    extendedGapBridge: extendedGapProposal ? {
+      sourceCandidateCount: extendedGapProposal.sourceCandidateCount,
+      consideredCandidateCount: extendedGapProposal.consideredCandidateCount,
+      acceptedBridgeCount: extendedGapProposal.acceptedBridgeCount,
+      addedPixels: extendedGapProposal.addedPixels,
+      rejected: extendedGapProposal.rejected,
+      truncated: extendedGapProposal.truncated,
+      settings: extendedGapProposal.settings,
+      acceptedCandidates: extendedGapProposal.acceptedCandidates.slice(0, 160),
+    } : null,
     regionClosure: {
       basis: useCoreRegions ? "closed-negative-eroded-core" : "seed-fallback",
       seedCount: (seeds ?? []).length,
@@ -724,8 +1037,8 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
       baseBorderAssistedClosedRegions: base?.borderAssistedClosedRegions ?? 0,
       closureByBridgeRadius,
       recovery,
-      note: "Ordinary cores are open when their prediction-background component reaches any image edge. Border-assisted cores may use the annotated image-edge sides as a virtual closure, but are still marked open if they leak to another edge or the reachable area grows beyond the annotated fill by the configured safety ratio. Core coverage is reported separately.",
+      note: "Ordinary cores are open when their prediction-background component reaches any image edge. Border-assisted cores explicitly remember the edge set represented by their annotated fill: a single edge or two adjacent corner edges may remain reachable, another edge is a leak, opposite-edge or >2-edge topology is invalid, and excessive reachable area remains open. Core coverage is reported separately.",
     },
-    note: "Topology v2.2 keeps closure probes diagnostic-only and adds an opt-in Safe Gap Bridge proposal. Proposed bridges are direction-consistent, limited to short gaps, blocked by Exclusion/Negative safety masks, and never applied until the user explicitly confirms them.",
+    note: "Topology v2.3 keeps closure probes diagnostic-only, preserves Safe Gap, and adds opt-in Extended Gap diagnostics up to 8 px when Ridge/Color evidence is available. Neither Safe nor Extended bridges are applied until the user explicitly confirms them.",
   };
 }
