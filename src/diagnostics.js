@@ -278,12 +278,14 @@ export function buildDiagnosticReport(input) {
       exclusionMask,
     },
   );
+  const verifiedFullEvaluationRois = (fullEvaluationRois ?? []).filter(rect => rect?.verified !== false);
+  const provisionalFullEvaluationRois = (fullEvaluationRois ?? []).filter(rect => rect?.verified === false);
   const fullEvaluationRoi = computeFullEvaluationRoiMetrics(
     prediction,
     referenceCenterline,
     preview.width,
     preview.height,
-    fullEvaluationRois ?? [],
+    verifiedFullEvaluationRois,
     {
       tolerance: comparison.tolerance,
       exclusionMask,
@@ -358,7 +360,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v10",
+    schema: "graintracer-diagnostic-v11",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -508,7 +510,8 @@ export function buildDiagnosticReport(input) {
       maxNegativeRegionShare: metrics.maxNegativeRegionShare,
       exclusionRectCount: (exclusionRects ?? []).length,
       excludedPixels: metrics.excludedPixels,
-      fullEvaluationRoiCount: (fullEvaluationRois ?? []).length,
+      fullEvaluationRoiCount: verifiedFullEvaluationRois.length,
+      provisionalFullEvaluationRoiCount: provisionalFullEvaluationRois.length,
       fullEvaluationRoiPixels: fullEvaluationRoi.roiPixels,
     },
     featureStatistics: {
@@ -537,6 +540,8 @@ export function buildDiagnosticReport(input) {
         : 0,
       exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
       fullEvaluationRois: (fullEvaluationRois ?? []).map(rect => ({ ...rect })),
+      verifiedFullEvaluationRoiCount: verifiedFullEvaluationRois.length,
+      provisionalFullEvaluationRoiCount: provisionalFullEvaluationRois.length,
       excludedPixels: exclusionMask
         ? exclusionMask.reduce((sum, value) => sum + (value ? 1 : 0), 0)
         : 0,
@@ -551,7 +556,8 @@ export function buildDiagnosticReport(input) {
     notes: [
       "Feature values are normalized to 0..1.",
       "Near image edges, extraction renormalizes the score over feature channels that are geometrically available; the outermost 1 px remains guarded to suppress image-frame artifacts.",
-      "Topology v2.3 uses eroded Closed Negative Fill cores, explicitly distinguishes single-edge and adjacent-corner Border-assisted closure, reports direction-consistent short-gap candidates, and builds opt-in Safe/Extended Gap proposals blocked by Negative/Exclusion safety masks.",
+      "Topology v3.0 adds a Minimum Closure Radius profile over 0/1/2/3 px probes so topology improvement can be measured even when exact 0 px closure remains zero.",
+      "Guided precision-evaluation ROI suggestions are provisional until the user explicitly confirms that every visible boundary inside the ROI has been labelled; only verified ROIs contribute formal True Precision / Recall / F1.",
       "Extended Gap evaluates paths beyond the Safe Gap distance up to 8 preview pixels and requires Ridge/Color path evidence; it is preview-only until the user explicitly applies the displayed proposal.",
       "Gap post-processing stores before/after closure snapshots and closed-region/closure-rate deltas in diagnostic JSON.",
       "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",
