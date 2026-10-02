@@ -1704,7 +1704,20 @@ function precisionGuideCandidates({ mode = "auto", suggestionRound = optimizatio
   }
 
   const regionalMetrics = precisionGuideRegionalMetrics();
-  if (!regionalMetrics) return [];
+  if (!regionalMetrics) {
+    if (mode === "bootstrap-informed") {
+      return selectBootstrapRois({
+        ...baseOptions,
+        fingerprint: state.sourceFingerprint,
+        count: 3,
+      }).map(rect => ({
+        ...rect,
+        guideMode: "bootstrap-informed",
+        guideRole: "random-bootstrap",
+      }));
+    }
+    return [];
+  }
 
   if (mode === "bootstrap-informed" || !hasFullEvaluationRois()) {
     let suggestions = selectReferenceGuidedRois({
