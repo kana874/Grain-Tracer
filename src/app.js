@@ -36,6 +36,7 @@ import {
   PRECISION_GUIDE_ROWS,
   PRECISION_GUIDE_VERSION,
   precisionGuideCoverage,
+  repairPrecisionGuideRois,
   selectActiveRois,
   selectBootstrapRois,
   selectReferenceGuidedRois,
@@ -727,7 +728,8 @@ function applyAnnotationAssistView() {
   if (els.exclusionCanvas) els.exclusionCanvas.style.opacity = state.annotationAssist ? "0.58" : "1";
   if (els.fullRoiCanvas) {
     els.fullRoiCanvas.style.opacity = "1";
-    els.fullRoiCanvas.style.visibility = state.annotationAssist ? "hidden" : "visible";
+    const hideRoi = state.annotationAssist || state.overlayPeekHidden;
+    els.fullRoiCanvas.style.visibility = hideRoi ? "hidden" : "visible";
   }
 }
 
@@ -736,7 +738,7 @@ function toggleAnnotationAssist(force = null, announce = true) {
   applyAnnotationAssistView();
   if (announce) {
     setStatus(state.annotationAssist
-      ? "お手本作成表示: 自動境界と非粒界Fillを薄くし、ROI枠を一時非表示にします。Hを押している間は自動境界も隠せます。"
+      ? "お手本作成表示: 自動境界と非粒界Fillを薄くし、ROI枠を一時非表示にします。Hを押している間は自動境界とROI枠の両方を隠せます。"
       : "通常のオーバーレイ濃度とROI枠表示に戻しました。");
   }
 }
@@ -1762,7 +1764,13 @@ function precisionGuideCandidates({ mode = "auto", suggestionRound = optimizatio
 }
 
 function focusPreviewRect(rect) {
-  if (!state.preview || !rect) return;
+  if (!state.preview || !rect) return false;
+  const coordinates = [rect.x0, rect.y0, rect.x1, rect.y1];
+  if (!coordinates.every(Number.isFinite)) {
+    console.warn("Precision Guide ROI has invalid geometry.", rect);
+    fitToViewer();
+    return false;
+  }
   const viewer = els.viewer.getBoundingClientRect();
   const w = Math.max(1, rect.x1 - rect.x0 + 1);
   const h = Math.max(1, rect.y1 - rect.y0 + 1);
@@ -1776,6 +1784,7 @@ function focusPreviewRect(rect) {
   state.tx = viewer.width / 2 - cx * state.scale;
   state.ty = viewer.height / 2 - cy * state.scale;
   applyTransform();
+  return true;
 }
 
 function activatePrecisionGuideIndex(index) {
@@ -2397,7 +2406,11 @@ async function restoreProject(project, source = "プロジェクト") {
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
   state.exclusionRects = masks.exclusionRects;
-  state.fullEvaluationRois = masks.fullEvaluationRois;
+  state.fullEvaluationRois = repairPrecisionGuideRois(
+    masks.fullEvaluationRois,
+    state.preview.width,
+    state.preview.height,
+  );
   state.precisionGuide = createDefaultPrecisionGuideState(project.precisionGuide ?? {});
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
