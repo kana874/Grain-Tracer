@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.9.2-alpha - 2026-10-02
+
+### Fixed
+- Active ROI geometry on second and later optimization rounds. `computeRegionalMetrics()` regions provide `x0/y0/x1/y1` but not `width/height`; Precision Guide v2 previously passed those regions directly to the ROI builder, producing `NaN` coordinates that serialized as `null` and caused the ROI frame and zoom to disappear.
+- The ROI builder now derives cell width/height from its bounds, with 8×8 grid-coordinate fallbacks for defensive recovery.
+- Project restore repairs previously saved malformed Precision Guide ROI candidates when `cellRx/cellRy` metadata is available.
+- ROI focus now rejects invalid geometry defensively instead of poisoning the viewer transform with `NaN`.
+
+### Changed
+- Holding `H` now temporarily hides both the automatic boundary overlay and ROI frames. Releasing `H` restores them.
+- Annotation Assist (`V` / `お手本作成表示`) continues to hide ROI frames until toggled off.
+- App version advanced to `0.3.9.2-alpha`; algorithm identifier remains `boundary-v13-precision-guide-v2`.
+
+### Diagnosis
+- The supplied v0.3.9.1 diagnostic bundle contained three valid Active ROI cell selections but their rectangle coordinates were `null`, and the screenshot showed `NaN% preview`. This directly identified the missing regional width/height conversion rather than a rendering-only issue.
+
 ## v0.3.9.1-alpha - 2026-10-02
 
 ### Fixed
