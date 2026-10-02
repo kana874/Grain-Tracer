@@ -149,7 +149,7 @@ function renderRectCanvas(
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
 
-    if (selected) {
+    if (selected && !activeProvisional) {
       const hs = Math.max(4, handleSize);
       const half = hs / 2;
       const mx = (rect.x0 + rect.x1) / 2;
