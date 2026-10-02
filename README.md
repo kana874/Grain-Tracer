@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.9.1-alpha / boundary-v13-precision-guide-v2**
+**v0.3.9.2-alpha / boundary-v13-precision-guide-v2**
 
 Current capabilities:
 
@@ -47,7 +47,7 @@ Current capabilities:
 - reference-guided 4×4 Local Calibration v2.1: verified complete-evaluation ROIs contribute true foreground/background supervision, measured zero-delta cells remain hard anchors, interpolation is limited to unmeasured adjacent cells, and regional Recall guardrails prevent aggressive local sensitivity drops
 - one-click stage diagnostics record whether Global/Local tuning was accepted, produced no change, or was rolled back, including machine-readable reasons and per-cell Local candidate results
 - Precision Guide v2 uses an independent 8×8 candidate grid: with no reference it deterministically selects three spatially separated bootstrap ROIs from the source fingerprint; later optimization rounds can propose 1–3 additional unverified regions using Recall, Negative Leakage, prediction excess, Local-risk and spatial-coverage signals
-- the currently guided ROI is emphasized with a thicker yellow dashed frame; entering Annotation Assist temporarily hides ROI frames so the underlying grain boundary remains easy to trace, and leaving Assist restores the frames
+- the currently guided ROI is emphasized with a thicker yellow dashed frame; entering Annotation Assist or holding H temporarily hides ROI frames so the underlying grain boundary remains easy to trace, and releasing H / leaving Assist restores the frames
 - one-click diagnostic ZIP export packages manifest.json, Diagnostic JSON v13, preview/comparison/feature/reference/annotation images into one dependency-free ZIP bundle; individual-file export remains available as a fallback
 - 4×4 regional evaluation data
 - evaluation history
