@@ -119,22 +119,33 @@ function renderRectCanvas(
     const w = rect.x1 - rect.x0 + 1;
     const h = rect.y1 - rect.y0 + 1;
     ctx.save();
+    const activeProvisional = provisional && selected;
     ctx.fillStyle = preview
       ? palette.previewFill
-      : provisional
-        ? (palette.provisionalFill ?? palette.fill)
-        : selected
-          ? palette.selectedFill
-          : palette.fill;
+      : activeProvisional
+        ? (palette.activeProvisionalFill ?? palette.provisionalFill ?? palette.fill)
+        : provisional
+          ? (palette.provisionalFill ?? palette.fill)
+          : selected
+            ? palette.selectedFill
+            : palette.fill;
     ctx.strokeStyle = preview
       ? palette.previewStroke
-      : provisional
-        ? (palette.provisionalStroke ?? palette.stroke)
-        : selected
-          ? palette.selectedStroke
-          : palette.stroke;
-    ctx.lineWidth = preview || selected || provisional ? 2 : 1;
-    ctx.setLineDash(preview ? [8, 5] : provisional ? [10, 6] : selected ? [] : [5, 4]);
+      : activeProvisional
+        ? (palette.activeProvisionalStroke ?? palette.provisionalStroke ?? palette.stroke)
+        : provisional
+          ? (palette.provisionalStroke ?? palette.stroke)
+          : selected
+            ? palette.selectedStroke
+            : palette.stroke;
+    ctx.lineWidth = activeProvisional ? 3 : (preview || selected || provisional ? 2 : 1);
+    ctx.setLineDash(
+      preview ? [8, 5]
+        : activeProvisional ? [12, 5]
+          : provisional ? [10, 6]
+            : selected ? []
+              : [5, 4],
+    );
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
 
@@ -205,6 +216,8 @@ export function renderFullEvaluationRoiCanvas(
     handleStroke: "rgba(25, 55, 80, 0.98)",
     provisionalFill: "rgba(255, 216, 74, 0.08)",
     provisionalStroke: "rgba(255, 216, 74, 0.95)",
+    activeProvisionalFill: "rgba(255, 216, 74, 0.12)",
+    activeProvisionalStroke: "rgba(255, 238, 90, 1.00)",
   });
 }
 
