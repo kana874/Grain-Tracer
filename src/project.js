@@ -1,7 +1,7 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.8.1-alpha";
-export const ALGORITHM_VERSION = "boundary-v12-localized-local-calibration";
+export const APP_VERSION = "0.3.9-alpha";
+export const ALGORITHM_VERSION = "boundary-v13-precision-guide-v2";
 
 export function packBinaryMask(mask) {
   const bytes = new Uint8Array(Math.ceil(mask.length / 8));
@@ -62,6 +62,7 @@ export function createProjectSnapshot(input) {
     closedNegativeSeeds,
     exclusionRects,
     fullEvaluationRois,
+    precisionGuide,
     localCalibration,
     history,
   } = input;
@@ -89,6 +90,15 @@ export function createProjectSnapshot(input) {
     },
     exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
     fullEvaluationRois: (fullEvaluationRois ?? []).map(rect => ({ ...rect })),
+    precisionGuide: precisionGuide ? {
+      version: Number(precisionGuide.version) || 2,
+      grid: precisionGuide.grid ? { ...precisionGuide.grid } : { cols: 8, rows: 8 },
+      lastSuggestedRound: Number.isFinite(precisionGuide.lastSuggestedRound)
+        ? precisionGuide.lastSuggestedRound : -1,
+      lastSkippedRound: Number.isFinite(precisionGuide.lastSkippedRound)
+        ? precisionGuide.lastSkippedRound : -1,
+      lastSuggestion: precisionGuide.lastSuggestion ?? null,
+    } : null,
     localCalibration: localCalibration ?? null,
     history: history ?? [],
   };
