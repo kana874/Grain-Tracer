@@ -127,6 +127,13 @@ export function repairPrecisionGuideRoi(rect, width, height) {
   const coordinates = [rect.x0, rect.y0, rect.x1, rect.y1];
   if (coordinates.every(Number.isFinite)) return { ...rect };
   if (!Number.isInteger(rect.cellRx) || !Number.isInteger(rect.cellRy)) return { ...rect };
+  const {
+    x0: _x0,
+    y0: _y0,
+    x1: _x1,
+    y1: _y1,
+    ...metadata
+  } = rect;
   return toRoi(
     {
       rx: rect.cellRx,
@@ -138,7 +145,7 @@ export function repairPrecisionGuideRoi(rect, width, height) {
     },
     width,
     height,
-    { ...rect },
+    metadata,
     rect.gridCols ?? 8,
     rect.gridRows ?? 8,
   );
