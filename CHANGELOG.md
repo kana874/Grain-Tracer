@@ -23,7 +23,7 @@
 - Synthetic bootstrap selection is deterministic for the same source fingerprint and keeps the three initial cells at Chebyshev distance >= 2 when enough cells are available.
 - On a 1800×1320 preview, the default bootstrap ROI size is 191×140 px.
 - Synthetic Active ROI selection correctly prioritized separate Low Recall, High Leakage, and prediction-excess regions while excluding cells already occupied by Verified ROIs.
-- JavaScript syntax and DOM-reference validation are required before merge.
+- JavaScript syntax validation passed for all modified modules (app, Precision Guide, evaluation, project, diagnostics); all 110 app DOM references resolve to unique IDs in index.html.
 
 ## v0.3.8.1-alpha - 2026-10-02
 
