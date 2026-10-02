@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.9.1-alpha - 2026-10-02
+
+### Fixed
+- Active ROI candidates created on the second and later optimization rounds are now forced back into the normal annotation view before focus, preventing comparison-view state from making the guide range difficult to perceive.
+- The currently guided provisional ROI is explicitly selected and rendered with a thicker high-contrast yellow dashed frame instead of using the same visual weight as every other provisional ROI.
+- Precision Guide activation now resets Annotation Assist so each new ROI range is visible first.
+
+### Changed
+- Annotation Assist (`お手本作成表示` / `V`) now temporarily hides the ROI canvas entirely while tracing reference lines. Turning Assist off restores all ROI frames.
+- Reference edits preserve the temporary ROI-hidden state instead of re-showing the ROI canvas after each stroke.
+- App version advanced to `0.3.9.1-alpha`; extraction/selection algorithm identifier remains `boundary-v13-precision-guide-v2`.
+
+### Diagnosis
+- The supplied v0.3.9 diagnostics recorded valid Active ROI suggestions in both center and edge images, while the final bundle contained no provisional ROI because the corresponding round was skipped. This isolated the issue to guide visibility/interaction rather than Active ROI candidate generation.
+- Syntax validation passed for the modified app, annotation renderer and project module; all 110 app DOM references still resolve to unique IDs.
+
 ## v0.3.9-alpha - 2026-10-02
 
 ### Added

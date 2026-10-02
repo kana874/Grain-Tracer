@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.9-alpha</div>
+    <div class="version">v0.3.9.1-alpha</div>
   </header>
 
   <main class="layout">
@@ -78,7 +78,7 @@
         <button id="fitButton" type="button" disabled>全体表示</button>
         <button id="actualButton" type="button" disabled>100%</button>
         <button id="clearOverlayButton" type="button" disabled>粒界表示を消去</button>
-        <button id="annotationAssistButton" class="view-button" type="button" title="自動抽出線を薄くしてお手本を描きやすくします (V)" disabled>お手本作成表示</button>
+        <button id="annotationAssistButton" class="view-button" type="button" title="自動抽出線を薄くし、ROI枠を一時非表示にしてお手本を描きやすくします (V)" disabled>お手本作成表示</button>
         <span id="zoomLabel" class="zoom-label">-</span>
       </div>
 
@@ -138,7 +138,7 @@
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.3.9</strong>
+          <strong class="subpanel-title">自動最適化 v0.3.9.1</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
           <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。お手本線が無い初回は8×8グリッドから3つのROI候補を固定seedで提示し、2回目以降は必要な場合だけ未評価領域を追加提案します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
@@ -147,7 +147,7 @@
             <button id="precisionVerifyButton" class="primary" type="button" disabled>このROIの入力完了 → 次へ</button>
             <button id="precisionSkipButton" type="button" disabled>精密評価は後で（この画像では省略）</button>
           </div>
-          <p class="help">黄破線の候補ROIが表示されたら、その枠内で見える粒界をすべて黄色のお手本線にしてください。「入力完了」を押したROIだけが完全評価ROIとしてTrue Precision / Recall / F1に使われます。初回候補は3領域、追加候補は必要時のみ1～3領域です。追加候補は「今回は追加しない」でその回だけ省略できます。</p>
+          <p class="help">太い黄破線が現在入力するROIです。範囲を確認した後、「お手本作成表示」をONにするとROI枠を一時非表示にできます。枠内で見える粒界をすべて黄色のお手本線にし、「入力完了」を押してください。初回候補は3領域、追加候補は必要時のみ1～3領域です。</p>
         </div>
 
         <details class="advanced-tuning">
