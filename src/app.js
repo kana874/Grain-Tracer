@@ -725,7 +725,10 @@ function applyAnnotationAssistView() {
   if (els.gapCanvas) els.gapCanvas.style.opacity = state.annotationAssist ? "0.88" : "1";
   if (els.negativeCanvas) els.negativeCanvas.style.opacity = state.annotationAssist ? "0.22" : "1";
   if (els.exclusionCanvas) els.exclusionCanvas.style.opacity = state.annotationAssist ? "0.58" : "1";
-  if (els.fullRoiCanvas) els.fullRoiCanvas.style.opacity = state.annotationAssist ? "0.78" : "1";
+  if (els.fullRoiCanvas) {
+    els.fullRoiCanvas.style.opacity = "1";
+    els.fullRoiCanvas.style.visibility = state.annotationAssist ? "hidden" : "visible";
+  }
 }
 
 function toggleAnnotationAssist(force = null, announce = true) {
@@ -733,8 +736,8 @@ function toggleAnnotationAssist(force = null, announce = true) {
   applyAnnotationAssistView();
   if (announce) {
     setStatus(state.annotationAssist
-      ? "お手本作成表示: 自動境界と非粒界Fillを薄く表示します。Hを押している間は自動境界を隠せます。"
-      : "通常のオーバーレイ濃度に戻しました。");
+      ? "お手本作成表示: 自動境界と非粒界Fillを薄くし、ROI枠を一時非表示にします。Hを押している間は自動境界も隠せます。"
+      : "通常のオーバーレイ濃度とROI枠表示に戻しました。");
   }
 }
 
@@ -1612,6 +1615,14 @@ function rebuildExclusionLayer(previewRect = null, showSelection = true) {
   updateAnnotationStatus();
 }
 
+function currentFullRoiDisplayIndex(showSelection = true) {
+  if (!showSelection) return -1;
+  if (state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0) {
+    return state.precisionGuide.currentRoiIndex;
+  }
+  return state.tool === "full-roi" ? state.selectedFullRoiIndex : -1;
+}
+
 function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
   if (!state.preview) return;
   renderFullEvaluationRoiCanvas(
@@ -1620,9 +1631,10 @@ function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
     state.preview.width,
     state.preview.height,
     previewRect,
-    showSelection && state.tool === "full-roi" ? state.selectedFullRoiIndex : -1,
+    currentFullRoiDisplayIndex(showSelection),
     annotationHandleSize(),
   );
+  applyAnnotationAssistView();
   updateAnnotationStatus();
 }
 
@@ -1770,12 +1782,19 @@ function activatePrecisionGuideIndex(index) {
   if (index < 0 || index >= state.fullEvaluationRois.length) return false;
   const rect = state.fullEvaluationRois[index];
   if (rect?.verified !== false) return false;
+
+  // One-click normally leaves the app in comparison view. Restore the normal
+  // annotation layers before focusing the next Active ROI so its boundary is
+  // guaranteed to be visible.
+  if (state.comparisonMode) renderNormalOverlay();
+  toggleAnnotationAssist(false, false);
+
   state.precisionGuide.active = true;
   state.precisionGuide.currentRoiIndex = index;
   state.precisionGuide.mode = rect.guideMode ?? state.precisionGuide.mode ?? "bootstrap-informed";
   state.selectedFullRoiIndex = index;
-  rebuildFullRoiLayer();
   setTool("reference");
+  rebuildFullRoiLayer();
   focusPreviewRect(rect);
   const pending = provisionalFullEvaluationRois().length;
   const role = precisionRoleLabel(rect.guideRole);
@@ -1787,7 +1806,7 @@ function activatePrecisionGuideIndex(index) {
     els.precisionSkipButton.textContent = "精密評価は後で（今回は省略）";
   }
   els.autoOptimizeStatus.textContent =
-    `精密評価ガイド v2: ${role}を表示中。黄破線の枠内で、見える粒界をすべて黄色のお手本線にしてから「このROIの入力完了」を押してください。残り ${pending}領域。`;
+    `精密評価ガイド v2: ${role}を表示中。太い黄破線が現在のROIです。範囲を確認した後、「お手本作成表示」をONにするとROI枠を一時非表示にできます。枠内で見える粒界をすべて黄色のお手本線にしてから「このROIの入力完了」を押してください。残り ${pending}領域。`;
   updateControls();
   return true;
 }
@@ -1861,6 +1880,7 @@ function finishPrecisionGuide() {
   state.precisionGuide.suggestionRound = null;
   state.selectedFullRoiIndex = -1;
   els.precisionSkipButton.textContent = "精密評価は後で（今回は省略）";
+  toggleAnnotationAssist(false, false);
   rebuildFullRoiLayer();
   updateMetrics(state.lastMetrics);
   updateControls();
@@ -2044,6 +2064,7 @@ function invalidateAfterReferenceEdit(affectsAnalysis = false) {
   els.negativeCanvas.style.visibility = "visible";
   els.exclusionCanvas.style.visibility = "visible";
   els.fullRoiCanvas.style.visibility = "visible";
+  applyAnnotationAssistView();
   if (affectsAnalysis) {
     state.analysisMask = null;
     els.overlayCanvas.getContext("2d").clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
@@ -2057,6 +2078,7 @@ function invalidateEvaluationOnly() {
   els.negativeCanvas.style.visibility = "visible";
   els.exclusionCanvas.style.visibility = "visible";
   els.fullRoiCanvas.style.visibility = "visible";
+  applyAnnotationAssistView();
   updateMetrics();
 }
 
@@ -2182,6 +2204,7 @@ function clearOverlay() {
   els.negativeCanvas.style.visibility = "visible";
   els.exclusionCanvas.style.visibility = "visible";
   els.fullRoiCanvas.style.visibility = "visible";
+  applyAnnotationAssistView();
   updateMetrics();
   updateControls();
   setStatus("粒界オーバーレイを消去しました。");
@@ -3647,9 +3670,14 @@ function setTool(tool) {
       state.preview.width,
       state.preview.height,
       null,
-      tool === "full-roi" ? state.selectedFullRoiIndex : -1,
+      state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0
+        ? state.precisionGuide.currentRoiIndex
+        : tool === "full-roi"
+          ? state.selectedFullRoiIndex
+          : -1,
       annotationHandleSize(),
     );
+    applyAnnotationAssistView();
   }
 }
 
