@@ -86,10 +86,24 @@ function exclusionRatio(cell, mask, width) {
 }
 
 function toRoi(cell, width, height, metadata = {}, cols = 8, rows = 8) {
-  const targetWidth = Math.min(width, Math.max(140, Math.min(240, Math.round(cell.width * 0.85))));
-  const targetHeight = Math.min(height, Math.max(100, Math.min(180, Math.round(cell.height * 0.85))));
-  const cx = (cell.x0 + cell.x1 - 1) / 2;
-  const cy = (cell.y0 + cell.y1 - 1) / 2;
+  // Grid cells created by buildPrecisionGrid carry width/height, while
+  // computeRegionalMetrics regions carry x0/y0/x1/y1 only. Derive geometry
+  // from bounds when width/height are absent so Active ROI candidates never
+  // produce NaN coordinates.
+  const fallbackX0 = Math.floor((cell.rx ?? 0) * width / cols);
+  const fallbackX1 = Math.floor(((cell.rx ?? 0) + 1) * width / cols);
+  const fallbackY0 = Math.floor((cell.ry ?? 0) * height / rows);
+  const fallbackY1 = Math.floor(((cell.ry ?? 0) + 1) * height / rows);
+  const cellX0 = Number.isFinite(cell.x0) ? cell.x0 : fallbackX0;
+  const cellX1 = Number.isFinite(cell.x1) ? cell.x1 : fallbackX1;
+  const cellY0 = Number.isFinite(cell.y0) ? cell.y0 : fallbackY0;
+  const cellY1 = Number.isFinite(cell.y1) ? cell.y1 : fallbackY1;
+  const cellWidth = Number.isFinite(cell.width) ? cell.width : Math.max(1, cellX1 - cellX0);
+  const cellHeight = Number.isFinite(cell.height) ? cell.height : Math.max(1, cellY1 - cellY0);
+  const targetWidth = Math.min(width, Math.max(140, Math.min(240, Math.round(cellWidth * 0.85))));
+  const targetHeight = Math.min(height, Math.max(100, Math.min(180, Math.round(cellHeight * 0.85))));
+  const cx = (cellX0 + cellX1 - 1) / 2;
+  const cy = (cellY0 + cellY1 - 1) / 2;
   const x0 = clamp(Math.round(cx - targetWidth / 2), 0, Math.max(0, width - targetWidth));
   const y0 = clamp(Math.round(cy - targetHeight / 2), 0, Math.max(0, height - targetHeight));
   return {
@@ -106,6 +120,32 @@ function toRoi(cell, width, height, metadata = {}, cols = 8, rows = 8) {
     suggestedAt: new Date().toISOString(),
     ...metadata,
   };
+}
+
+export function repairPrecisionGuideRoi(rect, width, height) {
+  if (!rect) return rect;
+  const coordinates = [rect.x0, rect.y0, rect.x1, rect.y1];
+  if (coordinates.every(Number.isFinite)) return { ...rect };
+  if (!Number.isInteger(rect.cellRx) || !Number.isInteger(rect.cellRy)) return { ...rect };
+  return toRoi(
+    {
+      rx: rect.cellRx,
+      ry: rect.cellRy,
+      x0: Math.floor(rect.cellRx * width / (rect.gridCols ?? 8)),
+      x1: Math.floor((rect.cellRx + 1) * width / (rect.gridCols ?? 8)),
+      y0: Math.floor(rect.cellRy * height / (rect.gridRows ?? 8)),
+      y1: Math.floor((rect.cellRy + 1) * height / (rect.gridRows ?? 8)),
+    },
+    width,
+    height,
+    { ...rect },
+    rect.gridCols ?? 8,
+    rect.gridRows ?? 8,
+  );
+}
+
+export function repairPrecisionGuideRois(rects, width, height) {
+  return (rects ?? []).map(rect => repairPrecisionGuideRoi(rect, width, height));
 }
 
 function deterministicShuffle(items, random) {
