@@ -4,7 +4,7 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.8.1-alpha / boundary-v12-localized-local-calibration**
+**v0.3.9-alpha / boundary-v13-precision-guide-v2**
 
 Current capabilities:
 
@@ -46,6 +46,7 @@ Current capabilities:
 - Auto Tune v2 search trace v4 remains available as the global tuning stage; v0.3.7 wraps it with local calibration and topology-guarded post-processing in the One-click Optimization workflow
 - reference-guided 4×4 Local Calibration v2.1: verified complete-evaluation ROIs contribute true foreground/background supervision, measured zero-delta cells remain hard anchors, interpolation is limited to unmeasured adjacent cells, and regional Recall guardrails prevent aggressive local sensitivity drops
 - one-click stage diagnostics record whether Global/Local tuning was accepted, produced no change, or was rolled back, including machine-readable reasons and per-cell Local candidate results
+- Precision Guide v2 uses an independent 8×8 candidate grid: with no reference it deterministically selects three spatially separated bootstrap ROIs from the source fingerprint; later optimization rounds can propose 1–3 additional unverified regions using Recall, Negative Leakage, prediction excess, Local-risk and spatial-coverage signals
 - one-click diagnostic ZIP export packages manifest.json, Diagnostic JSON v13, preview/comparison/feature/reference/annotation images into one dependency-free ZIP bundle; individual-file export remains available as a fallback
 - 4×4 regional evaluation data
 - evaluation history
@@ -87,7 +88,7 @@ Original BMP
   -> optional continuous Ridge-normal NMS centreline suppression
   -> Positive / Negative / Unknown Partial Label comparison
   -> exclusion-mask filtering
-  -> guided precision-evaluation ROI suggestions when no verified ROI exists
+  -> Precision Guide v2: 8×8 bootstrap ROIs when no reference exists, then active additional ROI suggestions when later rounds need more evaluation coverage
   -> One-click Optimization
        -> Auto Tune v2 coordinate descent (verified ROI True F1 when available; otherwise Positive Recall + Macro Negative Leakage)
        -> reference-guided local sensitivity calibration
@@ -97,6 +98,6 @@ Original BMP
   -> evaluation history / project save
 ```
 
-Full-resolution overlapping-tile analysis, stronger dendrite false-positive suppression, higher-resolution/continuous local calibration, Smart Trace, and final PNG / mask / SVG export remain planned. v0.3.8.1 localizes Local Calibration corrections and adds single-file diagnostic bundle export; topology remains a guard for One-click Gap post-processing, while the underlying Auto Tune v2 coordinate-descent objective itself is still based on verified ROI True F1 or Partial Label metrics.
+Full-resolution overlapping-tile analysis, stronger dendrite false-positive suppression, higher-resolution/continuous local calibration, Smart Trace, and final PNG / mask / SVG export remain planned. v0.3.9 adds Precision Guide v2 bootstrap/active ROI acquisition while keeping Local Calibration on its existing 4×4 grid; topology remains a guard for One-click Gap post-processing, while the underlying Auto Tune v2 coordinate-descent objective itself is still based on verified ROI True F1 or Partial Label metrics.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.

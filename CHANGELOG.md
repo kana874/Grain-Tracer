@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.9-alpha - 2026-10-02
+
+### Added
+- Precision Guide v2 with an independent 8×8 candidate grid while Local Calibration remains 4×4.
+- No-reference bootstrap mode: three provisional ROIs are selected deterministically from the source fingerprint, with spatial separation so the same BMP receives the same initial candidates across reloads.
+- Reference-guided bootstrap mode on the 8×8 grid keeps the existing intent of Low Recall / High Leakage / Representative sampling when usable Positive labels already exist.
+- Active ROI mode for later optimization rounds. Up to three new provisional ROIs are selected from unverified cells using Low Recall, High Negative Leakage, prediction excess, Local Calibration risk, and distance from existing Verified ROI cells.
+- Active ROI suggestions are round-aware: users can choose "今回は追加しない" for one optimization round without permanently disabling later suggestions.
+- Precision Guide metadata is persisted in project JSON and exported in Diagnostic JSON v14, including grid cell, role, score, selection metrics, suggestion round, and deterministic bootstrap seed.
+- Regional diagnostics now expose prediction-pixel counts so prediction-density / excess can be used without treating Unknown predictions as formal false positives.
+
+### Changed
+- The main "自動最適化" button can now be used before any reference line exists. It enters the three-ROI bootstrap guide first, then resumes One-click Optimization after the ROIs are verified.
+- Automatic ROI candidates use approximately 85% of an 8×8 cell (normally about 191×140 px on a 1800×1320 preview) instead of the previous 4×4 / 64% placement.
+- A guided ROI requires at least 20 reference-centerline pixels before it can be verified.
+- Existing old project ROIs remain compatible; missing Precision Guide v2 metadata is treated as legacy data.
+- Diagnostic JSON advanced to `graintracer-diagnostic-v14`.
+- App version advanced to `0.3.9-alpha`; algorithm identifier advanced to `boundary-v13-precision-guide-v2`.
+
+### Validation
+- Synthetic bootstrap selection is deterministic for the same source fingerprint and keeps the three initial cells at Chebyshev distance >= 2 when enough cells are available.
+- On a 1800×1320 preview, the default bootstrap ROI size is 191×140 px.
+- Synthetic Active ROI selection correctly prioritized separate Low Recall, High Leakage, and prediction-excess regions while excluding cells already occupied by Verified ROIs.
+- JavaScript syntax validation passed for all modified modules (app, Precision Guide, evaluation, project, diagnostics); all 110 app DOM references resolve to unique IDs in index.html.
+
 ## v0.3.8.1-alpha - 2026-10-02
 
 ### Added

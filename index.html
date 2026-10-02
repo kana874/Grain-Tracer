@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.8.1-alpha</div>
+    <div class="version">v0.3.9-alpha</div>
   </header>
 
   <main class="layout">
@@ -138,16 +138,16 @@
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.3.8.1</strong>
+          <strong class="subpanel-title">自動最適化 v0.3.9</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
-          <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。精密評価ROIが未作成の場合は、最初の1回だけ評価候補を自動提示します。</p>
+          <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。お手本線が無い初回は8×8グリッドから3つのROI候補を固定seedで提示し、2回目以降は必要な場合だけ未評価領域を追加提案します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
           <div class="button-grid precision-guide-actions">
-            <button id="precisionGuideButton" type="button" disabled>精密評価候補を作る</button>
+            <button id="precisionGuideButton" type="button" disabled>ROI候補を作る</button>
             <button id="precisionVerifyButton" class="primary" type="button" disabled>このROIの入力完了 → 次へ</button>
             <button id="precisionSkipButton" type="button" disabled>精密評価は後で（この画像では省略）</button>
           </div>
-          <p class="help">黄破線の候補ROIが表示されたら、その枠内で見える粒界をすべて黄色のお手本線にしてください。「入力完了」を押したROIだけが完全評価ROIとしてTrue Precision / Recall / F1に使われます。候補の自動作成だけでは評価には使用されません。「精密評価は後で」を選ぶと、この画像を開いている間は以後の自動最適化をPartial Labelだけで実行します。</p>
+          <p class="help">黄破線の候補ROIが表示されたら、その枠内で見える粒界をすべて黄色のお手本線にしてください。「入力完了」を押したROIだけが完全評価ROIとしてTrue Precision / Recall / F1に使われます。初回候補は3領域、追加候補は必要時のみ1～3領域です。追加候補は「今回は追加しない」でその回だけ省略できます。</p>
         </div>
 
         <details class="advanced-tuning">
@@ -209,7 +209,7 @@
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
-        <p class="help">ZIP出力: manifest.json / diagnostic.json v13 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">ZIP出力: manifest.json / diagnostic.json v14 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
           <summary>個別ファイル出力</summary>
           <button id="exportDiagnosticsIndividualButton" class="full" type="button" disabled>診断ファイルを個別に書き出す</button>
