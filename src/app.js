@@ -3446,7 +3446,8 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
   }
 
   if (!skipPrecisionGate && hasFullEvaluationRois()
-      && state.precisionGuide.lastSkippedRound !== targetRound) {
+      && state.precisionGuide.lastSkippedRound !== targetRound
+      && state.precisionGuide.lastSuggestedRound !== targetRound) {
     const started = startPrecisionEvaluationGuide({
       autoRunAfterComplete: true,
       forceRegenerate: true,
