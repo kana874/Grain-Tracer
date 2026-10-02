@@ -15,6 +15,7 @@
 
 ### Diagnosis
 - The supplied v0.3.9.1 diagnostic bundle contained three valid Active ROI cell selections but their rectangle coordinates were `null`, and the screenshot showed `NaN% preview`. This directly identified the missing regional width/height conversion rather than a rendering-only issue.
+- Synthetic Active ROI generation now returns finite coordinates for later-round regions, malformed saved `null` coordinates are repaired from `cellRx/cellRy`, JavaScript syntax checks pass, and all 110 app DOM references still resolve.
 
 ## v0.3.9.1-alpha - 2026-10-02
 
