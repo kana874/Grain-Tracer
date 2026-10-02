@@ -1,6 +1,6 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.9-alpha";
+export const APP_VERSION = "0.3.9.1-alpha";
 export const ALGORITHM_VERSION = "boundary-v13-precision-guide-v2";
 
 export function packBinaryMask(mask) {
