@@ -321,6 +321,8 @@ export function computeRegionalMetrics(prediction, referenceCenterline, width, h
         referencePixels: matchedReference + falseNegative,
         matchedReference,
         falseNegative,
+        matchedPrediction,
+        predictionPixels: matchedPrediction + negativePrediction + unknownPrediction,
         negativePixels,
         negativePrediction,
         negativeHitRate: negativePixels ? negativePrediction / negativePixels : 0,
