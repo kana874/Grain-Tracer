@@ -14,6 +14,7 @@
 
 ### Diagnosis
 - The supplied v0.3.9 diagnostics recorded valid Active ROI suggestions in both center and edge images, while the final bundle contained no provisional ROI because the corresponding round was skipped. This isolated the issue to guide visibility/interaction rather than Active ROI candidate generation.
+- Syntax validation passed for the modified app, annotation renderer and project module; all 110 app DOM references still resolve to unique IDs.
 
 ## v0.3.9-alpha - 2026-10-02
 
