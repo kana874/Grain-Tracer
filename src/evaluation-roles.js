@@ -99,5 +99,6 @@ export function guardExcludedRois(rois) {
 }
 
 export function canTuneImage(imageRole) {
-  return normalizeImageEvaluationRole(imageRole) !== "test";
+  const role = normalizeImageEvaluationRole(imageRole);
+  return role == null || role === "development";
 }
