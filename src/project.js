@@ -159,10 +159,18 @@ export function validateProject(project) {
 export function restoreReferenceMasks(project) {
   const migrated = validateProject(project);
   const length = migrated.preview.width * migrated.preview.height;
+  const hasStoredManualNegativeMask =
+    typeof migrated.nonBoundary?.mask === "string" && migrated.nonBoundary.mask.length > 0;
+  const manualNegativeMask = unpackBinaryMask(migrated.nonBoundary?.mask, length);
   return {
     referenceMask: unpackBinaryMask(migrated.reference?.mask, length),
     referenceCenterline: unpackBinaryMask(migrated.reference?.centerline, length),
-    negativeMask: unpackBinaryMask(migrated.nonBoundary?.mask, length),
+    // nonBoundary.mask has always stored the manual Negative mask, not the
+    // seed-derived Closed Fill expansion. Keep the old negativeMask alias for
+    // callers while exposing the intent explicitly for project restoration.
+    manualNegativeMask,
+    negativeMask: manualNegativeMask.slice(),
+    hasStoredManualNegativeMask,
     negativeCenterline: unpackBinaryMask(migrated.nonBoundary?.centerline, length),
     closedNegativeSeeds: Array.isArray(migrated.nonBoundary?.closedFillSeeds)
       ? migrated.nonBoundary.closedFillSeeds.map(seed => ({
