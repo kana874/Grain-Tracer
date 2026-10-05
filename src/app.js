@@ -444,6 +444,10 @@ function updateControls() {
   els.exportDiagnosticsButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   els.exportDiagnosticsIndividualButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   if (els.recordBaselineButton) els.recordBaselineButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
+  if (els.trainClassifierButton) {
+    els.trainClassifierButton.disabled = disabled || !hasPreview || !hasRef || !hasNegativeReference() || !tuneAllowed;
+  }
+  if (els.resetClassifierButton) els.resetClassifierButton.disabled = disabled || !state.classifier;
   if (els.imageEvaluationRoleSelect) els.imageEvaluationRoleSelect.disabled = disabled || !hasPreview;
   updateEvaluationRoleControls();
 }
@@ -649,9 +653,14 @@ function buildNegativeHoldout() {
   };
 }
 function currentBoundaryOptions() {
+  const extraction = currentExtractionOptions();
+  const classifierAccepted = Boolean(state.classifier?.accepted && state.classifier?.model);
   return {
-    ...currentExtractionOptions(),
-    classifierModel: state.classifier?.accepted ? state.classifier.model : null,
+    ...extraction,
+    scoreMode: extraction.scoreMode === "classifier" && !classifierAccepted
+      ? "legacy"
+      : extraction.scoreMode,
+    classifierModel: classifierAccepted ? state.classifier.model : null,
     localCalibration: state.localCalibration,
     exclusionMask: state.exclusionMask,
     edgeFrameGuard: 1,
@@ -670,6 +679,180 @@ function updateLocalCalibrationStatus() {
   const signed = value => `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
   els.localCalibrationStatus.textContent =
     `局所補正: ${measured}/${state.localCalibration.cols * state.localCalibration.rows}領域をお手本で校正 / 感度補正 ${signed(min)}～${signed(max)}`;
+}
+
+function updateClassifierStatus() {
+  if (!els.classifierStatus) return;
+  if (!state.classifier?.model) {
+    els.classifierStatus.textContent = "Classifier: 未学習";
+    return;
+  }
+  const samples = state.classifier.model.sampleCounts ?? {};
+  const sampleText = `P ${samples.positiveUsed ?? 0} / N ${samples.negativeUsed ?? 0}`;
+  if (state.classifier.accepted) {
+    const delta = state.classifier.guard?.delta;
+    const leak = Number.isFinite(delta?.negativeLeakage)
+      ? ` / ΔLeak ${(delta.negativeLeakage * 100).toFixed(2)}pt`
+      : "";
+    els.classifierStatus.textContent = `Classifier: Guard合格 / ${sampleText}${leak}`;
+  } else {
+    const reasons = state.classifier.guard?.reasons?.join(", ") || "Guard未評価";
+    els.classifierStatus.textContent = `Classifier: 未採用 / ${sampleText} / ${reasons}`;
+  }
+}
+
+function explicitTrainingEvaluationRois() {
+  return (state.fullEvaluationRois ?? []).filter(rect =>
+    rect?.verified !== false && normalizeRoiEvaluationRole(rect.evaluationRole) === "training");
+}
+
+function classifierValidationEvaluation(mask, rois) {
+  const roiMetrics = computeFullEvaluationRoiMetrics(
+    mask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    rois,
+    {
+      tolerance: currentComparisonOptions().tolerance,
+      exclusionMask: state.exclusionMask,
+    },
+  );
+  const roiMask = buildRoiMask(state.preview.width, state.preview.height, rois);
+  const leakage = maskedNegativeLeakage(
+    mask,
+    state.negativeMask,
+    roiMask,
+    state.exclusionMask,
+  );
+  const topology = computeClosureProfile(
+    mask,
+    state.preview.width,
+    state.preview.height,
+    state.closedNegativeSeeds,
+    {
+      ...closureDiagnosticOptions(),
+      bridgeRadii: [0, 1, 2, 3],
+    },
+  );
+  return {
+    recall: roiMetrics.recall ?? 0,
+    precision: roiMetrics.precision ?? 0,
+    f1: roiMetrics.f1 ?? 0,
+    negativeLeakage: leakage.leakage,
+    negativePixels: leakage.negativePixels,
+    topology: {
+      weightedClosureScore: topology.weightedClosureScore,
+      openAfterMaxRadius: topology.openAfterMaxRadius,
+      meanRequiredRadiusCapped: topology.meanRequiredRadiusCapped,
+    },
+  };
+}
+
+async function trainBoundaryClassifier() {
+  if (!state.preview || !hasReference() || !hasNegativeReference()) return;
+  if (!canTuneImage(state.imageEvaluationRole)) {
+    setStatus("Validation/Test画像ではClassifier学習できません。", 0);
+    return;
+  }
+  const trainingRois = explicitTrainingEvaluationRois();
+  const validationRois = validationEvaluationRois(state.fullEvaluationRois);
+  if (!trainingRois.length) {
+    setStatus("Classifier学習には明示的なTraining ROIが必要です。Legacy ROIは学習に使用しません。", 0);
+    return;
+  }
+  if (!validationRois.length) {
+    setStatus("Classifier自動採用GuardにはValidation ROIが必要です。Test ROIは使用しません。", 0);
+    return;
+  }
+
+  setBusy(true);
+  try {
+    ensureClosedNegativeFresh();
+    const features = await ensureFeatures();
+    const trainingMask = buildRoiMask(state.preview.width, state.preview.height, trainingRois);
+    setStatus("Classifier学習中...", 8);
+    const model = trainLogisticBoundaryClassifier(
+      features,
+      state.referenceCenterline,
+      state.negativeMask,
+      {
+        roiMask: trainingMask,
+        exclusionMask: state.exclusionMask,
+      },
+    );
+
+    const extraction = currentExtractionOptions();
+    const baselineMode = extraction.scoreMode === "evidence" ? "evidence" : "legacy";
+    const common = {
+      ...extraction,
+      localCalibration: state.localCalibration,
+      exclusionMask: state.exclusionMask,
+      edgeFrameGuard: 1,
+      onProgress: () => {},
+    };
+    setStatus("Classifier Guard: Validation比較中...", 55);
+    const baselineMask = await buildBoundaryMask(features, {
+      ...common,
+      scoreMode: baselineMode,
+      classifierModel: null,
+    });
+    const classifierMask = await buildBoundaryMask(features, {
+      ...common,
+      scoreMode: "classifier",
+      classifierModel: model,
+    });
+
+    const baselineEval = classifierValidationEvaluation(baselineMask, validationRois);
+    const candidateEval = classifierValidationEvaluation(classifierMask, validationRois);
+    const guard = evaluateClassifierGuard(baselineEval, candidateEval);
+    state.classifier = {
+      model,
+      accepted: guard.accepted,
+      guard,
+      baselineMode,
+      trainingRoiCount: trainingRois.length,
+      validationRoiCount: validationRois.length,
+      baseline: baselineEval,
+      candidate: candidateEval,
+      trainedAt: model.trainedAt,
+    };
+
+    if (guard.accepted) {
+      if (els.scoreMode) els.scoreMode.value = "classifier";
+      state.analysisMask = classifierMask;
+      resetGapBridgeState(true);
+      invalidateTopology();
+      renderNormalOverlay();
+      updateMetrics();
+      setStatus(
+        `Classifier Guard合格: Validation F1 ${(baselineEval.f1 * 100).toFixed(1)}→${(candidateEval.f1 * 100).toFixed(1)}% / Leakage ${(baselineEval.negativeLeakage * 100).toFixed(2)}→${(candidateEval.negativeLeakage * 100).toFixed(2)}%`,
+        100,
+      );
+    } else {
+      if (els.scoreMode?.value === "classifier") els.scoreMode.value = baselineMode;
+      setStatus(`Classifier Guard不合格: ${guard.reasons.join(", ")}。従来方式を維持します。`, 100);
+    }
+    updateClassifierStatus();
+    updateControls();
+    scheduleAutosave();
+  } catch (error) {
+    console.error(error);
+    state.classifier = null;
+    updateClassifierStatus();
+    setStatus(`Classifier学習エラー: ${error.message}。従来方式を維持します。`, 0);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function resetBoundaryClassifier() {
+  state.classifier = null;
+  if (els.scoreMode?.value === "classifier") els.scoreMode.value = "legacy";
+  updateClassifierStatus();
+  updateControls();
+  scheduleAutosave();
+  setStatus("Classifierを解除しました。従来Boundary Scoreを使用します。");
 }
 
 function currentSettings() {
