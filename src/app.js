@@ -951,6 +951,12 @@ function currentSettings() {
       protectedFrameMargin: 1,
       maxLocalSplitIncrease: 1,
       maxAcceptedRepairs: 240,
+      maxCandidates: 360,
+      requireTopologyTarget: true,
+      topologyTargetMargin: 13,
+      topologyProbeMaxRadius: 3,
+      maxBundleCandidatesPerTarget: 6,
+      maxBundleSize: 3,
     },
     autosaveEnabled: els.autosaveEnabled.checked,
   };
