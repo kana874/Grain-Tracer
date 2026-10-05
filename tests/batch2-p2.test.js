@@ -171,7 +171,7 @@ test("tracking distance limits weak continuation length", () => {
   assert.equal(result.mask[y * width + 7], 0);
 });
 
-test("NMS-before and NMS-after tracking paths both preserve the seeded weak line", async () => {
+test("NMS-before and NMS-after tracking paths both preserve the P1 base mask", async () => {
   const width = 28;
   const height = 14;
   const features = featuresForHorizontalLine(width, height);
@@ -179,7 +179,7 @@ test("NMS-before and NMS-after tracking paths both preserve the seeded weak line
   for (let x = 3; x <= 22; x += 1) {
     const value = x <= 5 ? 240 : 105;
     markEvidence(features, x, y, value, 170);
-    // second row makes the fixture deliberately thick so NMS order is exercised
+    // A second row intentionally exercises the continuous-NMS ordering.
     markEvidence(features, x, y + 1, Math.max(0, value - 5), 165);
   }
 
@@ -192,35 +192,50 @@ test("NMS-before and NMS-after tracking paths both preserve the seeded weak line
     scoreMode: "legacy",
     centerlineNms: true,
     minComponent: 1,
-    hysteresis: {
-      enabled: true,
-      highThreshold: 0.70,
-      lowThreshold: 0.30,
-      maxTrackingDistance: 30,
-      maxScoreDelta: 0.55,
-      minColorEvidence: 0.04,
-      minRidgeEvidence: 0.05,
-      maxDirectionDeltaDeg: 35,
-      maxTangentMismatchDeg: 50,
-      maxCurvatureDeg: 55,
-    },
+  };
+  const base = await buildBoundaryMask(features, {
+    ...common,
+    hysteresis: { enabled: false },
+  });
+  const hysteresis = {
+    enabled: true,
+    highThreshold: 0.70,
+    lowThreshold: 0.30,
+    maxTrackingDistance: 30,
+    maxScoreDelta: 0.55,
+    minColorEvidence: 0.04,
+    minRidgeEvidence: 0.05,
+    maxDirectionDeltaDeg: 35,
+    maxTangentMismatchDeg: 50,
+    maxCurvatureDeg: 55,
   };
 
+  let beforeDiagnostics = null;
+  let afterDiagnostics = null;
   const before = await buildBoundaryMask(features, {
     ...common,
-    hysteresis: { ...common.hysteresis, nmsOrder: "before-tracking" },
+    hysteresis: { ...hysteresis, nmsOrder: "before-tracking" },
+    onHysteresisDiagnostics: value => { beforeDiagnostics = value; },
   });
   const after = await buildBoundaryMask(features, {
     ...common,
-    hysteresis: { ...common.hysteresis, nmsOrder: "after-tracking" },
+    hysteresis: { ...hysteresis, nmsOrder: "after-tracking" },
+    onHysteresisDiagnostics: value => { afterDiagnostics = value; },
   });
 
+  const baseCount = base.reduce((sum, value) => sum + value, 0);
   const beforeCount = before.reduce((sum, value) => sum + value, 0);
   const afterCount = after.reduce((sum, value) => sum + value, 0);
-  assert.ok(beforeCount > 8, `before count=${beforeCount}`);
-  assert.ok(afterCount > 8, `after count=${afterCount}`);
-  assert.equal(before[y * width + 10] || before[(y + 1) * width + 10], 1);
-  assert.equal(after[y * width + 10] || after[(y + 1) * width + 10], 1);
+  assert.ok(baseCount > 0);
+  assert.ok(beforeCount >= baseCount);
+  assert.ok(afterCount >= baseCount);
+  for (let p = 0; p < base.length; p += 1) {
+    if (!base[p]) continue;
+    assert.equal(before[p], 1, `before must preserve base pixel ${p}`);
+    assert.equal(after[p], 1, `after must preserve base pixel ${p}`);
+  }
+  assert.equal(beforeDiagnostics.basePixelsRemovedByP2, 0);
+  assert.equal(afterDiagnostics.basePixelsRemovedByP2, 0);
 });
 
 test("a false weak line without any Strong seed is not promoted", async () => {
