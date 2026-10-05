@@ -755,7 +755,7 @@ export function buildDiagnosticReport(input) {
     notes: [
       "Feature values are normalized to 0..1.",
       "Near image edges, extraction renormalizes the score over feature channels that are geometrically available; the outermost 1 px remains guarded to suppress image-frame artifacts.",
-      "Topology v3.0 adds a Minimum Closure Radius profile over 0/1/2/3 px probes so topology improvement can be measured even when exact 0 px closure remains zero.",
+      "Topology v3.0 Closure Profile remains the graded closure diagnostic; Batch 3 Topology Repair v4 adds Skeleton Graph and guarded evidence-path repair on top of it.",
       "Precision Guide v2 uses an 8x8 candidate grid. With no Positive reference, three spatially separated ROI candidates are selected deterministically from the source fingerprint; later rounds use active selection from Recall, Negative Leakage, prediction excess, Local risk, and spatial novelty.",
       "Guided precision-evaluation ROI suggestions remain provisional until the user explicitly confirms that every visible boundary inside the ROI has been labelled; only verified ROIs contribute formal True Precision / Recall / F1.",
       "Batch 1 separates Complete Evaluation ROIs into Training / Validation / Test roles. Test ROIs are diagnostic-only and are never used for Tune, parameter selection, or Guard decisions.",
