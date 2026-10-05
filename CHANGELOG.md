@@ -20,6 +20,9 @@
 - Candidate capacity is now balanced across Endpoint→Endpoint, Endpoint→Existing Boundary, and Endpoint→Junction instead of letting Endpoint→Endpoint consume the full candidate cap.
 - Each repair candidate must now demonstrate per-target local topology contribution before entering the viable set, and it is rechecked for incremental contribution when multiple repairs target the same region.
 - Diagnostics now report target-region summary, candidate generated/selected counts by target class, accepted counts by class, topology-contributing count, and per-path local topology gain.
+- Real-image v4.1 retest reduced repair search time from about 24.8 s to about 2.0 s and balanced candidate selection to 120/120/120, but all 70 safety-passed candidates were rejected because no single path improved Closure.
+- Topology Repair v4.2 now groups safety-passed candidates by target and evaluates small Repair Bundles (up to 6 candidate paths considered per target, bundle size up to 3). A path may be individually topology-neutral when the bundle as a whole improves the target Closure Profile.
+- Bundle selection rechecks endpoint/target conflicts, additive-only preservation, individual local-split guards, and target-level Closure gain before adoption. Global Recall / Leakage / Precision / Topology guards remain unchanged.
 
 ### Changed
 - App version advanced to `0.5.0-alpha`.
