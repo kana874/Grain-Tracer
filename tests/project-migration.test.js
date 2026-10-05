@@ -29,16 +29,16 @@ function emptyProjectV1() {
   };
 }
 
-test("v1 project migrates to v2 and keeps old ROI role unset", () => {
+test("v1 project migrates to current format and keeps old ROI role unset", () => {
   const migrated = migrateProject(emptyProjectV1());
   assert.equal(migrated.formatVersion, PROJECT_VERSION);
   assert.equal(migrated.imageEvaluationRole, null);
   assert.deepEqual(migrated.baselineSnapshots, []);
   assert.equal("evaluationRole" in migrated.fullEvaluationRois[0], false);
-  assert.equal(validateProject(emptyProjectV1()).formatVersion, 2);
+  assert.equal(validateProject(emptyProjectV1()).formatVersion, PROJECT_VERSION);
 });
 
-test("project v2 saves/restores ROI roles, image role, and baseline snapshots", () => {
+test("project v3 saves/restores ROI roles, image role, baseline snapshots, and classifier", () => {
   const length = 16;
   const project = createProjectSnapshot({
     source: { name: "sample.bmp", fingerprint: "abc" },
@@ -59,16 +59,20 @@ test("project v2 saves/restores ROI roles, image role, and baseline snapshots", 
     history: [],
     imageEvaluationRole: "test",
     baselineSnapshots: [{ schema: "graintracer-baseline-v1", boundaryPixelCount: 12 }],
+    classifier: { accepted: true, model: { schema: "graintracer-boundary-logreg-v1", coefficients: [1] } },
   });
 
-  assert.equal(project.formatVersion, 2);
+  assert.equal(project.formatVersion, PROJECT_VERSION);
   assert.equal(project.appVersion, APP_VERSION);
   assert.equal(project.imageEvaluationRole, "test");
   assert.equal(project.fullEvaluationRois[0].evaluationRole, "test");
   assert.equal(project.baselineSnapshots.length, 1);
+  assert.equal(project.classifier.accepted, true);
+  assert.equal(project.classifier.model.schema, "graintracer-boundary-logreg-v1");
 
   const restored = restoreReferenceMasks(project);
   assert.equal(restored.fullEvaluationRois[0].evaluationRole, "test");
+  assert.equal(restored.classifier.accepted, true);
 });
 
 
