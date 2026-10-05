@@ -123,3 +123,25 @@ test("legacy project without a stored Negative mask requests centerline reconstr
   assert.equal(restored.hasStoredManualNegativeMask, false);
   assert.equal(restored.manualNegativeMask.reduce((sum, value) => sum + value, 0), 0);
 });
+
+
+test("project v3 preserves backward-compatible hysteresis settings", () => {
+  const project = {
+    ...emptyProjectV1(),
+    formatVersion: PROJECT_VERSION,
+    appVersion: APP_VERSION,
+    settings: {
+      hysteresis: {
+        enabled: true,
+        highThreshold: 0.45,
+        lowThreshold: 0.30,
+        maxTrackingDistance: 12,
+        maxDirectionDeltaDeg: 35,
+        nmsOrder: "before-tracking",
+      },
+    },
+  };
+  const migrated = migrateProject(project);
+  assert.equal(migrated.formatVersion, PROJECT_VERSION);
+  assert.deepEqual(migrated.settings.hysteresis, project.settings.hysteresis);
+});
