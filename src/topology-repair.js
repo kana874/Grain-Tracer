@@ -1309,17 +1309,16 @@ function bundleRank(contribution, candidates, additions) {
 function evaluateRepairBundle(mask, width, height, target, candidates, options, maxSplitIncrease) {
   const compatibility = bundleCompatibility(candidates, mask);
   if (!compatibility.compatible) return { accepted: false, reason: compatibility.reason };
-  const allPathPixels = candidates.flatMap(candidate => candidate.pixels ?? []);
-  const localBefore = localBackgroundComponents(mask, width, height, allPathPixels, 2);
-  const localAfter = localBackgroundComponents(
-    mask,
-    width,
-    height,
-    allPathPixels,
-    2,
-    compatibility.additions,
+
+  // Each path has already passed the local split guard individually. Re-running
+  // the same guard over a box spanning several distant gaps can falsely count
+  // the intended grain closure itself as an excessive split. Bundle safety is
+  // therefore based on the worst individual path split plus the target-level
+  // closure signature, not on a synthetic multi-gap bounding box.
+  const localSplitIncrease = candidates.reduce(
+    (max, candidate) => Math.max(max, candidate.localSplitIncrease ?? 0),
+    0,
   );
-  const localSplitIncrease = Math.max(0, localAfter - localBefore);
   if (localSplitIncrease > maxSplitIncrease) {
     return { accepted: false, reason: "local-split", localSplitIncrease };
   }
