@@ -990,7 +990,25 @@ export function computeClosureProfile(prediction, width, height, seeds = [], opt
   const coreMeta = coreIndex && fillIndex
     ? buildCoreParentMetadata(coreIndex, fillIndex, borderAssistedMask)
     : null;
+  // Select cores by their original full-image fill component, never a crop edge.
+  if (coreIndex && fillIndex && Number.isInteger(options.targetSeedP)) {
+    const parent = fillIndex.labels[options.targetSeedP] ?? 0;
+    coreIndex.componentCount = 0;
+    coreIndex.componentPixels = 0;
+    for (let label = 1; label < coreIndex.active.length; label += 1) {
+      if (!parent || coreMeta.parentFillLabel[label] !== parent) coreIndex.active[label] = 0;
+      if (coreIndex.active[label]) {
+        coreIndex.componentCount += 1;
+        coreIndex.componentPixels += coreIndex.sizes[label];
+      }
+    }
+  }
   const useCoreRegions = Boolean(coreIndex?.componentCount);
+  if (Number.isInteger(options.targetSeedP) && !useCoreRegions) {
+    return { basis: "closed-negative-eroded-core", regionCount: 0,
+      closureByBridgeRadius: [], weightedClosureScore: null, maxRadius: bridgeRadii.at(-1),
+      meanRequiredRadiusCapped: null, openAfterMaxRadius: 0, minimumRadiusHistogram: {} };
+  }
   const closureByBridgeRadius = [];
   for (const radius of bridgeRadii) {
     const wall = radius > 0

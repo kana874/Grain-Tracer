@@ -1,3 +1,5 @@
+import { computeClosureProfile } from "./topology.js";
+
 const DIRS8 = Object.freeze([
   [-1, -1], [0, -1], [1, -1],
   [-1, 0],             [1, 0],
@@ -441,117 +443,30 @@ function maskAt(mask, p, additions) {
   return Boolean(mask[p] || additions?.has(p));
 }
 
-function isDilatedWall(mask, width, height, x, y, radius, additions) {
-  if (radius <= 0) return maskAt(mask, indexOf(width, x, y), additions);
-  for (let dy = -radius; dy <= radius; dy += 1) {
-    const ny = y + dy;
-    if (ny < 0 || ny >= height) continue;
-    for (let dx = -radius; dx <= radius; dx += 1) {
-      const nx = x + dx;
-      if (nx < 0 || nx >= width) continue;
-      if (maskAt(mask, indexOf(width, nx, ny), additions)) return true;
-    }
-  }
-  return false;
-}
-
-function localClosureProbe(mask, width, height, target, radius, padding, additions = null) {
-  const minX = Math.max(0, target.minX - padding);
-  const maxX = Math.min(width - 1, target.maxX + padding);
-  const minY = Math.max(0, target.minY - padding);
-  const maxY = Math.min(height - 1, target.maxY + padding);
-  const boxWidth = maxX - minX + 1;
-  const boxHeight = maxY - minY + 1;
-  const visited = new Uint8Array(boxWidth * boxHeight);
-  const queue = new Int32Array(boxWidth * boxHeight);
-
-  const seed = pointFromIndex(target.seedP, width);
-  let sx = seed.x;
-  let sy = seed.y;
-  if (!inBounds(width, height, sx, sy)
-      || isDilatedWall(mask, width, height, sx, sy, radius, additions)) {
-    let found = false;
-    const searchRadius = Math.max(4, radius + 2);
-    for (let dy = -searchRadius; dy <= searchRadius && !found; dy += 1) {
-      for (let dx = -searchRadius; dx <= searchRadius && !found; dx += 1) {
-        const nx = seed.x + dx;
-        const ny = seed.y + dy;
-        if (nx < target.minX || nx > target.maxX || ny < target.minY || ny > target.maxY) continue;
-        if (!inBounds(width, height, nx, ny)) continue;
-        if (!isDilatedWall(mask, width, height, nx, ny, radius, additions)) {
-          sx = nx;
-          sy = ny;
-          found = true;
-        }
-      }
-    }
-    if (!found) {
-      return { closed: true, reachableArea: 0, borderContacts: 0, blockedSeed: true };
-    }
-  }
-
-  const startLocal = (sy - minY) * boxWidth + (sx - minX);
-  let head = 0;
-  let tail = 0;
-  queue[tail++] = startLocal;
-  visited[startLocal] = 1;
-  let reachableArea = 0;
-  let borderContacts = 0;
-
-  while (head < tail) {
-    const local = queue[head++];
-    const bx = local % boxWidth;
-    const by = Math.floor(local / boxWidth);
-    const gx = minX + bx;
-    const gy = minY + by;
-    reachableArea += 1;
-    if (bx === 0 || by === 0 || bx === boxWidth - 1 || by === boxHeight - 1) {
-      borderContacts += 1;
-    }
-    for (const [dx, dy] of DIRS4) {
-      const nx = gx + dx;
-      const ny = gy + dy;
-      if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
-      const nl = (ny - minY) * boxWidth + (nx - minX);
-      if (visited[nl]) continue;
-      if (isDilatedWall(mask, width, height, nx, ny, radius, additions)) continue;
-      visited[nl] = 1;
-      queue[tail++] = nl;
-    }
-  }
-
-  return {
-    closed: borderContacts === 0,
-    reachableArea,
-    borderContacts,
-    blockedSeed: false,
-  };
-}
-
-function localClosureSignature(mask, width, height, target, options = {}, additions = null) {
+export function targetClosureSignature(mask, width, height, target, options = {}, additions = null) {
   const maxRadius = Math.max(0, Math.min(4, Math.round(options.topologyProbeMaxRadius ?? 3)));
-  const padding = Math.max(
-    maxRadius + 3,
-    Math.round(options.topologyLocalPadding ?? (Number(options.maxSearchDistance ?? 10) + maxRadius + 5)),
-  );
-  const probes = [];
-  let requiredRadius = maxRadius + 1;
-  for (let radius = 0; radius <= maxRadius; radius += 1) {
-    const probe = localClosureProbe(mask, width, height, target, radius, padding, additions);
-    probes.push({ radius, ...probe });
-    if (requiredRadius === maxRadius + 1 && probe.closed) requiredRadius = radius;
-  }
-  const weightedClosureScore = probes.reduce((sum, probe) => sum + (probe.closed ? 1 : 0), 0)
-    / Math.max(1, probes.length);
-  const maxProbe = probes[probes.length - 1];
+  const wall = additions?.size ? mask.slice() : mask;
+  if (additions?.size) for (const p of additions) wall[p] = 1;
+  const profile = computeClosureProfile(wall, width, height, [], {
+    ...options,
+    targetSeedP: target.seedP,
+    bridgeRadii: Array.from({ length: maxRadius + 1 }, (_, radius) => radius),
+  });
+  const measurable = profile.regionCount > 0;
+  const probes = profile.closureByBridgeRadius.map(item => ({
+    radius: item.bridgeRadius,
+    closed: measurable && item.openRegions === 0,
+  }));
   return {
-    requiredRadius,
-    weightedClosureScore,
+    measurable,
+    coreRegionCount: profile.regionCount,
+    requiredRadius: probes.find(probe => probe.closed)?.radius ?? maxRadius + 1,
+    weightedClosureScore: profile.weightedClosureScore ?? 0,
     exactClosed: Boolean(probes[0]?.closed),
-    openAfterMaxRadius: maxProbe?.closed ? 0 : 1,
+    openAfterMaxRadius: measurable ? profile.openAfterMaxRadius : 1,
     maxRadius,
-    maxRadiusBorderContacts: maxProbe?.borderContacts ?? 0,
-    maxRadiusReachableArea: maxProbe?.reachableArea ?? 0,
+    maxRadiusBorderContacts: 0,
+    maxRadiusReachableArea: 0,
     probes,
   };
 }
@@ -643,8 +558,8 @@ function buildTopologyTargetContext(prediction, width, height, options = {}) {
   for (const component of components) {
     if (useSeededOnly && component.seedCount === 0) continue;
     if (component.borderAssisted && !includeBorderAssisted) continue;
-    const before = localClosureSignature(prediction, width, height, component, options);
-    if (before.exactClosed) continue;
+    const before = targetClosureSignature(prediction, width, height, component, options);
+    if (!before.measurable || before.exactClosed) continue;
     targets.push({
       ...component,
       before,
@@ -1323,8 +1238,8 @@ function evaluateRepairBundle(mask, width, height, target, candidates, options, 
     return { accepted: false, reason: "local-split", localSplitIncrease };
   }
 
-  const before = localClosureSignature(mask, width, height, target, options);
-  const after = localClosureSignature(mask, width, height, target, options, compatibility.additions);
+  const before = targetClosureSignature(mask, width, height, target, options);
+  const after = targetClosureSignature(mask, width, height, target, options, compatibility.additions);
   const contribution = targetImprovement(before, after);
   contribution.before = before;
   contribution.after = after;
@@ -1521,7 +1436,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
       ? topologyContext?.targetById.get(candidate.topologyTargetId) ?? null
       : null;
     if (topologyTarget) {
-      const afterTarget = localClosureSignature(
+      const afterTarget = targetClosureSignature(
         prediction,
         width,
         height,
@@ -1735,7 +1650,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.2-target-bundle-repair",
+    revision: "4.3-shared-full-image-closure",
     mask,
     repairMask,
     graph,

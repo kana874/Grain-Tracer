@@ -140,7 +140,7 @@ test("Topology-first mode targets labelled closure regions and keeps only contri
     fixture.height,
     topologyTargetOptions(fixture),
   );
-  assert.match(proposal.revision, /^4\.2-/);
+  assert.match(proposal.revision, /^4\.3-/);
   assert.equal(proposal.topologyTargets.activeTargetCount, 1);
   assert.ok(proposal.acceptedRepairCount >= 1);
   assert.equal(proposal.topologyContributingCount, proposal.acceptedRepairCount);
