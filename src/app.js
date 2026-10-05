@@ -1187,6 +1187,8 @@ function topologyRepairOptions() {
     requireTopologyTarget: true,
     topologyTargetMargin: 13,
     topologyProbeMaxRadius: 3,
+    maxBundleCandidatesPerTarget: 6,
+    maxBundleSize: 3,
     includeBorderAssistedTargets: false,
     negativeMask: state.negativeMask,
     exclusionMask: state.exclusionMask,
@@ -1562,6 +1564,8 @@ async function previewTopologyRepairs() {
       + (selected["endpoint-endpoint"]?.selected ?? 0) + "/"
       + (selected["endpoint-boundary"]?.selected ?? 0) + "/"
       + (selected["endpoint-junction"]?.selected ?? 0)
+      + " / Bundle " + (proposal.acceptedBundles?.length ?? 0)
+      + " / 単独改善 " + (proposal.individuallyImprovingCandidateCount ?? 0)
       + " / Topology寄与 " + (proposal.topologyContributingCount ?? 0)
       + " / Graph EP " + proposal.graphSummary.endpointCount
       + " / J " + proposal.graphSummary.junctionCount
@@ -1644,9 +1648,17 @@ async function applyGapBridges() {
       maxCurvatureDeg: item.maxCurvatureDeg,
       localSplitIncrease: item.localSplitIncrease,
       score: item.score,
+      bundleId: item.bundleId ?? null,
+      bundleSize: item.bundleSize ?? null,
+      bundleRank: item.bundleRank ?? null,
+      topologyTargetId: item.topologyTargetId ?? null,
+      topologyContribution: item.topologyContribution ?? null,
+      individualTopologyContribution: item.individualTopologyContribution ?? null,
       addedPixels: item.addedPixels,
       pathCoordinates: item.pathCoordinates,
     })),
+    acceptedBundles: proposal.acceptedBundles ?? [],
+    bundleSearch: proposal.bundleSearch ?? [],
     preservationInvariant: proposal.preservationInvariant ?? null,
     basePixelsRemovedByRepair: proposal.basePixelsRemovedByRepair ?? null,
   };
