@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.4.3-alpha</div>
+    <div class="version">v0.5.0-alpha</div>
   </header>
 
   <main class="layout">
@@ -201,7 +201,7 @@
         </div>
 
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.4.3</strong>
+          <strong class="subpanel-title">自動最適化 v0.5.0</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
           <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。お手本線が無い初回は8×8グリッドから3つのROI候補を固定seedで提示し、2回目以降は必要な場合だけ未評価領域を追加提案します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
@@ -225,7 +225,7 @@
             <button id="clearExclusionButton" type="button" disabled>除外全消去</button>
             <button id="clearFullRoiButton" type="button" disabled>ROI全消去</button>
             <button id="showNormalButton" type="button" disabled>通常表示</button>
-            <button id="topologyButton" type="button" disabled>Topology v3.0 / Gap診断</button>
+            <button id="topologyButton" type="button" disabled>Topology v4 / Repair診断</button>
           </div>
 
           <div class="subpanel">
@@ -238,10 +238,21 @@
               <button id="gapPreviewButton" type="button" disabled>Safe候補を表示</button>
               <button id="extendedGapPreviewButton" type="button" disabled>Extended候補を表示</button>
               <button id="gapApplyButton" class="primary" type="button" disabled>表示候補を適用</button>
-              <button id="gapRevertButton" type="button" disabled>Gap適用を戻す</button>
+              <button id="gapRevertButton" type="button" disabled>Gap / Repair適用を戻す</button>
             </div>
             <p class="help">手動診断用です。通常は上の「自動最適化」を使ってください。自動最適化ではRecall/Leakageを悪化させず、Minimum Closure Radius Profileが改善するGapだけを自動採用します。</p>
             <p id="gapStatus" class="help metric-detail">Gap Bridge: 未プレビュー</p>
+          </div>
+
+          <div class="subpanel">
+            <strong class="subpanel-title">Topology Repair v4（Batch 3 / P3）</strong>
+            <label class="check-row"><input id="topologyRepairEnabled" type="checkbox"> 自動最適化でTopology Repair v4を使用</label>
+            <label class="control-row"><span>最大探索距離</span><output id="topologyRepairMaxDistanceValue">10</output><input id="topologyRepairMaxDistance" type="range" min="4" max="20" step="1" value="10"></label>
+            <label class="control-row"><span>最小Path Evidence</span><output id="topologyRepairMinEvidenceValue">32</output><input id="topologyRepairMinEvidence" type="range" min="10" max="80" step="1" value="32"></label>
+            <label class="control-row"><span>最大曲率変化</span><output id="topologyRepairMaxCurvatureValue">65</output><input id="topologyRepairMaxCurvature" type="range" min="30" max="100" step="5" value="65"></label>
+            <button id="topologyRepairPreviewButton" class="full" type="button" disabled>Topology Repair v4候補を表示</button>
+            <p class="help">Final Boundary CenterlineをSkeleton Graph化し、Endpoint→Endpoint / Existing Boundary / JunctionをA*型の画像Evidence経路で修復します。Negative・Exclusion・画像外周保護はHard Rejectです。自動適用時はRecall → Negative Leakage → ROI Precision → Closureの順にGuardし、元の粒界画素は削除しません。</p>
+            <p id="topologyRepairStatus" class="help metric-detail">Topology Repair v4: 未プレビュー</p>
           </div>
         </details>
         <p id="annotationStatus" class="help metric-detail">非粒界線: 0 px / 閉領域Fill: 0領域 / Negative合計: 0 px / 除外: 0領域 / 完全評価ROI: 0領域</p>
@@ -278,7 +289,7 @@
           <p class="help">Recall @1/2/3/4 px、Negative Leakage、ROI Precision/Recall/F1、Alignment、Closure、Open@3、Boundary/Unknown画素数をProjectへ保存します。</p>
         </div>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
-        <p class="help">ZIP出力: manifest.json / diagnostic.json v18 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">ZIP出力: manifest.json / diagnostic.json v19 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
           <summary>個別ファイル出力</summary>
           <button id="exportDiagnosticsIndividualButton" class="full" type="button" disabled>診断ファイルを個別に書き出す</button>
@@ -292,7 +303,7 @@
       </section>
 
       <section>
-        <h2>v0.4 状態</h2>
+        <h2>v0.5 状態</h2>
         <ul class="check-list">
           <li class="done">Multi-scale Dark Ridge</li>
           <li class="done">方向付きLab色差</li>
@@ -330,7 +341,11 @@
           <li class="done">Topology v2.3 Extended Gap Preview / Closure差分 / Border-assisted明示判定</li>
           <li class="done">Auto Tune v2 search trace v4 Closure診断</li>
           <li class="done">Topology v3.0 Minimum Closure Radius Profile</li>
-          <li class="done">自動最適化（Global Tune → Local Calibration → Topology Guarded Gap）</li>
+          <li class="done">Topology Repair v4 Skeleton Graph（Endpoint / Junction / Edge）</li>
+          <li class="done">A* Evidence Path Repair（Endpoint→Endpoint / Boundary / Junction）</li>
+          <li class="done">Topology Repair Guard（Negative / Exclusion / Frame / Tangent / Junction / 曲率 / Split）</li>
+          <li class="done">Topology RepairのGuarded適用・一括Revert</li>
+          <li class="done">自動最適化（Global Tune → Local Calibration → Gap → Topology Repair v4）</li>
           <li class="done">精密評価ROIガイド（自動候補 → 人確認 → True F1）</li>
           <li class="done">Safe / Extended Gap 自動採用Guard</li>
           <li class="done">Auto Tune v2 processed guard / processed Ablation</li>
