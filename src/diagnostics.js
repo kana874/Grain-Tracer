@@ -50,7 +50,7 @@ function summarizeValues(values) {
 
 function featureStatistics(features, selector) {
   const result = {};
-  for (const name of ["dark", "ridge", "color", "dendrite"]) {
+  for (const name of ["dark", "ridge", "color", "dendrite", "dendriteLinePenalty"]) {
     const source = features[name];
     if (!source) continue;
     const values = [];
@@ -116,6 +116,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
     let ridge = 0;
     let color = 0;
     let dendrite = 0;
+    let dendriteLinePenalty = 0;
 
     while (head < tail) {
       const p = queue[head++];
@@ -129,6 +130,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
       ridge += features.ridge[p] / 255;
       color += features.color[p] / 255;
       dendrite += (features.dendrite?.[p] ?? 0) / 255;
+      dendriteLinePenalty += (features.dendriteLinePenalty?.[p] ?? 0) / 255;
 
       for (let dy = -1; dy <= 1; dy += 1) {
         const ny = y + dy;
@@ -158,6 +160,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
         ridge: ridge / tail,
         color: color / tail,
         dendrite: dendrite / tail,
+        dendriteLinePenalty: dendriteLinePenalty / tail,
       },
     });
   }
@@ -172,6 +175,7 @@ function regionFeatureSummary(features, width, region) {
   let ridge = 0;
   let color = 0;
   let dendrite = 0;
+  let dendriteLinePenalty = 0;
   for (let y = region.y0; y < region.y1; y += 1) {
     const base = y * width;
     for (let x = region.x0; x < region.x1; x += 1) {
@@ -181,6 +185,7 @@ function regionFeatureSummary(features, width, region) {
       ridge += features.ridge[p] / 255;
       color += features.color[p] / 255;
       dendrite += (features.dendrite?.[p] ?? 0) / 255;
+      dendriteLinePenalty += (features.dendriteLinePenalty?.[p] ?? 0) / 255;
     }
   }
   const den = Math.max(1, count);
@@ -189,6 +194,7 @@ function regionFeatureSummary(features, width, region) {
     ridgeMean: ridge / den,
     colorMean: color / den,
     dendriteMean: dendrite / den,
+    dendriteLinePenaltyMean: dendriteLinePenalty / den,
   };
 }
 
@@ -248,6 +254,7 @@ export function buildDiagnosticReport(input) {
     appVersion,
     imageEvaluationRole,
     baselineSnapshots,
+    classifier,
   } = input;
 
   const comparison = settings.comparison;
@@ -424,7 +431,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v15",
+    schema: "graintracer-diagnostic-v16",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -440,6 +447,16 @@ export function buildDiagnosticReport(input) {
       colorSampleDistances: [2, 4, 6],
       dendriteTensorRadius: 7,
       dendriteSampleDistances: [5, 9, 13],
+      dendriteLinePenalty: {
+        enabled: true,
+        evidence: "ridge-linearity + low-color + tensor-continuity + parallel-support",
+        role: "independent-negative-evidence",
+      },
+      boundaryScoreModes: ["legacy", "evidence", "classifier"],
+      negativeEvidenceWeight: settings.extraction?.negativeEvidenceWeight ?? 35,
+      classifierSchema: classifier?.model?.schema ?? null,
+      classifierAccepted: classifier?.accepted ?? false,
+      autoTuneRecallGuardMaxDrop: 0.02,
       neighborSupportMinimum: 2,
       edgeAwareFeatureRenormalization: true,
       edgeFrameGuard: 1,
@@ -451,6 +468,7 @@ export function buildDiagnosticReport(input) {
         ridge: 5,
         color: 7,
         dendrite: 14,
+        dendriteLinePenalty: 14,
       },
       localCalibrationGrid: "4x4",
       localCalibrationObjective: "partial-label-plus-training-roi-only; validation-for-guard; test-final-only",
@@ -479,6 +497,26 @@ export function buildDiagnosticReport(input) {
       current: currentBaseline,
       recorded: (baselineSnapshots ?? []).map(item => ({ ...item })),
     },
+    classifier: classifier ? {
+      accepted: Boolean(classifier.accepted),
+      model: classifier.model ? {
+        schema: classifier.model.schema ?? null,
+        featureNames: classifier.model.featureNames ?? [],
+        coefficients: classifier.model.coefficients ?? [],
+        bias: classifier.model.bias ?? null,
+        means: classifier.model.means ?? [],
+        stds: classifier.model.stds ?? [],
+        sampleCounts: classifier.model.sampleCounts ?? null,
+        training: classifier.model.training ?? null,
+        trainedAt: classifier.model.trainedAt ?? null,
+      } : null,
+      guard: classifier.guard ?? null,
+      baselineMode: classifier.baselineMode ?? null,
+      trainingRoiCount: classifier.trainingRoiCount ?? 0,
+      validationRoiCount: classifier.validationRoiCount ?? 0,
+      baseline: classifier.baseline ?? null,
+      candidate: classifier.candidate ?? null,
+    } : null,
     localCalibration: localCalibration ?? null,
     performance: {
       featureComputeMs: performance?.featureComputeMs ?? null,

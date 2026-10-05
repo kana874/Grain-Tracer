@@ -143,3 +143,130 @@ export async function computeDendriteDifference(
   }
   return out;
 }
+
+
+export async function computeDendriteLinePenalty(
+  ridge,
+  color,
+  dendriteDifference,
+  dendriteOrientation,
+  dendriteCoherence,
+  ridgeOrientation,
+  width,
+  height,
+  options = {},
+) {
+  const onProgress = options.onProgress ?? (() => {});
+  const sideDistance = Math.max(2, Math.round(options.sideDistance ?? 6));
+  const tangentDistances = options.tangentDistances ?? [4, 8];
+  const parallelDistances = options.parallelDistances ?? [4, 8];
+  const margin = Math.max(
+    sideDistance,
+    ...tangentDistances,
+    ...parallelDistances,
+  ) + 1;
+  const out = new Uint8Array(width * height);
+
+  const sampleNormalized = (plane, x, y) =>
+    sampleByte(plane, width, height, x, y) / 255;
+
+  for (let y = margin; y < height - margin; y += 1) {
+    for (let x = margin; x < width - margin; x += 1) {
+      const p = y * width + x;
+      const ridgeStrength = (ridge?.[p] ?? 0) / 255;
+      if (ridgeStrength < 0.08) continue;
+
+      const normal = orientationNormal(ridgeOrientation?.[p] ?? 0);
+      const tangent = { x: -normal.y, y: normal.x };
+      const colorEvidence = (color?.[p] ?? 0) / 255;
+      const differenceEvidence = (dendriteDifference?.[p] ?? 0) / 255;
+      const centerCoherence = (dendriteCoherence?.[p] ?? 0) / 255;
+
+      const oa = sampleByte(
+        dendriteOrientation,
+        width,
+        height,
+        x + normal.x * sideDistance,
+        y + normal.y * sideDistance,
+      );
+      const ob = sampleByte(
+        dendriteOrientation,
+        width,
+        height,
+        x - normal.x * sideDistance,
+        y - normal.y * sideDistance,
+      );
+      const ca = sampleNormalized(
+        dendriteCoherence,
+        x + normal.x * sideDistance,
+        y + normal.y * sideDistance,
+      );
+      const cb = sampleNormalized(
+        dendriteCoherence,
+        x - normal.x * sideDistance,
+        y - normal.y * sideDistance,
+      );
+      const sideCoherence = Math.sqrt(ca * cb);
+      const orientationContinuity = 1 - directionDifference(oa, ob);
+
+      let tangentSupport = 0;
+      let tangentWeight = 0;
+      for (const distance of tangentDistances) {
+        for (const sign of [-1, 1]) {
+          const tx = x + tangent.x * distance * sign;
+          const ty = y + tangent.y * distance * sign;
+          const support = sampleNormalized(ridge, tx, ty);
+          const localOrientation = sampleByte(dendriteOrientation, width, height, tx, ty);
+          const localCoherence = sampleNormalized(dendriteCoherence, tx, ty);
+          const orientationAgreement = 1 - directionDifference(
+            dendriteOrientation?.[p] ?? 0,
+            localOrientation,
+          );
+          tangentSupport += support * (0.35 + 0.65 * orientationAgreement) * (0.45 + 0.55 * localCoherence);
+          tangentWeight += 1;
+        }
+      }
+      tangentSupport = tangentWeight ? tangentSupport / tangentWeight : 0;
+
+      let parallelSupport = 0;
+      let parallelWeight = 0;
+      for (const distance of parallelDistances) {
+        const plus = sampleNormalized(
+          ridge,
+          x + normal.x * distance,
+          y + normal.y * distance,
+        );
+        const minus = sampleNormalized(
+          ridge,
+          x - normal.x * distance,
+          y - normal.y * distance,
+        );
+        parallelSupport += Math.max(plus, minus);
+        parallelWeight += 1;
+      }
+      parallelSupport = parallelWeight ? parallelSupport / parallelWeight : 0;
+
+      const lowColor = 1 - colorEvidence;
+      const coherence = 0.45 * centerCoherence + 0.55 * sideCoherence;
+      const longitudinal = 0.72 * tangentSupport + 0.28 * parallelSupport;
+      const boundaryDifferenceGuard = 1 - 0.72 * differenceEvidence;
+
+      const penalty = ridgeStrength
+        * lowColor
+        * (0.25 + 0.75 * coherence)
+        * (0.30 + 0.70 * orientationContinuity)
+        * longitudinal
+        * Math.max(0.15, boundaryDifferenceGuard);
+
+      out[p] = Math.max(0, Math.min(255, Math.round(penalty * 255)));
+    }
+
+    if (y % 40 === 0 || y === height - margin - 1) {
+      onProgress((y - margin + 1) / Math.max(1, height - margin * 2));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  onProgress(1);
+  return out;
+}
