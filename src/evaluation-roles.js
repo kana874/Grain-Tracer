@@ -70,6 +70,34 @@ export function summarizeEvaluationRoles(rois) {
   };
 }
 
+export function maskExcludingRois(mask, width, height, rois) {
+  if (!mask) return null;
+  const result = mask.slice();
+  for (const rect of rois ?? []) {
+    if (!rect) continue;
+    const x0 = Math.max(0, Math.min(width - 1, Math.round(Math.min(rect.x0, rect.x1))));
+    const x1 = Math.max(0, Math.min(width - 1, Math.round(Math.max(rect.x0, rect.x1))));
+    const y0 = Math.max(0, Math.min(height - 1, Math.round(Math.min(rect.y0, rect.y1))));
+    const y1 = Math.max(0, Math.min(height - 1, Math.round(Math.max(rect.y0, rect.y1))));
+    for (let y = y0; y <= y1; y += 1) {
+      const start = y * width + x0;
+      const end = y * width + x1 + 1;
+      result.fill(0, start, end);
+    }
+  }
+  return result;
+}
+
+export function tuningExcludedRois(rois) {
+  const parts = partitionEvaluationRois(rois);
+  return [...parts.validation, ...parts.test, ...parts.provisional];
+}
+
+export function guardExcludedRois(rois) {
+  const parts = partitionEvaluationRois(rois);
+  return [...parts.test, ...parts.provisional];
+}
+
 export function canTuneImage(imageRole) {
   return normalizeImageEvaluationRole(imageRole) !== "test";
 }
