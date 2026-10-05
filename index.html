@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.4.0-alpha</div>
+    <div class="version">v0.4.1-alpha</div>
   </header>
 
   <main class="layout">
@@ -124,6 +124,26 @@
         <label class="control-row"><span>Dark Ridge</span><output id="ridgeWeightValue">55</output><input id="ridgeWeight" type="range" min="0" max="100" value="55"></label>
         <label class="control-row"><span>色差</span><output id="colorWeightValue">25</output><input id="colorWeight" type="range" min="0" max="100" value="25"></label>
         <label class="control-row"><span>デンドライト差</span><output id="dendriteWeightValue">20</output><input id="dendriteWeight" type="range" min="0" max="100" value="20"></label>
+
+        <div class="subpanel">
+          <strong class="subpanel-title">False Positive抑制（Batch 2 / P1）</strong>
+          <label class="select-row">
+            <span>Boundary Score</span>
+            <select id="scoreMode">
+              <option value="legacy">従来方式</option>
+              <option value="evidence">Positive − Negative Evidence</option>
+              <option value="classifier">Classifier（Guard合格時のみ）</option>
+            </select>
+          </label>
+          <label class="control-row"><span>粒内線Penalty</span><output id="negativeEvidenceWeightValue">35</output><input id="negativeEvidenceWeight" type="range" min="0" max="100" value="35"></label>
+          <div class="button-grid">
+            <button id="trainClassifierButton" type="button" disabled>Classifier学習・検証</button>
+            <button id="resetClassifierButton" type="button" disabled>Classifier解除</button>
+          </div>
+          <p id="classifierStatus" class="help metric-detail">Classifier: 未学習</p>
+          <p class="help">粒内デンドライトらしい長い平行線を独立Penaltyとして扱います。Classifierは明示的Training ROIのPositive/Negativeだけで学習し、Validation ROIでRecall・F1・Negative Leakage・Topology Guardを通過した場合だけ自動採用します。Test ROIは学習・Guardに使用しません。</p>
+        </div>
+
         <label class="control-row"><span>最小連結サイズ</span><output id="minComponentValue">24</output><input id="minComponent" type="range" min="1" max="300" value="24"></label>
         <label class="check-row"><input id="centerlineNms" type="checkbox" checked> Centerline化（方向付きNMS）</label>
         <p class="help">ONでは連続角度のRidge法線方向に補間した局所最大だけを残し、太線・二重線を1本化します。画像端のRidge方向が未定義な範囲は従来候補を保持します。</p>
@@ -163,7 +183,7 @@
         </div>
 
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.4.0</strong>
+          <strong class="subpanel-title">自動最適化 v0.4.1</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
           <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。お手本線が無い初回は8×8グリッドから3つのROI候補を固定seedで提示し、2回目以降は必要な場合だけ未評価領域を追加提案します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
@@ -240,7 +260,7 @@
           <p class="help">Recall @1/2/3/4 px、Negative Leakage、ROI Precision/Recall/F1、Alignment、Closure、Open@3、Boundary/Unknown画素数をProjectへ保存します。</p>
         </div>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
-        <p class="help">ZIP出力: manifest.json / diagnostic.json v15 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">ZIP出力: manifest.json / diagnostic.json v16 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
           <summary>個別ファイル出力</summary>
           <button id="exportDiagnosticsIndividualButton" class="full" type="button" disabled>診断ファイルを個別に書き出す</button>
@@ -259,6 +279,9 @@
           <li class="done">Multi-scale Dark Ridge</li>
           <li class="done">方向付きLab色差</li>
           <li class="done">デンドライト方向差（Structure Tensor）</li>
+          <li class="done">Dendrite Suppression v2（粒内線Penalty / Negative Evidence）</li>
+          <li class="done">Browser Logistic Classifier + Validation Guard</li>
+          <li class="done">Auto Tune Recall Guard（大幅Recall低下を防止）</li>
           <li class="done">局所適応正規化</li>
           <li class="done">中心線ベース評価</li>
           <li class="done">評価履歴の保存</li>
