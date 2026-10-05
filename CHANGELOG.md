@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.4.3-alpha - 2026-10-05
+
+### Fixed
+- Reworked Batch 2 / P2 Hysteresis from a replacement pipeline into additive recovery over the already accepted P1 mask.
+- P1 base pixels are now preserved by construction: `Final = P1 Base OR Accepted Weak`.
+- Strong seeds are restricted to High-threshold pixels that already survived the P1 extraction path.
+- Negative / Exclusion, direction, tangent, score-continuity, curvature, and distance guards now apply only to newly recovered weak pixels.
+- MinComponent is applied to the P1 base only; it is no longer re-applied to the combined P1+P2 mask.
+- NMS-before and NMS-after comparison modes both preserve the P1 base mask.
+- Hysteresis diagnostics now expose base/final pixel counts, strong seed count, accepted weak additions, and `basePixelsRemovedByP2`; the preservation invariant must remain zero removed pixels.
+
+### Changed
+- App version advanced to `0.4.3-alpha`.
+- Boundary algorithm identifier advanced to `boundary-v16-additive-hysteresis`.
+- Diagnostic schema advanced to `graintracer-diagnostic-v18`.
+- Hysteresis remains OFF by default until the real-image P1 baseline comparison confirms Recall/Closure/Leakage acceptance.
+
+### Validation
+- Added regression coverage that P2 cannot delete any P1 pixel and that weak additions cannot cross Negative barriers.
+- Existing Batch 1, P1 suppression/classifier, project migration, and topology regression suites remain active.
+
+
 ## v0.4.2-alpha - 2026-10-05
 
 ### Added
