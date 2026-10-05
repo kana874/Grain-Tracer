@@ -18,11 +18,14 @@ import {
 import {
   canTuneImage,
   guardEvaluationRois,
+  guardExcludedRois,
+  maskExcludingRois,
   normalizeImageEvaluationRole,
   normalizeRoiEvaluationRole,
   summarizeEvaluationRoles,
   testEvaluationRois,
   trainingEvaluationRois,
+  tuningExcludedRois,
   validationEvaluationRois,
   verifiedEvaluationRois,
 } from "./evaluation-roles.js";
@@ -3134,21 +3137,39 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
     const features = await ensureFeatures();
     const tuningRois = tuningFullEvaluationRois();
     const useCompleteRoi = tuningRois.length > 0;
-    const split = splitReferenceCenterline(
+    const tuneExcluded = tuningExcludedRois(state.fullEvaluationRois);
+    const roleFilteredReference = maskExcludingRois(
       state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
+    const roleFilteredNegative = maskExcludingRois(
+      state.negativeMask,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
+    const split = splitReferenceCenterline(
+      roleFilteredReference,
       state.preview.width,
       state.preview.height,
       { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
     );
     const negativeHoldout = buildNegativeHoldout();
     const tuningReference = useCompleteRoi
-      ? state.referenceCenterline
+      ? roleFilteredReference
       : split.validationPixels >= 40
         ? split.tuneMask
-        : state.referenceCenterline;
+        : roleFilteredReference;
     const tuningNegative = useCompleteRoi
-      ? state.negativeMask
-      : negativeHoldout.tuningMask;
+      ? roleFilteredNegative
+      : maskExcludingRois(
+        negativeHoldout.tuningMask,
+        state.preview.width,
+        state.preview.height,
+        tuneExcluded,
+      );
     const objectiveText = useCompleteRoi
       ? "完全評価ROIのTrue F1"
       : "Positive Recall / Macro Negative Leakage";
@@ -3200,7 +3221,12 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
         state.preview.height,
         {
           ...currentComparisonOptions(),
-          negativeMask: negativeHoldout.validationMask,
+          negativeMask: maskExcludingRois(
+            negativeHoldout.validationMask,
+            state.preview.width,
+            state.preview.height,
+            tuneExcluded,
+          ),
           exclusionMask: state.exclusionMask,
           cols: 4,
           rows: 4,
@@ -3269,20 +3295,33 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
   try {
     const features = await ensureFeatures();
     const extraction = currentExtractionOptions();
-    const split = splitReferenceCenterline(
+    const tuneExcluded = tuningExcludedRois(state.fullEvaluationRois);
+    const roleFilteredReference = maskExcludingRois(
       state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
+    const split = splitReferenceCenterline(
+      roleFilteredReference,
       state.preview.width,
       state.preview.height,
       { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
     );
-    const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
+    const tuningReference = split.validationPixels >= 40 ? split.tuneMask : roleFilteredReference;
     const negativeHoldout = buildNegativeHoldout();
+    const tuningNegative = maskExcludingRois(
+      negativeHoldout.tuningMask,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
     setStatus("調整用お手本＋非粒界例を使って範囲ごとの感度を調整中...", 1);
     const calibration = await tuneLocalSensitivity(features, tuningReference, {
       ...currentComparisonOptions(),
-      completeReferenceCenterline: state.referenceCenterline,
+      completeReferenceCenterline: roleFilteredReference,
       verifiedFullEvaluationRois: tuningFullEvaluationRois(),
-      negativeMask: negativeHoldout.tuningMask,
+      negativeMask: tuningNegative,
       exclusionMask: state.exclusionMask,
       ...extraction,
       cols: 4,
@@ -3324,7 +3363,12 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
         state.preview.height,
         {
           ...currentComparisonOptions(),
-          negativeMask: negativeHoldout.validationMask,
+          negativeMask: maskExcludingRois(
+            negativeHoldout.validationMask,
+            state.preview.width,
+            state.preview.height,
+            tuneExcluded,
+          ),
           exclusionMask: state.exclusionMask,
           cols: 4,
           rows: 4,
@@ -3371,14 +3415,27 @@ function cloneOptimizationValue(value) {
 function evaluateOptimizationMask(mask = state.analysisMask) {
   if (!state.preview || !mask || !hasReference()) return null;
   ensureClosedNegativeFresh();
+  const guardExcluded = guardExcludedRois(state.fullEvaluationRois);
+  const guardReference = maskExcludingRois(
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    guardExcluded,
+  );
+  const guardNegative = maskExcludingRois(
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    guardExcluded,
+  );
   const metrics = computeRegionalMetrics(
     mask,
-    state.referenceCenterline,
+    guardReference,
     state.preview.width,
     state.preview.height,
     {
       ...currentComparisonOptions(),
-      negativeMask: state.negativeMask,
+      negativeMask: guardNegative,
       exclusionMask: state.exclusionMask,
       cols: 4,
       rows: 4,
