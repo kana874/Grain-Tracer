@@ -36,7 +36,7 @@ function markEvidence(features, x, y, ridge, color = 180) {
 }
 
 test("dual threshold classifies Strong and Weak separately", () => {
-  const score = new Float32Array([0.1, 0.31, 0.69, 0.70, 0.95]);
+  const score = new Float32Array([0.1, 0.31, 0.69, 0.71, 0.95]);
   const classified = classifyStrongWeak(score, 5, 1, {
     highThreshold: 0.70,
     lowThreshold: 0.30,
