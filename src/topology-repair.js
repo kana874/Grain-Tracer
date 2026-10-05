@@ -1355,6 +1355,7 @@ function findBestRepairBundle(mask, width, height, target, candidates, options, 
   let compatible = 0;
   let improving = 0;
   let best = null;
+  let bestAttempt = null;
 
   enumerateBundles(pool, maxSize, bundle => {
     tested += 1;
@@ -1364,6 +1365,20 @@ function findBestRepairBundle(mask, width, height, target, candidates, options, 
         && result.reason !== "boundary-crossing"
         && result.reason !== "path-overlap") {
       compatible += 1;
+    }
+    if (result.contribution) {
+      const attemptScore = result.contribution.progressScore ?? 0;
+      if (!bestAttempt || attemptScore > bestAttempt.progressScore
+          || (attemptScore === bestAttempt.progressScore && bundle.length > bestAttempt.bundleSize)) {
+        bestAttempt = {
+          bundleSize: bundle.length,
+          progressScore: attemptScore,
+          reason: result.reason ?? null,
+          contribution: result.contribution,
+          types: countByType(bundle),
+          additions: bundle.reduce((sum, item) => sum + (item.interiorPixels?.length ?? 0), 0),
+        };
+      }
     }
     if (!result.accepted) return;
     improving += 1;
@@ -1391,6 +1406,7 @@ function findBestRepairBundle(mask, width, height, target, candidates, options, 
       improving,
       selectedBundleSize: best?.candidates.length ?? 0,
       selectedRank: best?.rank ?? null,
+      bestAttempt,
     },
   };
 }
