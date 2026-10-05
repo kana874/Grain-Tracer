@@ -831,9 +831,8 @@ async function trainBoundaryClassifier() {
     const extraction = currentExtractionOptions();
     const baselineMode = extraction.scoreMode === "evidence" ? "evidence" : "legacy";
     const common = {
-      ...extraction,
-      localCalibration: state.localCalibration,
-      exclusionMask: state.exclusionMask,
+      ...currentBoundaryOptions(),
+      hysteresis: { enabled: false },
       edgeFrameGuard: 1,
       onProgress: () => {},
     };
@@ -3212,6 +3211,8 @@ async function loadBmp(file) {
   state.baselineSnapshots = [];
   state.classifier = null;
   updateClassifierStatus();
+  state.lastHysteresis = null;
+  updateHysteresisStatus();
   state.precisionGuide = createDefaultPrecisionGuideState();
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -3499,11 +3500,20 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
     state.localCalibration = null;
     updateLocalCalibrationStatus();
     resetGapBridgeState(true);
-    state.analysisMask = result.mask;
+    state.lastHysteresis = null;
+    state.analysisMask = await buildBoundaryMask(features, {
+      ...currentBoundaryOptions(),
+      localCalibration: null,
+      onHysteresisDiagnostics: diagnostics => {
+        state.lastHysteresis = diagnostics;
+        updateHysteresisStatus(diagnostics);
+      },
+      onProgress: () => {},
+    });
     invalidateTopology();
 
     const comparison = renderComparisonOverlay(
-      result.mask,
+      state.analysisMask,
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
@@ -3517,7 +3527,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
     updateMetrics(comparison.metrics);
     const validationMetrics = !useCompleteRoi && split.validationPixels >= 40
       ? computeRegionalMetrics(
-        result.mask,
+        state.analysisMask,
         split.validationMask,
         state.preview.width,
         state.preview.height,
@@ -3537,7 +3547,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
       : null;
     const roiMetrics = useCompleteRoi
       ? computeFullEvaluationRoiMetrics(
-        result.mask,
+        state.analysisMask,
         state.referenceCenterline,
         state.preview.width,
         state.preview.height,
@@ -3636,10 +3646,14 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
     updateLocalCalibrationStatus();
 
     resetGapBridgeState(true);
+    state.lastHysteresis = null;
     state.analysisMask = await buildBoundaryMask(features, {
-      ...extraction,
+      ...currentBoundaryOptions(),
       localCalibration: calibration,
-      exclusionMask: state.exclusionMask,
+      onHysteresisDiagnostics: diagnostics => {
+        state.lastHysteresis = diagnostics;
+        updateHysteresisStatus(diagnostics);
+      },
       onProgress: ratio => setStatus(`局所補正で再抽出中... ${Math.round(ratio * 100)}%`, 62 + ratio * 36),
     });
     invalidateTopology();
@@ -4739,6 +4753,25 @@ els.scoreMode?.addEventListener("change", () => {
 });
 els.trainClassifierButton?.addEventListener("click", trainBoundaryClassifier);
 els.resetClassifierButton?.addEventListener("click", resetBoundaryClassifier);
+const hysteresisSettingChanged = () => {
+  state.lastHysteresis = null;
+  updateHysteresisStatus();
+  extractionSettingChanged();
+};
+els.hysteresisEnabled?.addEventListener("change", hysteresisSettingChanged);
+if (els.hysteresisHighThreshold) {
+  bindRange(els.hysteresisHighThreshold, $("hysteresisHighThresholdValue"), hysteresisSettingChanged);
+}
+if (els.hysteresisLowThreshold) {
+  bindRange(els.hysteresisLowThreshold, $("hysteresisLowThresholdValue"), hysteresisSettingChanged);
+}
+if (els.hysteresisMaxDistance) {
+  bindRange(els.hysteresisMaxDistance, $("hysteresisMaxDistanceValue"), hysteresisSettingChanged);
+}
+if (els.hysteresisMaxDirection) {
+  bindRange(els.hysteresisMaxDirection, $("hysteresisMaxDirectionValue"), hysteresisSettingChanged);
+}
+els.hysteresisNmsOrder?.addEventListener("change", hysteresisSettingChanged);
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
 els.centerlineNms.addEventListener("change", extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), scheduleAutosave);
