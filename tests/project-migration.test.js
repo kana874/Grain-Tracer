@@ -70,3 +70,53 @@ test("project v2 saves/restores ROI roles, image role, and baseline snapshots", 
   const restored = restoreReferenceMasks(project);
   assert.equal(restored.fullEvaluationRois[0].evaluationRole, "test");
 });
+
+
+test("project restore preserves persisted manual Negative mask even when centerline is empty", () => {
+  const length = 16;
+  const manualNegativeMask = new Uint8Array(length);
+  manualNegativeMask[5] = 1;
+  manualNegativeMask[6] = 1;
+  manualNegativeMask[9] = 1;
+
+  const project = createProjectSnapshot({
+    source: { name: "legacy-negative.bmp", fingerprint: "negative-restore" },
+    preview: { width: 4, height: 4, scale: 1 },
+    settings: {},
+    referenceMask: new Uint8Array(length),
+    referenceCenterline: new Uint8Array(length),
+    negativeMask: new Uint8Array(length),
+    manualNegativeMask,
+    negativeCenterline: new Uint8Array(length),
+    closedNegativeSeeds: [
+      { x: 2, y: 2, borderAssisted: false },
+      { x: 1, y: 1, borderAssisted: true },
+    ],
+    exclusionRects: [],
+    fullEvaluationRois: [],
+    precisionGuide: null,
+    localCalibration: null,
+    history: [],
+    imageEvaluationRole: null,
+    baselineSnapshots: [],
+  });
+
+  const restored = restoreReferenceMasks(project);
+  assert.equal(restored.hasStoredManualNegativeMask, true);
+  assert.deepEqual([...restored.manualNegativeMask], [...manualNegativeMask]);
+  assert.deepEqual([...restored.negativeMask], [...manualNegativeMask]);
+  assert.notEqual(restored.manualNegativeMask, restored.negativeMask);
+  assert.equal(restored.negativeCenterline.reduce((sum, value) => sum + value, 0), 0);
+  assert.deepEqual(restored.closedNegativeSeeds, [
+    { x: 2, y: 2, borderAssisted: false },
+    { x: 1, y: 1, borderAssisted: true },
+  ]);
+});
+
+test("legacy project without a stored Negative mask requests centerline reconstruction", () => {
+  const project = emptyProjectV1();
+  delete project.nonBoundary.mask;
+  const restored = restoreReferenceMasks(project);
+  assert.equal(restored.hasStoredManualNegativeMask, false);
+  assert.equal(restored.manualNegativeMask.reduce((sum, value) => sum + value, 0), 0);
+});
