@@ -140,13 +140,76 @@ test("Topology-first mode targets labelled closure regions and keeps only contri
     fixture.height,
     topologyTargetOptions(fixture),
   );
-  assert.match(proposal.revision, /^4\.1-/);
+  assert.match(proposal.revision, /^4\.2-/);
   assert.equal(proposal.topologyTargets.activeTargetCount, 1);
   assert.ok(proposal.acceptedRepairCount >= 1);
   assert.equal(proposal.topologyContributingCount, proposal.acceptedRepairCount);
   assert.ok(proposal.acceptedPaths.every(item => item.topologyTargetId != null));
   assert.ok(proposal.acceptedPaths.every(item => item.topologyContribution?.improved === true));
   for (const p of fixture.missing) assert.equal(proposal.mask[p], 1);
+});
+
+test("Bundle repair can close a target when no single candidate improves topology", () => {
+  const width = 44;
+  const height = 44;
+  const boundary = mask(width, height);
+  const truth = mask(width, height);
+  const probability = new Float32Array(width * height);
+  probability.fill(0.01);
+
+  const x0 = 8;
+  const y0 = 8;
+  const x1 = 35;
+  const y1 = 35;
+  drawLine(truth, width, x0, y0, x1, y0);
+  drawLine(truth, width, x0, y1, x1, y1);
+  drawLine(truth, width, x0, y0, x0, y1);
+  drawLine(truth, width, x1, y0, x1, y1);
+  boundary.set(truth);
+
+  const missing = [
+    y0 * width + 18,
+    y1 * width + 26,
+  ];
+  for (const p of missing) {
+    boundary[p] = 0;
+    probability[p] = 0.99;
+  }
+  for (let p = 0; p < truth.length; p += 1) {
+    if (truth[p]) probability[p] = 0.99;
+  }
+
+  const closedNegativeMask = mask(width, height);
+  for (let y = 11; y <= 32; y += 1) {
+    for (let x = 11; x <= 32; x += 1) set(closedNegativeMask, width, x, y);
+  }
+
+  const proposal = proposeTopologyRepairs(boundary, width, height, {
+    boundaryProbability: probability,
+    closedNegativeMask,
+    closedNegativeSeeds: [{ x: 22, y: 22, borderAssisted: false }],
+    maxSearchDistance: 7,
+    minPathEvidence: 0.7,
+    maxEndpointAngleDeg: 60,
+    maxCurvatureDeg: 75,
+    negativeGuardRadius: 0,
+    protectedFrameMargin: 1,
+    requireTopologyTarget: true,
+    topologyTargetMargin: 9,
+    topologyProbeMaxRadius: 3,
+    maxCandidates: 60,
+    maxBundleCandidatesPerTarget: 6,
+    maxBundleSize: 3,
+  });
+
+  assert.equal(proposal.topologyTargets.activeTargetCount, 1);
+  assert.equal(proposal.individuallyImprovingCandidateCount, 0);
+  assert.ok(proposal.acceptedBundles.length >= 1);
+  assert.ok(proposal.acceptedBundles.some(bundle => bundle.size >= 2));
+  assert.ok(proposal.acceptedRepairCount >= 2);
+  assert.ok(proposal.acceptedPaths.every(item => item.bundleId));
+  assert.ok(proposal.acceptedBundles.some(bundle => bundle.contribution?.exactGain > 0));
+  for (const p of missing) assert.equal(proposal.mask[p], 1);
 });
 
 test("Repair improves exact closure and mean required radius without worsening Open@3", () => {
