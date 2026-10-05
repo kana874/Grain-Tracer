@@ -251,7 +251,7 @@
             <label class="control-row"><span>最小Path Evidence</span><output id="topologyRepairMinEvidenceValue">32</output><input id="topologyRepairMinEvidence" type="range" min="10" max="80" step="1" value="32"></label>
             <label class="control-row"><span>最大曲率変化</span><output id="topologyRepairMaxCurvatureValue">65</output><input id="topologyRepairMaxCurvature" type="range" min="30" max="100" step="5" value="65"></label>
             <button id="topologyRepairPreviewButton" class="full" type="button" disabled>Topology Repair v4候補を表示</button>
-            <p class="help">Final Boundary CenterlineをSkeleton Graph化し、Endpoint→Endpoint / Existing Boundary / JunctionをA*型の画像Evidence経路で修復します。Negative・Exclusion・画像外周保護はHard Rejectです。自動適用時はRecall → Negative Leakage → ROI Precision → Closureの順にGuardし、元の粒界画素は削除しません。</p>
+            <p class="help">Final Boundary CenterlineをSkeleton Graph化し、Endpoint→Endpoint / Existing Boundary / JunctionをA*型の画像Evidence経路で修復します。Topology Targetごとに安全候補をまとめ、単独では閉じない場合も最大3本のRepair BundleとしてClosure改善を評価します。Negative・Exclusion・画像外周保護はHard Rejectです。自動適用時はRecall → Negative Leakage → ROI Precision → Closureの順にGuardし、元の粒界画素は削除しません。</p>
             <p id="topologyRepairStatus" class="help metric-detail">Topology Repair v4: 未プレビュー</p>
           </div>
         </details>
