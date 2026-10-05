@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.4.1-alpha - 2026-10-05
+
+### Added
+- Batch 2 / P1 Dendrite Suppression v2 adds an independent `dendriteLinePenalty` feature for long, coherent, low-color-contrast, parallel intragranular lines.
+- Boundary scoring can remain on the legacy non-negative weighted average or opt into `Positive Evidence - Negative Evidence` through a project-persisted feature flag.
+- A zero-dependency browser logistic-regression classifier prototype uses Dark, Ridge, Color, Dendrite Difference, Dendrite Line Penalty, tensor coherence, and Ridge scale.
+- Classifier training uses only explicitly assigned Training ROIs and Positive/Negative labels; Unknown is never used as a class. Validation and Test ROIs are excluded from learning.
+- Classifier automatic adoption is guarded on Validation ROI Recall, F1, Negative Leakage, and closure-profile topology. Test ROIs remain excluded from both learning and guard selection.
+- Diagnostic output includes classifier coefficients/training metadata and a `dendrite-line-penalty.png` map.
+- Auto Tune now has a 2-percentage-point Recall floor relative to its processed starting configuration, preventing F1 gains from silently accepting large Recall losses through MinComponent or other coordinates.
+
+### Changed
+- App version advanced to `0.4.1-alpha`; boundary algorithm identifier advanced to `boundary-v14-dendrite-suppression-classifier`.
+- Project format advanced to v3 to persist classifier model/guard state while retaining v1/v2 migration.
+- Diagnostic schema advanced to `graintracer-diagnostic-v16`.
+
+### Compatibility
+- Legacy boundary scoring remains the default and is still selectable.
+- A rejected or unavailable classifier automatically falls back to the non-classifier boundary score.
+- Existing v1/v2 project data remains migratable; missing classifier state becomes `null`.
+
+### Validation
+- Synthetic tests cover independent Negative Evidence suppression, classifier label isolation and separability, classifier Guard rejection/acceptance, and Auto Tune Recall-floor enforcement.
+- Existing Batch 1 regression tests remain in the same suite.
+
+
 ## v0.4.0-alpha - 2026-10-05
 
 ### Added
