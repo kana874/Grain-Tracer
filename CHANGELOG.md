@@ -1,3 +1,12 @@
+## Topology Repair v4.4 — cached full-image closure
+
+- Reuse eroded annotation cores and full-image background indexes across repair candidates.
+- Re-evaluate only background components touched by dilated candidate additions; test actual image edges.
+- Invalidate indexes after accepted mask changes; retain the shared reference fallback for border-assisted cores.
+- Add closure cache statistics and per-target candidate/bundle diagnostics.
+- Validation: 63 tests pass, including 192 randomized reference comparisons, cache invalidation and border-assisted fallback.
+- Synthetic 1800×1320 benchmark in Node: reference evaluation ~496 ms; cached initial evaluation ~263 ms; 200 unchanged-component evaluations ~89 ms total. Fully open background: 20 affected-component evaluations ~2.39 s. These are synthetic measurements; the real-image 30-second target remains unverified.
+
 # Changelog
 
 ## v0.5.0-alpha - 2026-10-05

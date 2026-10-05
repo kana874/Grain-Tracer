@@ -47,3 +47,48 @@ test('An annotation with no eligible eroded core is unmeasurable', () => {
   assert.equal(result.measurable, false);
   assert.equal(result.exactClosed, false);
 });
+
+import { createTargetClosureEvaluator } from '../src/topology.js';
+
+test('Cached evaluator agrees with full-image reference across random walls and additions', () => {
+  let seed = 47;
+  const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 2 ** 32; };
+  for (let trial = 0; trial < 24; trial++) {
+    const f = fixture();
+    for (let p = 0; p < f.boundary.length; p++) if (rand() < 0.018) f.boundary[p] = 1;
+    for (let x = 20; x < 40; x++) if (rand() < 0.6) f.boundary[8 * f.width + x] = 0;
+    const options = { closedNegativeMask: f.closed };
+    const evaluator = createTargetClosureEvaluator(f.width, f.height, options);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const additions = new Set();
+      for (let i = 0; i < 12; i++) additions.add(Math.floor(rand() * f.boundary.length));
+      const reference = targetClosureSignature(f.boundary, f.width, f.height, f.target, options, additions);
+      const cached = targetClosureSignature(f.boundary, f.width, f.height, f.target,
+        { ...options, targetClosureEvaluator: evaluator }, additions);
+      assert.deepEqual(cached, reference);
+    }
+    assert.equal(evaluator.stats.baseBuilds, 1);
+  }
+});
+
+test('Cache invalidation re-evaluates an accepted mask change', () => {
+  const f = fixture();
+  const options = { closedNegativeMask: f.closed };
+  const evaluator = createTargetClosureEvaluator(f.width, f.height, options);
+  evaluator.evaluate(f.boundary, f.target.seedP);
+  for (let x = 25; x <= 38; x++) f.boundary[8 * f.width + x] = 0;
+  evaluator.invalidate(f.boundary);
+  const result = evaluator.evaluate(f.boundary, f.target.seedP);
+  assert.equal(result.openAfterMaxRadius, 1);
+  assert.equal(evaluator.stats.baseBuilds, 2);
+});
+
+test('Border-assisted targets use the shared full-image fallback', () => {
+  const f = fixture();
+  const options = { closedNegativeMask: f.closed, borderAssistedMask: f.closed };
+  const evaluator = createTargetClosureEvaluator(f.width, f.height, options);
+  const fast = targetClosureSignature(f.boundary, f.width, f.height, f.target,
+    { ...options, targetClosureEvaluator: evaluator });
+  assert.deepEqual(fast, targetClosureSignature(f.boundary, f.width, f.height, f.target, options));
+  assert.equal(evaluator.stats.fallbackEvaluations, 1);
+});

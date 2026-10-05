@@ -1147,3 +1147,104 @@ export function computeBoundaryTopology(prediction, width, height, seeds = [], o
     note: "Topology v3.0 adds a Minimum Closure Radius profile. The weighted closure score averages closure rates across 0/1/2/3 px probes so partial topology improvements are measurable even when 0 px closure stays at zero. Safe/Extended Gap remain guarded post-processing stages.",
   };
 }
+
+// Reuse annotation indexes and dilated base walls. Candidate additions can only
+// remove background connections, so unchanged background components are reusable.
+export function createTargetClosureEvaluator(width, height, options = {}) {
+  const size = width * height;
+  const closed = options.closedNegativeMask;
+  if (closed?.length !== size) return null;
+  const erosion = Math.max(0, Math.round(options.coreErosionRadius ?? 2));
+  const core = buildComponentIndex(erodeSquare(closed, width, height, erosion), width, height,
+    Math.max(1, Math.round(options.minCorePixels ?? 12)), true);
+  const fill = buildComponentIndex(closed, width, height, 1, true);
+  const meta = buildCoreParentMetadata(core, fill, options.borderAssistedMask);
+  const groups = new Map();
+  for (let label = 1; label < core.active.length; label++) {
+    if (!core.active[label]) continue;
+    const parent = meta.parentFillLabel[label];
+    if (!groups.has(parent)) groups.set(parent, []);
+    groups.get(parent).push({ label, pixels: [], borderAssisted: Boolean(meta.borderAssisted[label]) });
+  }
+  const byLabel = new Map([...groups.values()].flat().map(item => [item.label, item]));
+  for (let p = 0; p < size; p++) byLabel.get(core.labels[p])?.pixels.push(p);
+  const maxRadius = Math.max(0, Math.min(4, Math.round(options.topologyProbeMaxRadius ?? 3)));
+  const cache = new WeakMap();
+  const visited = new Uint32Array(size);
+  const queue = new Int32Array(size);
+  let stamp = 0;
+  const stats = { baseBuilds: 0, evaluations: 0, traversedPixels: 0, reusedComponents: 0, fallbackEvaluations: 0 };
+  function baseFor(mask) {
+    let base = cache.get(mask);
+    if (!base) {
+      base = Array.from({ length: maxRadius + 1 }, (_, r) => {
+        const wall = r ? dilateBinaryMask(mask, width, height, r) : mask;
+        return { wall, background: buildComponentIndex(wall, width, height, 1, false) };
+      });
+      cache.set(mask, base);
+      stats.baseBuilds++;
+    }
+    return base;
+  }
+  return {
+    stats,
+    invalidate(mask) { cache.delete(mask); },
+    evaluate(mask, seedP, additions = null) {
+      stats.evaluations++;
+      const selected = groups.get(fill.labels[seedP]) ?? [];
+      if (selected.some(item => item.borderAssisted)) {
+        stats.fallbackEvaluations++;
+        const changed = additions?.size ? mask.slice() : mask;
+        if (additions?.size) for (const p of additions) changed[p] = 1;
+        return computeClosureProfile(changed, width, height, [], { ...options, targetSeedP: seedP,
+          bridgeRadii: Array.from({ length: maxRadius + 1 }, (_, r) => r) });
+      }
+      const base = baseFor(mask);
+      const probes = base.map(({ wall, background }, radius) => {
+        const extra = new Set();
+        for (const p of additions ?? []) {
+          const x = p % width, y = Math.floor(p / width);
+          for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx >= 0 && ny >= 0 && nx < width && ny < height) extra.add(ny * width + nx);
+          }
+        }
+        const affected = new Set([...extra].map(p => background.labels[p]).filter(Boolean));
+        let openRegions = 0;
+        for (const item of selected) {
+          let open = false;
+          // A core may straddle several background components. Every one must close.
+          stamp++;
+          if (stamp >= 0xffffffff) { visited.fill(0); stamp = 1; }
+          for (const start of item.pixels) {
+            if (wall[start] || extra.has(start) || visited[start] === stamp) continue;
+            const label = background.labels[start];
+            if (!affected.has(label)) {
+              stats.reusedComponents++;
+              if (background.edgeMasks[label]) { open = true; break; }
+              continue;
+            }
+            let head = 0, tail = 0;
+            queue[tail++] = start; visited[start] = stamp;
+            while (head < tail && !open) {
+              const p = queue[head++], x = p % width, y = Math.floor(p / width);
+              stats.traversedPixels++;
+              if (x === 0 || y === 0 || x === width - 1 || y === height - 1) { open = true; break; }
+              for (const np of [p - 1, p + 1, p - width, p + width]) {
+                if (visited[np] === stamp || wall[np] || extra.has(np)) continue;
+                visited[np] = stamp; queue[tail++] = np;
+              }
+            }
+            if (open) break;
+          }
+          if (open) openRegions++;
+        }
+        return { bridgeRadius: radius, regionCount: selected.length, openRegions,
+          closedRegions: selected.length - openRegions,
+          closureRate: selected.length ? (selected.length - openRegions) / selected.length : null };
+      });
+      return { basis: 'closed-negative-eroded-core', closureByBridgeRadius: probes,
+        ...summarizeClosureProfile(probes) };
+    },
+  };
+}

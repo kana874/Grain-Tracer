@@ -1,4 +1,4 @@
-import { computeClosureProfile } from "./topology.js";
+import { computeClosureProfile, createTargetClosureEvaluator } from "./topology.js";
 
 const DIRS8 = Object.freeze([
   [-1, -1], [0, -1], [1, -1],
@@ -445,9 +445,11 @@ function maskAt(mask, p, additions) {
 
 export function targetClosureSignature(mask, width, height, target, options = {}, additions = null) {
   const maxRadius = Math.max(0, Math.min(4, Math.round(options.topologyProbeMaxRadius ?? 3)));
-  const wall = additions?.size ? mask.slice() : mask;
-  if (additions?.size) for (const p of additions) wall[p] = 1;
-  const profile = computeClosureProfile(wall, width, height, [], {
+  const wall = additions?.size && !options.targetClosureEvaluator ? mask.slice() : mask;
+  if (additions?.size && !options.targetClosureEvaluator) for (const p of additions) wall[p] = 1;
+  const profile = options.targetClosureEvaluator
+    ? options.targetClosureEvaluator.evaluate(mask, target.seedP, additions)
+    : computeClosureProfile(wall, width, height, [], {
     ...options,
     targetSeedP: target.seedP,
     bridgeRadii: Array.from({ length: maxRadius + 1 }, (_, radius) => radius),
@@ -1330,6 +1332,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     throw new Error("Topology Repair v4用の境界マスクが不正です。");
   }
 
+  options = { ...options, targetClosureEvaluator: createTargetClosureEvaluator(width, height, options) };
   const graph = buildSkeletonGraph(prediction, width, height, options);
   const topologyContext = buildTopologyTargetContext(prediction, width, height, options);
   const negativeGuardRadius = Math.max(0, Math.min(4, Math.round(options.negativeGuardRadius ?? 1)));
@@ -1529,6 +1532,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     if (!applied) return false;
     for (const id of compatibility.endpointIds) usedEndpoints.add(id);
     for (const key of compatibility.targetKeys) usedTargets.add(key);
+    options.targetClosureEvaluator?.invalidate(mask);
     addedPixels += applied;
     return true;
   };
@@ -1650,7 +1654,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.3-shared-full-image-closure",
+    revision: "4.4-cached-full-image-closure",
     mask,
     repairMask,
     graph,
@@ -1668,6 +1672,14 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     individuallyImprovingCandidateCount,
     acceptedBundles,
     bundleSearch,
+    closureEvaluation: options.targetClosureEvaluator?.stats ?? null,
+    targetDiagnostics: (topologyContext?.targets ?? []).map(target => ({
+      targetId: target.id, seedP: target.seedP, coreRegionCount: target.before.coreRegionCount,
+      requiredRadiusBefore: target.before.requiredRadius,
+      viableCandidates: viable.filter(item => item.topologyTargetId === target.id).length,
+      individuallyImprovingCandidates: viable.filter(item => item.topologyTargetId === target.id && item.topologyContribution?.improved).length,
+      bundleSearch: bundleSearch.find(item => item.targetId === target.id) ?? null,
+    })),
     topologyTargets: topologyContext?.summary ?? null,
     reviewCandidates,
     rejected,
