@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.5.0-alpha - 2026-10-05
+
+### Added
+- Batch 3 / P3 Topology Repair v4.
+- Skeleton Graph extraction from the Final Boundary Centerline with endpoint, ordinary-boundary edge, and clustered junction node handling.
+- Graph-edge diagnostics for endpoint IDs, pixel path, length, mean Boundary/Ridge/Color evidence, and curvature.
+- Three explicit repair target classes: Endpoint → Endpoint, Endpoint → Existing Boundary, and Endpoint → Junction.
+- A* style evidence-path search using Boundary evidence, curvature, dendrite-line penalty, and endpoint-direction mismatch costs.
+- Hard barriers for Negative, Exclusion, and protected image-frame pixels.
+- Repair guards for endpoint tangent, junction angle, search distance, path evidence, curvature, existing-boundary crossing, local split increase, endpoint reuse, Recall, Negative Leakage, Verified ROI Precision, and Closure Profile improvement.
+- Batch 3 UI controls for repair enablement, maximum search distance, minimum Path Evidence, maximum curvature, preview, guarded apply, and one-step revert.
+- Diagnostic v19 fields for compact `topologyGraph`, `repairPaths`, guard decisions, preservation invariant, and repair timing.
+
+### Changed
+- App version advanced to `0.5.0-alpha`.
+- Boundary algorithm identifier advanced to `boundary-v17-topology-repair-v4`.
+- Project format advanced to v4 so Topology Repair settings are persisted while v1-v3 projects continue to migrate forward.
+- Topology Repair is additive: accepted P1/P2 boundary pixels are never removed. Applied Safe/Extended/Topology-v4 repairs share the existing base-mask revert path.
+- One-click Optimization can run the new prioritized Topology Repair guard after Safe/Extended Gap when the feature is enabled.
+- Diagnostic schema advanced to `graintracer-diagnostic-v19`.
+
+### Validation
+- Synthetic 1/2/3 px gaps are repaired.
+- Negative and Exclusion crossings are rejected.
+- Endpoint→Boundary and Endpoint→Junction paths are covered.
+- Curved high-evidence path finding is covered.
+- Closure regression verifies Exact Closure improvement, non-worsening Open@3, and reduced Mean Required Radius.
+- Endpoint multi-use protection and prioritized Recall/Leakage/Precision/Topology guards are covered.
+- GitHub Actions Node regression suite passes on the Batch 3 branch.
+- Real-image Batch 2 baseline comparison remains a release gate and is not inferred from synthetic tests.
+
+
 ## v0.4.3-alpha - 2026-10-05
 
 ### Fixed
