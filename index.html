@@ -64,11 +64,11 @@
           <select id="imageEvaluationRoleSelect" disabled>
             <option value="">未設定</option>
             <option value="development">Development</option>
-            <option value="validation">Validation</option>
+            <option value="validation">Validation（Tune禁止）</option>
             <option value="test">Test（Tune禁止）</option>
           </select>
         </label>
-        <p class="help">複数画像でHoldoutする場合に使用します。Test画像ではAuto Tune・局所調整・自動最適化を実行しません。</p>
+        <p class="help">複数画像でHoldoutする場合に使用します。DevelopmentのみTune可能で、Validation/Test画像ではAuto Tune・局所調整・自動最適化を実行しません。</p>
         <p id="projectStatus" class="help project-status">-</p>
       </section>
     </aside>
@@ -154,7 +154,7 @@
             <select id="roiRoleSelect" disabled>
               <option value="">未設定（旧Project互換）</option>
               <option value="training">Training</option>
-              <option value="validation">Validation</option>
+              <option value="validation">Validation（Tune禁止）</option>
               <option value="test">Test</option>
             </select>
           </label>
