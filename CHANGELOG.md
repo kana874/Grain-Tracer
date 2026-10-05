@@ -13,6 +13,14 @@
 - Batch 3 UI controls for repair enablement, maximum search distance, minimum Path Evidence, maximum curvature, preview, guarded apply, and one-step revert.
 - Diagnostic v19 fields for compact `topologyGraph`, `repairPaths`, guard decisions, preservation invariant, and repair timing.
 
+### Fixed
+- Real-image Batch 3 preview showed 89 accepted local repairs (+361 px) but zero global Closure Profile gain; the guard correctly rejected the proposal.
+- Reworked candidate discovery from an image-wide endpoint-first scan to topology-first targeting around labelled Closed-Negative regions that are not exactly closed.
+- Replaced O(endpoint²) / O(endpoint×junction) candidate scans with a local spatial index to avoid spending most of the runtime on distant endpoints.
+- Candidate capacity is now balanced across Endpoint→Endpoint, Endpoint→Existing Boundary, and Endpoint→Junction instead of letting Endpoint→Endpoint consume the full candidate cap.
+- Each repair candidate must now demonstrate per-target local topology contribution before entering the viable set, and it is rechecked for incremental contribution when multiple repairs target the same region.
+- Diagnostics now report target-region summary, candidate generated/selected counts by target class, accepted counts by class, topology-contributing count, and per-path local topology gain.
+
 ### Changed
 - App version advanced to `0.5.0-alpha`.
 - Boundary algorithm identifier advanced to `boundary-v17-topology-repair-v4`.
