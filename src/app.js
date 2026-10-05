@@ -42,6 +42,7 @@ import {
   imageDataToBlob,
 } from "./diagnostics.js";
 import { buildStoredZip } from "./zip.js";
+import { buildBaselineSnapshot } from "./baseline.js";
 import {
   PRECISION_GUIDE_COLS,
   PRECISION_GUIDE_ROWS,
@@ -143,6 +144,8 @@ const els = {
   loadProjectButton: $("loadProjectButton"),
   exportDiagnosticsButton: $("exportDiagnosticsButton"),
   exportDiagnosticsIndividualButton: $("exportDiagnosticsIndividualButton"),
+  recordBaselineButton: $("recordBaselineButton"),
+  baselineStatus: $("baselineStatus"),
   autosaveEnabled: $("autosaveEnabled"),
   zoomLabel: $("zoomLabel"),
   statusText: $("statusText"),
@@ -425,6 +428,7 @@ function updateControls() {
   els.loadProjectButton.disabled = disabled || !hasPreview;
   els.exportDiagnosticsButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   els.exportDiagnosticsIndividualButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
+  if (els.recordBaselineButton) els.recordBaselineButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   if (els.imageEvaluationRoleSelect) els.imageEvaluationRoleSelect.disabled = disabled || !hasPreview;
   updateEvaluationRoleControls();
 }
@@ -2552,6 +2556,87 @@ async function restoreProject(project, source = "プロジェクト") {
   setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界線 ${state.negativeCount.toLocaleString()} px / 閉領域Fill ${state.closedNegativeValidCount}領域 / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
 }
 
+function currentBaselineSnapshot() {
+  if (!state.preview || !state.analysisMask || !hasReference()) return null;
+  ensureClosedNegativeFresh();
+  const comparisonOptions = currentComparisonOptions();
+  const metrics = computeRegionalMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    {
+      ...comparisonOptions,
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+      cols: 4,
+      rows: 4,
+    },
+  );
+  const multiTolerance = computeMultiToleranceMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    {
+      tolerances: [1, 2, 3, 4],
+      reviewRadius: comparisonOptions.reviewRadius,
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+    },
+  );
+  const verifiedRois = verifiedFullEvaluationRois();
+  const fullEvaluationRoi = computeFullEvaluationRoiMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    verifiedRois,
+    {
+      tolerance: comparisonOptions.tolerance,
+      exclusionMask: state.exclusionMask,
+    },
+  );
+  const topology = state.lastTopology ?? computeBoundaryTopology(
+    state.analysisMask,
+    state.preview.width,
+    state.preview.height,
+    state.closedNegativeSeeds,
+    topologyOptions(),
+  );
+  if (!state.lastTopology) state.lastTopology = topology;
+  return buildBaselineSnapshot({
+    sourceFingerprint: state.sourceFingerprint,
+    appVersion: APP_VERSION,
+    algorithmVersion: ALGORITHM_VERSION,
+    multiTolerance,
+    metrics,
+    fullEvaluationRoi,
+    topology,
+    boundaryPixelCount: countMaskPixels(state.analysisMask),
+    unknownPredictionCount: metrics.unknownPrediction,
+    evaluationRoles: summarizeEvaluationRoles(state.fullEvaluationRois),
+    imageEvaluationRole: state.imageEvaluationRole,
+  });
+}
+
+function recordBaselineSnapshot() {
+  const snapshot = currentBaselineSnapshot();
+  if (!snapshot) return;
+  state.baselineSnapshots.push(snapshot);
+  if (state.baselineSnapshots.length > 20) {
+    state.baselineSnapshots.splice(0, state.baselineSnapshots.length - 20);
+  }
+  if (els.baselineStatus) {
+    const f1 = snapshot.verifiedRoi.f1;
+    const recall2 = snapshot.positiveRecall.at2px;
+    els.baselineStatus.textContent =
+      `Baseline #${state.baselineSnapshots.length} を記録: R@2 ${recall2 == null ? "-" : (recall2 * 100).toFixed(1) + "%"} / ROI F1 ${f1 == null ? "-" : (f1 * 100).toFixed(1) + "%"} / Boundary ${snapshot.boundaryPixelCount.toLocaleString()} px`;
+  }
+  scheduleAutosave();
+  setStatus("Baseline SnapshotをProjectへ記録しました。", 100);
+}
+
 async function saveProjectManual() {
   try {
     const project = buildProject();
@@ -2639,6 +2724,8 @@ async function exportDiagnostics(mode = "zip") {
       gapBridge: state.gapApplied,
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
+      imageEvaluationRole: state.imageEvaluationRole,
+      baselineSnapshots: state.baselineSnapshots,
     });
 
     const comparison = renderComparisonOverlay(
@@ -4265,6 +4352,7 @@ els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
 els.exportDiagnosticsButton.addEventListener("click", () => exportDiagnostics("zip"));
 els.exportDiagnosticsIndividualButton.addEventListener("click", () => exportDiagnostics("individual"));
+if (els.recordBaselineButton) els.recordBaselineButton.addEventListener("click", recordBaselineSnapshot);
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.negativeToolButton.addEventListener("click", () => setTool("negative-reference"));
