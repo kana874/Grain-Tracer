@@ -94,6 +94,12 @@ import {
   proposeExtendedGapBridges,
   proposeShortGapBridges,
 } from "./topology.js";
+import {
+  buildSkeletonGraph,
+  compactSkeletonGraph,
+  evaluateTopologyRepairGuard,
+  proposeTopologyRepairs,
+} from "./topology-repair.js";
 
 const $ = id => document.getElementById(id);
 
@@ -149,6 +155,12 @@ const els = {
   gapAngle: $("gapAngle"),
   gapMinScore: $("gapMinScore"),
   gapStatus: $("gapStatus"),
+  topologyRepairEnabled: $("topologyRepairEnabled"),
+  topologyRepairPreviewButton: $("topologyRepairPreviewButton"),
+  topologyRepairMaxDistance: $("topologyRepairMaxDistance"),
+  topologyRepairMinEvidence: $("topologyRepairMinEvidence"),
+  topologyRepairMaxCurvature: $("topologyRepairMaxCurvature"),
+  topologyRepairStatus: $("topologyRepairStatus"),
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
   exportDiagnosticsButton: $("exportDiagnosticsButton"),
@@ -291,6 +303,7 @@ const state = {
   overlayPeekHidden: false,
   lastMetrics: null,
   lastTopology: null,
+  lastTopologyRepair: null,
   lastHysteresis: null,
   gapProposal: null,
   gapBaseMask: null,
@@ -313,6 +326,7 @@ const state = {
     autosaveSerializeMs: null,
     autosaveWriteMs: null,
     topologyMs: null,
+    topologyRepairMs: null,
     gapBridgeMs: null,
   },
 };
@@ -917,6 +931,18 @@ function currentSettings() {
       minScore: Number(els.gapMinScore.value) / 100,
       negativeGuardRadius: 1,
     },
+    topologyRepair: {
+      enabled: Boolean(els.topologyRepairEnabled?.checked),
+      maxSearchDistance: Number(els.topologyRepairMaxDistance?.value ?? 10),
+      minPathEvidence: Number(els.topologyRepairMinEvidence?.value ?? 32) / 100,
+      maxCurvatureDeg: Number(els.topologyRepairMaxCurvature?.value ?? 65),
+      maxEndpointAngleDeg: 50,
+      junctionMinAngleDeg: 20,
+      negativeGuardRadius: 1,
+      protectedFrameMargin: 1,
+      maxLocalSplitIncrease: 1,
+      maxAcceptedRepairs: 240,
+    },
     autosaveEnabled: els.autosaveEnabled.checked,
   };
 }
@@ -932,6 +958,7 @@ function applySettings(settings = {}) {
   const local = settings.local ?? {};
   const comparison = settings.comparison ?? {};
   const hysteresis = settings.hysteresis ?? {};
+  const topologyRepair = settings.topologyRepair ?? {};
   if (extraction.sensitivity != null) setRangeValue(els.sensitivity, extraction.sensitivity);
   if (extraction.darkWeight != null) setRangeValue(els.darkWeight, extraction.darkWeight);
   if (extraction.ridgeWeight != null) setRangeValue(els.ridgeWeight, extraction.ridgeWeight);
@@ -993,6 +1020,23 @@ function applySettings(settings = {}) {
       els.gapMinScore,
       gapBridge.minScore <= 1 ? gapBridge.minScore * 100 : gapBridge.minScore,
     );
+  }
+  if (els.topologyRepairEnabled) {
+    els.topologyRepairEnabled.checked = Boolean(topologyRepair.enabled);
+  }
+  if (topologyRepair.maxSearchDistance != null && els.topologyRepairMaxDistance) {
+    setRangeValue(els.topologyRepairMaxDistance, topologyRepair.maxSearchDistance);
+  }
+  if (topologyRepair.minPathEvidence != null && els.topologyRepairMinEvidence) {
+    setRangeValue(
+      els.topologyRepairMinEvidence,
+      topologyRepair.minPathEvidence <= 1
+        ? topologyRepair.minPathEvidence * 100
+        : topologyRepair.minPathEvidence,
+    );
+  }
+  if (topologyRepair.maxCurvatureDeg != null && els.topologyRepairMaxCurvature) {
+    setRangeValue(els.topologyRepairMaxCurvature, topologyRepair.maxCurvatureDeg);
   }
   if (settings.autosaveEnabled != null) els.autosaveEnabled.checked = Boolean(settings.autosaveEnabled);
   invalidateFeatures();
@@ -1072,6 +1116,8 @@ function clearGapProposal() {
 
 function resetGapBridgeState(clearApplied = true) {
   clearGapProposal();
+  state.lastTopologyRepair = null;
+  if (els.topologyRepairStatus) els.topologyRepairStatus.textContent = "Topology Repair v4: 未プレビュー";
   if (clearApplied) {
     state.gapBaseMask = null;
     state.gapApplied = null;
@@ -1081,8 +1127,10 @@ function resetGapBridgeState(clearApplied = true) {
 
 function invalidateTopology() {
   state.lastTopology = null;
+  state.lastTopologyRepair = null;
   clearGapProposal();
-  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v3.0: 未実行";
+  if (els.topologyStatus) els.topologyStatus.textContent = "Topology v4: 未実行";
+  if (els.topologyRepairStatus) els.topologyRepairStatus.textContent = "Topology Repair v4: 未プレビュー";
 }
 
 function topologyRateText(value) {
@@ -1115,10 +1163,29 @@ function closureDiagnosticOptions() {
   };
 }
 
+function topologyRepairOptions() {
+  return {
+    maxSearchDistance: Number(els.topologyRepairMaxDistance?.value ?? 10),
+    minPathEvidence: Number(els.topologyRepairMinEvidence?.value ?? 32) / 100,
+    maxCurvatureDeg: Number(els.topologyRepairMaxCurvature?.value ?? 65),
+    maxEndpointAngleDeg: 50,
+    junctionMinAngleDeg: 20,
+    negativeGuardRadius: 1,
+    protectedFrameMargin: 1,
+    maxLocalSplitIncrease: 1,
+    maxAcceptedRepairs: 240,
+    negativeMask: state.negativeMask,
+    exclusionMask: state.exclusionMask,
+    ridge: state.features?.ridge ?? null,
+    color: state.features?.color ?? null,
+    dendritePenalty: state.features?.dendriteLinePenalty ?? null,
+  };
+}
+
 function updateTopologyStatus(result = state.lastTopology) {
   if (!els.topologyStatus) return;
   if (!result) {
-    els.topologyStatus.textContent = "Topology v3.0: 未実行";
+    els.topologyStatus.textContent = "Topology v4: 未実行";
     return;
   }
   const closure = result.regionClosure;
@@ -1165,9 +1232,15 @@ function updateTopologyStatus(result = state.lastTopology) {
   const endpointText = endpoint?.endpointPixels?.toLocaleString?.()
     ?? endpoint?.endpointPixels
     ?? 0;
+  const graph = result.skeletonGraph;
+  const graphText = graph
+    ? " / Graph EP " + graph.endpointCount.toLocaleString()
+      + " / J " + graph.junctionCount.toLocaleString()
+      + " / E " + graph.edgeCount.toLocaleString()
+    : "";
   els.topologyStatus.textContent =
-    "Topology v3.0: " + closureText + profileText + coverageText + borderText + gapText + safeText + extendedText
-    + " / Endpoint proxy " + endpointText;
+    "Topology v4: " + closureText + profileText + coverageText + borderText + gapText + safeText + extendedText
+    + " / Endpoint proxy " + endpointText + graphText;
 }
 
 function topologyOptions() {
@@ -1188,6 +1261,7 @@ function topologyOptions() {
 }
 
 function gapDispositionColor(disposition) {
+  if (disposition === "accepted-topology-v4") return "#4fc3f7";
   if (disposition === "accepted-safe" || disposition === "safe-range") return "#35d07f";
   if (disposition === "accepted-extended") return "#f2c94c";
   if (disposition === "rejected-negative" || disposition === "rejected-exclusion") return "#ff5d5d";
@@ -1209,8 +1283,16 @@ function renderGapProposal(proposal) {
       ? 0.98
       : 0.78;
     ctx.beginPath();
-    ctx.moveTo(candidate.x1 + 0.5, candidate.y1 + 0.5);
-    ctx.lineTo(candidate.x2 + 0.5, candidate.y2 + 0.5);
+    const path = candidate.pathCoordinates;
+    if (Array.isArray(path) && path.length) {
+      ctx.moveTo(path[0].x + 0.5, path[0].y + 0.5);
+      for (let i = 1; i < path.length; i += 1) {
+        ctx.lineTo(path[i].x + 0.5, path[i].y + 0.5);
+      }
+    } else {
+      ctx.moveTo(candidate.x1 + 0.5, candidate.y1 + 0.5);
+      ctx.lineTo(candidate.x2 + 0.5, candidate.y2 + 0.5);
+    }
     ctx.stroke();
   }
   ctx.restore();
