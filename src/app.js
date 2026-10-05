@@ -1183,8 +1183,16 @@ function topologyRepairOptions() {
     protectedFrameMargin: 1,
     maxLocalSplitIncrease: 1,
     maxAcceptedRepairs: 240,
+    maxCandidates: 360,
+    requireTopologyTarget: true,
+    topologyTargetMargin: 13,
+    topologyProbeMaxRadius: 3,
+    includeBorderAssistedTargets: false,
     negativeMask: state.negativeMask,
     exclusionMask: state.exclusionMask,
+    closedNegativeMask: state.closedNegativeMask,
+    borderAssistedMask: state.borderAssistedNegativeMask,
+    closedNegativeSeeds: state.closedNegativeSeeds,
     ridge: state.features?.ridge ?? null,
     color: state.features?.color ?? null,
     dendritePenalty: state.features?.dendriteLinePenalty ?? null,
@@ -1533,10 +1541,12 @@ async function previewTopologyRepairs() {
     state.gapProposal = proposal;
     renderGapProposal(proposal);
 
-    const types = proposal.acceptedPaths?.reduce((acc, item) => {
+    const types = proposal.acceptedCountsByType ?? proposal.acceptedPaths?.reduce((acc, item) => {
       acc[item.type] = (acc[item.type] ?? 0) + 1;
       return acc;
     }, {}) ?? {};
+    const selected = proposal.candidateCountsByType ?? {};
+    const targetCount = proposal.topologyTargets?.activeTargetCount ?? 0;
     const guardText = proposal.guard
       ? (proposal.guard.accepted ? " / Guard PASS" : " / Guard REJECT (" + proposal.guard.reason + ")")
       : " / Guard: お手本未設定";
@@ -1544,9 +1554,15 @@ async function previewTopologyRepairs() {
       "候補 " + proposal.sourceCandidateCount.toLocaleString() + "件"
       + " → Repair " + proposal.acceptedRepairCount.toLocaleString() + "本"
       + " / +" + proposal.addedPixels.toLocaleString() + "px"
+      + " / Target " + targetCount
       + " / E→E " + (types["endpoint-endpoint"] ?? 0)
       + " / E→Boundary " + (types["endpoint-boundary"] ?? 0)
       + " / E→Junction " + (types["endpoint-junction"] ?? 0)
+      + " / 候補選択 "
+      + (selected["endpoint-endpoint"]?.selected ?? 0) + "/"
+      + (selected["endpoint-boundary"]?.selected ?? 0) + "/"
+      + (selected["endpoint-junction"]?.selected ?? 0)
+      + " / Topology寄与 " + (proposal.topologyContributingCount ?? 0)
       + " / Graph EP " + proposal.graphSummary.endpointCount
       + " / J " + proposal.graphSummary.junctionCount
       + guardText;
