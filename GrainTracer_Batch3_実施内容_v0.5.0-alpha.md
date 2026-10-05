@@ -5,7 +5,7 @@
 **実装ブランチ:** `feature/topology-v4`  
 **基点:** `feature/hysteresis-tracking` / Batch 2 最終 `v0.4.3-alpha`  
 **作成日:** 2026-10-05  
-**状態:** 初回実画像評価でTopology寄与0を検出 → v4.1修正・Synthetic/CI完了、再実画像評価待ち
+**状態:** v4.1実画像再評価で単独Repair判定の過剰Rejectを検出 → v4.2 Bundle Repair修正・Synthetic/CI完了、再実画像評価待ち
 
 ---
 
@@ -382,7 +382,66 @@ v4.1では以下へ変更した。
 - 同一targetへ複数Repairする場合もincremental topology gainを再確認
 - candidate種別・target数・topology寄与数をDiagnosticへ追加
 
-これにより、初回実画像で約24.8秒を要した全域探索の主要ボトルネックも同時に除去する。
+これにより、初回実画像で約24.8秒を要した全域探索の主要ボトルネックも同時に除去した。
+
+### v4.1 実画像再評価
+
+v4.1では探索時間が約24.8秒から約2.0秒へ短縮され、候補選択も
+
+```text
+Endpoint→Endpoint  120
+Endpoint→Boundary  120
+Endpoint→Junction  120
+```
+
+へ均等化した。一方、Hard Guard / Evidenceを通過した候補のうち70件が `topologyNoGain` となり、Accepted Repairは0だった。
+
+この結果から、実画像では1つのTopology Targetに複数Gapが存在し、
+
+```text
+Repair Aだけ   → まだOpen
+Repair Bだけ   → まだOpen
+Repair A + B   → Closure改善
+```
+
+となるケースを単独Repair判定が捨てていると判断した。
+
+### v4.2 Bundle Repair
+
+v4.2では、安全条件を通過したRepair候補をTopology Target単位でGroupingし、Targetごとに最大6候補から1～3本のBundleを探索する。
+
+```text
+Safe candidate paths
+↓
+Group by Topology Target
+↓
+1-path / 2-path / 3-path bundle
+↓
+Bundle全体のClosure Signatureを評価
+↓
+改善Bundleだけ採用
+↓
+Global Recall / Leakage / Precision / Topology Guard
+```
+
+単独RepairがTopology中立でも、Bundle全体でExact Closure / Required Radius / Weighted Closure / Open@3等が改善する場合は採用可能とした。
+
+Negative / Exclusion / Protected frame / Path Evidence / Curvature / Endpoint重複 / Target重複 / 各PathのLocal Split Guardは緩和しない。Bundle全体を広い矩形でLocal Split再判定すると「意図した粒の閉鎖」自体をSplitとして誤検出するため、Bundleでは各Pathが既に通過したLocal Split Guardを維持し、Target-level Closure Signatureで最終判定する。
+
+Diagnosticには以下を追加した。
+
+```text
+acceptedBundles
+bundleSearch
+individuallyImprovingCandidateCount
+bundleId
+bundleSize
+bundleRank
+individualTopologyContribution
+topologyContribution (Bundle全体)
+```
+
+Synthetic Testには「2つのGapのどちらも単独ではTopology改善0だが、2本BundleならExact Closureする」回帰ケースを追加した。
 
 ---
 
@@ -428,4 +487,4 @@ v4.1では以下へ変更した。
 - [ ] Repair path目視確認
 - [ ] Revert完全復帰確認
 
-**判定:** Batch 2互換性は確認済み。初回Topology RepairはGuard REJECTとなりv4.1へ修正済み。再実画像受入が完了するまではBatch 4へ正式移行しない。
+**判定:** Batch 2互換性は確認済み。初回Topology RepairはGuard REJECT、v4.1では単独Repair判定による全候補Rejectを確認し、v4.2 Bundle Repairへ修正済み。再実画像受入が完了するまではBatch 4へ正式移行しない。
