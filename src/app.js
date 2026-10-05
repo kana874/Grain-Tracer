@@ -3175,8 +3175,22 @@ async function exportDiagnostics(mode = "zip") {
         state.closedNegativeSeeds,
         topologyOptions(),
       );
+      topology.skeletonGraph = compactSkeletonGraph(buildSkeletonGraph(
+        state.analysisMask,
+        state.preview.width,
+        state.preview.height,
+        topologyRepairOptions(),
+      ));
       recordPerformance("topologyMs", topologyStartedAt);
       state.lastTopology = topology;
+      updateTopologyStatus(topology);
+    } else if (!topology.skeletonGraph) {
+      topology.skeletonGraph = compactSkeletonGraph(buildSkeletonGraph(
+        state.analysisMask,
+        state.preview.width,
+        state.preview.height,
+        topologyRepairOptions(),
+      ));
       updateTopologyStatus(topology);
     }
     const source = {
@@ -3217,6 +3231,7 @@ async function exportDiagnostics(mode = "zip") {
       history: state.history,
       performance: performanceSnapshot(),
       topology,
+      topologyRepair: state.lastTopologyRepair,
       gapBridge: state.gapApplied,
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
@@ -4240,6 +4255,59 @@ async function guardedGapOptimizationPass(mode) {
   return { accepted: true, proposal, before, after };
 }
 
+async function guardedTopologyRepairOptimizationPass() {
+  if (!state.preview || !state.analysisMask) return { accepted: false, reason: "no-analysis" };
+  if (!els.topologyRepairEnabled?.checked) {
+    return { accepted: false, reason: "disabled" };
+  }
+  await ensureFeatures();
+  const before = evaluateOptimizationMask(state.analysisMask);
+  const startedAt = nowMs();
+  const proposal = proposeTopologyRepairs(
+    state.analysisMask,
+    state.preview.width,
+    state.preview.height,
+    topologyRepairOptions(),
+  );
+  recordPerformance("topologyRepairMs", startedAt);
+  if (!proposal?.acceptedRepairCount) {
+    state.lastTopologyRepair = proposal;
+    return { accepted: false, reason: "no-candidate", proposal, before, after: before };
+  }
+
+  const after = evaluateOptimizationMask(proposal.mask);
+  const guard = evaluateTopologyRepairGuard(
+    compactOptimizationEvaluation(before),
+    compactOptimizationEvaluation(after),
+  );
+  proposal.guard = guard;
+  proposal.evaluation = {
+    before: {
+      positiveRecall: before.metrics?.positiveRecall ?? null,
+      negativeLeakage: before.metrics?.negativeLeakage ?? null,
+      macroNegativeLeakage: before.metrics?.macroNegativeLeakage ?? null,
+    },
+    after: {
+      positiveRecall: after.metrics?.positiveRecall ?? null,
+      negativeLeakage: after.metrics?.negativeLeakage ?? null,
+      macroNegativeLeakage: after.metrics?.macroNegativeLeakage ?? null,
+    },
+  };
+  proposal.topology = evaluateGapTopology(proposal.mask);
+  state.lastTopologyRepair = proposal;
+
+  if (!proposal.preservationInvariant) {
+    return { accepted: false, reason: "preservation-invariant", proposal, before, after, guard };
+  }
+  if (!guard.accepted) {
+    return { accepted: false, reason: guard.reason ?? "guard-rejected", proposal, before, after, guard };
+  }
+
+  state.gapProposal = proposal;
+  await applyGapBridges();
+  return { accepted: true, proposal, before, after, guard };
+}
+
 async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
   if (!state.preview) return null;
   if (!canTuneImage(state.imageEvaluationRole)) {
@@ -4389,11 +4457,14 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
       selectedSnapshot = captureOptimizationState(localEvaluation);
     }
 
-    setStatus("自動最適化 3/4: Topology Guarded Gap...", 72);
+    setStatus("自動最適化 3/5: Topology Guarded Gap...", 68);
     const safePass = await guardedGapOptimizationPass("safe");
     const extendedPass = await guardedGapOptimizationPass("extended");
 
-    setStatus("自動最適化 4/4: 最終検証...", 90);
+    setStatus("自動最適化 4/5: Topology Repair v4...", 82);
+    const topologyRepairPass = await guardedTopologyRepairOptimizationPass();
+
+    setStatus("自動最適化 5/5: 最終検証...", 92);
     const finalEvaluation = evaluateOptimizationMask(state.analysisMask);
     const topologyStartedAt = nowMs();
     state.lastTopology = computeBoundaryTopology(
@@ -4403,6 +4474,12 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
       state.closedNegativeSeeds,
       topologyOptions(),
     );
+    state.lastTopology.skeletonGraph = compactSkeletonGraph(buildSkeletonGraph(
+      state.analysisMask,
+      state.preview.width,
+      state.preview.height,
+      topologyRepairOptions(),
+    ));
     recordPerformance("topologyMs", topologyStartedAt);
     updateTopologyStatus(state.lastTopology);
     const comparison = compareCurrent(false);
@@ -4410,11 +4487,14 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
 
     const safeCount = safePass.accepted ? safePass.proposal.acceptedBridgeCount : 0;
     const extendedCount = extendedPass.accepted ? extendedPass.proposal.acceptedBridgeCount : 0;
+    const topologyRepairCount = topologyRepairPass.accepted
+      ? topologyRepairPass.proposal.acceptedRepairCount
+      : 0;
     const evaluationMode = finalEvaluation.roiMetrics?.roiCount
       ? `精密評価ROI ${finalEvaluation.roiMetrics.roiCount}領域`
       : "Partial Label";
     const note =
-      `one-click-optimize; selected=${selectedStage}; evaluation=${evaluationMode}; global=${globalStage.status}; local=${localStage.status}; safe=${safeCount}; extended=${extendedCount}`;
+      `one-click-optimize; selected=${selectedStage}; evaluation=${evaluationMode}; global=${globalStage.status}; local=${localStage.status}; safe=${safeCount}; extended=${extendedCount}; topologyV4=${topologyRepairCount}`;
     addHistory("auto-optimize", comparison?.metrics ?? finalEvaluation.metrics, note, {
       version: 2,
       baseline: compactOptimizationEvaluation(baseline),
@@ -4437,6 +4517,13 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
           reason: extendedPass.reason ?? null,
           bridges: extendedCount,
         },
+        topologyV4: {
+          accepted: topologyRepairPass.accepted,
+          reason: topologyRepairPass.reason ?? null,
+          repairs: topologyRepairCount,
+          guard: topologyRepairPass.guard ?? topologyRepairPass.proposal?.guard ?? null,
+          preservationInvariant: topologyRepairPass.proposal?.preservationInvariant ?? null,
+        },
       },
     });
     scheduleAutosave();
@@ -4444,9 +4531,9 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     const beforeText = optimizationStatusSummary(baseline);
     const afterText = optimizationStatusSummary(finalEvaluation);
     els.autoOptimizeStatus.textContent =
-      `自動最適化完了（${evaluationMode}）: ${beforeText} → ${afterText} / Gap Safe ${safeCount}本・Extended ${extendedCount}本 / ${(state.performance.autoOptimizeMs / 1000).toFixed(1)} s`;
+      `自動最適化完了（${evaluationMode}）: ${beforeText} → ${afterText} / Gap Safe ${safeCount}本・Extended ${extendedCount}本 / Topology v4 ${topologyRepairCount}本 / ${(state.performance.autoOptimizeMs / 1000).toFixed(1)} s`;
     setStatus(els.autoOptimizeStatus.textContent, 100);
-    return { baseline, finalEvaluation, safePass, extendedPass, selectedStage };
+    return { baseline, finalEvaluation, safePass, extendedPass, topologyRepairPass, selectedStage };
   } catch (error) {
     console.error(error);
     els.autoOptimizeStatus.textContent = `自動最適化エラー: ${error.message}`;
@@ -4938,6 +5025,7 @@ els.showNormalButton.addEventListener("click", showNormalView);
 els.topologyButton.addEventListener("click", runTopologyDiagnostics);
 els.gapPreviewButton.addEventListener("click", previewSafeGapBridges);
 els.extendedGapPreviewButton.addEventListener("click", previewExtendedGapBridges);
+els.topologyRepairPreviewButton?.addEventListener("click", previewTopologyRepairs);
 els.gapApplyButton.addEventListener("click", applyGapBridges);
 els.gapRevertButton.addEventListener("click", revertGapBridges);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
@@ -4991,6 +5079,23 @@ if (els.hysteresisMaxDirection) {
   bindRange(els.hysteresisMaxDirection, $("hysteresisMaxDirectionValue"), hysteresisSettingChanged);
 }
 els.hysteresisNmsOrder?.addEventListener("change", hysteresisSettingChanged);
+const topologyRepairSettingChanged = () => {
+  state.lastTopologyRepair = null;
+  clearGapProposal();
+  if (els.topologyRepairStatus) els.topologyRepairStatus.textContent = "Topology Repair v4: 設定変更・未プレビュー";
+  scheduleAutosave();
+  updateControls();
+};
+els.topologyRepairEnabled?.addEventListener("change", topologyRepairSettingChanged);
+if (els.topologyRepairMaxDistance) {
+  bindRange(els.topologyRepairMaxDistance, $("topologyRepairMaxDistanceValue"), topologyRepairSettingChanged);
+}
+if (els.topologyRepairMinEvidence) {
+  bindRange(els.topologyRepairMinEvidence, $("topologyRepairMinEvidenceValue"), topologyRepairSettingChanged);
+}
+if (els.topologyRepairMaxCurvature) {
+  bindRange(els.topologyRepairMaxCurvature, $("topologyRepairMaxCurvatureValue"), topologyRepairSettingChanged);
+}
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
 els.centerlineNms.addEventListener("change", extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), scheduleAutosave);
@@ -5033,7 +5138,7 @@ const gapSettingChanged = () => {
   clearGapProposal();
   state.lastTopology = null;
   if (els.topologyStatus) {
-    els.topologyStatus.textContent = "Topology v3.0: Gap設定変更後は未実行";
+    els.topologyStatus.textContent = "Topology v4: Gap設定変更後は未実行";
   }
   if (gapWasApplied && state.analysisMask) {
     if (wasComparison && hasReference()) compareCurrent(false);
