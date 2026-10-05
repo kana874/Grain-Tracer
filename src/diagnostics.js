@@ -116,6 +116,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
     let ridge = 0;
     let color = 0;
     let dendrite = 0;
+    let dendriteLinePenalty = 0;
 
     while (head < tail) {
       const p = queue[head++];
@@ -129,6 +130,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
       ridge += features.ridge[p] / 255;
       color += features.color[p] / 255;
       dendrite += (features.dendrite?.[p] ?? 0) / 255;
+      dendriteLinePenalty += (features.dendriteLinePenalty?.[p] ?? 0) / 255;
 
       for (let dy = -1; dy <= 1; dy += 1) {
         const ny = y + dy;
@@ -158,6 +160,7 @@ function hotspotComponents(mask, width, height, features, type, limit = 16) {
         ridge: ridge / tail,
         color: color / tail,
         dendrite: dendrite / tail,
+        dendriteLinePenalty: dendriteLinePenalty / tail,
       },
     });
   }
@@ -172,6 +175,7 @@ function regionFeatureSummary(features, width, region) {
   let ridge = 0;
   let color = 0;
   let dendrite = 0;
+  let dendriteLinePenalty = 0;
   for (let y = region.y0; y < region.y1; y += 1) {
     const base = y * width;
     for (let x = region.x0; x < region.x1; x += 1) {
@@ -181,6 +185,7 @@ function regionFeatureSummary(features, width, region) {
       ridge += features.ridge[p] / 255;
       color += features.color[p] / 255;
       dendrite += (features.dendrite?.[p] ?? 0) / 255;
+      dendriteLinePenalty += (features.dendriteLinePenalty?.[p] ?? 0) / 255;
     }
   }
   const den = Math.max(1, count);
@@ -189,6 +194,7 @@ function regionFeatureSummary(features, width, region) {
     ridgeMean: ridge / den,
     colorMean: color / den,
     dendriteMean: dendrite / den,
+    dendriteLinePenaltyMean: dendriteLinePenalty / den,
   };
 }
 
@@ -462,6 +468,7 @@ export function buildDiagnosticReport(input) {
         ridge: 5,
         color: 7,
         dendrite: 14,
+        dendriteLinePenalty: 14,
       },
       localCalibrationGrid: "4x4",
       localCalibrationObjective: "partial-label-plus-training-roi-only; validation-for-guard; test-final-only",
