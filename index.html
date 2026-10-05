@@ -233,6 +233,12 @@
       <section>
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
+        <div class="subpanel">
+          <strong class="subpanel-title">Baseline Snapshot</strong>
+          <button id="recordBaselineButton" class="full" type="button" disabled>現在値をBaselineとして記録</button>
+          <p id="baselineStatus" class="help metric-detail">未記録</p>
+          <p class="help">Recall @1/2/3/4 px、Negative Leakage、ROI Precision/Recall/F1、Alignment、Closure、Open@3、Boundary/Unknown画素数をProjectへ保存します。</p>
+        </div>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
         <p class="help">ZIP出力: manifest.json / diagnostic.json v15 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
