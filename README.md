@@ -26,10 +26,14 @@ Current capabilities:
 - annotation-assist view that visually attenuates automatic boundaries and Negative overlays without changing analysis data; `H` temporarily hides the automatic overlay and `V` toggles assist view
 - edge-aware scoring that renormalizes the boundary score over geometrically available features near image borders while guarding the outermost 1 preview pixel against frame artifacts
 - optional continuous Ridge-normal non-maximum suppression (NMS): an axial continuous normal is estimated from the four sampled Ridge directions and the boundary score is bilinearly sampled across that normal to reduce thick/double responses to a centreline
-- Topology v3.0: interior endpoint proxy plus a Minimum Closure Radius profile over 0/1/2/3 px probes, including weighted closure score, capped mean required radius, and Open@3 counts
-- Safe Gap remains the conservative short-gap path; Extended Gap requires endpoint alignment plus Ridge/Color evidence along the missing path
-- One-click Optimization orchestrates Global Auto Tune, local sensitivity calibration, topology evaluation, and guarded Safe/Extended Gap repair
-- automatic Gap repair is accepted only when Recall/Leakage guards pass and the Minimum Closure Radius profile improves; manual Gap preview/application remains available under advanced diagnostics
+- Topology v3.0 closure diagnostics remain available: interior endpoint proxy plus a Minimum Closure Radius profile over 0/1/2/3 px probes, including weighted closure score, capped mean required radius, and Open@3 counts
+- Topology Repair v4 converts the Final Boundary Centerline into a Skeleton Graph with endpoints, clustered junctions, and graph edges
+- Repair candidates explicitly cover Endpoint → Endpoint, Endpoint → Existing Boundary, and Endpoint → Junction
+- A* style evidence-path repair uses Boundary/Ridge/Color evidence together with curvature, dendrite-line penalty, and endpoint-direction costs; Negative, Exclusion, and protected-frame pixels are hard barriers
+- Safe Gap remains the conservative short-gap path; Extended Gap remains the straight evidence-gated bridge path
+- One-click Optimization orchestrates Global Auto Tune, local sensitivity calibration, guarded Safe/Extended Gap repair, and optional prioritized Topology Repair v4
+- automatic repair uses ordered guards rather than a single weighted F1: Recall → Negative Leakage → Verified ROI Precision → Closure improvement → Alignment/F1 tie-break
+- Topology Repair is additive and preserves all pre-repair boundary pixels; Safe/Extended/Topology-v4 applications share a reversible base mask
 - guided precision-evaluation ROI suggestions select difficult/representative regions automatically; suggestions are provisional until the user confirms every visible boundary in the ROI has been labelled
 - Gap Preview classifies candidates by reason: Safe, Extended, Negative/Exclusion rejection, angle mismatch, distance excess, and score/evidence rejection
 - Gap application records before/after closure snapshots, closed-region count change, and closure-rate change for diagnostic JSON export

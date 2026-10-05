@@ -38,12 +38,19 @@ test("v1 project migrates to current format and keeps old ROI role unset", () =>
   assert.equal(validateProject(emptyProjectV1()).formatVersion, PROJECT_VERSION);
 });
 
-test("project v3 saves/restores ROI roles, image role, baseline snapshots, and classifier", () => {
+test("project v4 saves/restores ROI roles, image role, baseline snapshots, classifier, and topology repair settings", () => {
   const length = 16;
   const project = createProjectSnapshot({
     source: { name: "sample.bmp", fingerprint: "abc" },
     preview: { width: 4, height: 4, scale: 1 },
-    settings: {},
+    settings: {
+      topologyRepair: {
+        enabled: true,
+        maxSearchDistance: 10,
+        minPathEvidence: 0.32,
+        maxCurvatureDeg: 65,
+      },
+    },
     referenceMask: new Uint8Array(length),
     referenceCenterline: new Uint8Array(length),
     negativeMask: new Uint8Array(length),
@@ -69,6 +76,8 @@ test("project v3 saves/restores ROI roles, image role, baseline snapshots, and c
   assert.equal(project.baselineSnapshots.length, 1);
   assert.equal(project.classifier.accepted, true);
   assert.equal(project.classifier.model.schema, "graintracer-boundary-logreg-v1");
+  assert.equal(project.settings.topologyRepair.enabled, true);
+  assert.equal(project.settings.topologyRepair.maxSearchDistance, 10);
 
   const restored = restoreReferenceMasks(project);
   assert.equal(restored.fullEvaluationRois[0].evaluationRole, "test");
@@ -125,7 +134,7 @@ test("legacy project without a stored Negative mask requests centerline reconstr
 });
 
 
-test("project v3 preserves backward-compatible hysteresis settings", () => {
+test("project v4 preserves backward-compatible hysteresis and topology repair settings", () => {
   const project = {
     ...emptyProjectV1(),
     formatVersion: PROJECT_VERSION,
@@ -139,9 +148,33 @@ test("project v3 preserves backward-compatible hysteresis settings", () => {
         maxDirectionDeltaDeg: 35,
         nmsOrder: "before-tracking",
       },
+      topologyRepair: {
+        enabled: true,
+        maxSearchDistance: 10,
+        minPathEvidence: 0.32,
+        maxCurvatureDeg: 65,
+        protectedFrameMargin: 1,
+      },
     },
   };
   const migrated = migrateProject(project);
   assert.equal(migrated.formatVersion, PROJECT_VERSION);
   assert.deepEqual(migrated.settings.hysteresis, project.settings.hysteresis);
+  assert.deepEqual(migrated.settings.topologyRepair, project.settings.topologyRepair);
+});
+
+test("v3 project migrates to v4 without inventing topology repair settings", () => {
+  const project = {
+    ...emptyProjectV1(),
+    formatVersion: 3,
+    appVersion: "0.4.3-alpha",
+    algorithmVersion: "boundary-v16-additive-hysteresis",
+    settings: {
+      hysteresis: { enabled: false },
+    },
+  };
+  const migrated = migrateProject(project);
+  assert.equal(migrated.formatVersion, PROJECT_VERSION);
+  assert.equal(migrated.settings.topologyRepair, undefined);
+  assert.deepEqual(migrated.settings.hysteresis, { enabled: false });
 });

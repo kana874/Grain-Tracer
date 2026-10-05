@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.5.0-alpha - 2026-10-05
+
+### Added
+- Batch 3 / P3 Topology Repair v4.
+- Skeleton Graph extraction from the Final Boundary Centerline with endpoint, ordinary-boundary edge, and clustered junction node handling.
+- Graph-edge diagnostics for endpoint IDs, pixel path, length, mean Boundary/Ridge/Color evidence, and curvature.
+- Three explicit repair target classes: Endpoint → Endpoint, Endpoint → Existing Boundary, and Endpoint → Junction.
+- A* style evidence-path search using Boundary evidence, curvature, dendrite-line penalty, and endpoint-direction mismatch costs.
+- Hard barriers for Negative, Exclusion, and protected image-frame pixels.
+- Repair guards for endpoint tangent, junction angle, search distance, path evidence, curvature, existing-boundary crossing, local split increase, endpoint reuse, Recall, Negative Leakage, Verified ROI Precision, and Closure Profile improvement.
+- Batch 3 UI controls for repair enablement, maximum search distance, minimum Path Evidence, maximum curvature, preview, guarded apply, and one-step revert.
+- Diagnostic v19 fields for compact `topologyGraph`, `repairPaths`, guard decisions, preservation invariant, and repair timing.
+
+### Fixed
+- Real-image Batch 3 preview showed 89 accepted local repairs (+361 px) but zero global Closure Profile gain; the guard correctly rejected the proposal.
+- Reworked candidate discovery from an image-wide endpoint-first scan to topology-first targeting around labelled Closed-Negative regions that are not exactly closed.
+- Replaced O(endpoint²) / O(endpoint×junction) candidate scans with a local spatial index to avoid spending most of the runtime on distant endpoints.
+- Candidate capacity is now balanced across Endpoint→Endpoint, Endpoint→Existing Boundary, and Endpoint→Junction instead of letting Endpoint→Endpoint consume the full candidate cap.
+- Each repair candidate must now demonstrate per-target local topology contribution before entering the viable set, and it is rechecked for incremental contribution when multiple repairs target the same region.
+- Diagnostics now report target-region summary, candidate generated/selected counts by target class, accepted counts by class, topology-contributing count, and per-path local topology gain.
+- Real-image v4.1 retest reduced repair search time from about 24.8 s to about 2.0 s and balanced candidate selection to 120/120/120, but all 70 safety-passed candidates were rejected because no single path improved Closure.
+- Topology Repair v4.2 now groups safety-passed candidates by target and evaluates small Repair Bundles (up to 6 candidate paths considered per target, bundle size up to 3). A path may be individually topology-neutral when the bundle as a whole improves the target Closure Profile.
+- Bundle selection rechecks endpoint/target conflicts, additive-only preservation, individual local-split guards, and target-level Closure gain before adoption. Global Recall / Leakage / Precision / Topology guards remain unchanged.
+
+### Changed
+- App version advanced to `0.5.0-alpha`.
+- Boundary algorithm identifier advanced to `boundary-v17-topology-repair-v4`.
+- Project format advanced to v4 so Topology Repair settings are persisted while v1-v3 projects continue to migrate forward.
+- Topology Repair is additive: accepted P1/P2 boundary pixels are never removed. Applied Safe/Extended/Topology-v4 repairs share the existing base-mask revert path.
+- One-click Optimization can run the new prioritized Topology Repair guard after Safe/Extended Gap when the feature is enabled.
+- Diagnostic schema advanced to `graintracer-diagnostic-v19`.
+
+### Validation
+- Synthetic 1/2/3 px gaps are repaired.
+- Negative and Exclusion crossings are rejected.
+- Endpoint→Boundary and Endpoint→Junction paths are covered.
+- Curved high-evidence path finding is covered.
+- Closure regression verifies Exact Closure improvement, non-worsening Open@3, and reduced Mean Required Radius.
+- Endpoint multi-use protection and prioritized Recall/Leakage/Precision/Topology guards are covered.
+- GitHub Actions Node regression suite passes on the Batch 3 branch.
+- Real-image Batch 2 baseline comparison remains a release gate and is not inferred from synthetic tests.
+
+
 ## v0.4.3-alpha - 2026-10-05
 
 ### Fixed

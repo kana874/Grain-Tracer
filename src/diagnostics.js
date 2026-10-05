@@ -249,6 +249,7 @@ export function buildDiagnosticReport(input) {
     history,
     performance,
     topology,
+    topologyRepair,
     gapBridge,
     algorithmVersion,
     appVersion,
@@ -407,6 +408,117 @@ export function buildDiagnosticReport(input) {
     imageEvaluationRole: imageEvaluationRole ?? null,
   });
 
+  const compactTopologyContribution = contribution => contribution ? {
+    improved: contribution.improved ?? false,
+    exactGain: contribution.exactGain ?? 0,
+    weightedGain: contribution.weightedGain ?? 0,
+    radiusGain: contribution.radiusGain ?? 0,
+    openGain: contribution.openGain ?? 0,
+    borderContactGain: contribution.borderContactGain ?? 0,
+    reachableAreaGain: contribution.reachableAreaGain ?? 0,
+    progressScore: contribution.progressScore ?? 0,
+    before: contribution.before ? {
+      requiredRadius: contribution.before.requiredRadius ?? null,
+      weightedClosureScore: contribution.before.weightedClosureScore ?? null,
+      exactClosed: contribution.before.exactClosed ?? null,
+      openAfterMaxRadius: contribution.before.openAfterMaxRadius ?? null,
+      maxRadiusBorderContacts: contribution.before.maxRadiusBorderContacts ?? null,
+      maxRadiusReachableArea: contribution.before.maxRadiusReachableArea ?? null,
+    } : null,
+    after: contribution.after ? {
+      requiredRadius: contribution.after.requiredRadius ?? null,
+      weightedClosureScore: contribution.after.weightedClosureScore ?? null,
+      exactClosed: contribution.after.exactClosed ?? null,
+      openAfterMaxRadius: contribution.after.openAfterMaxRadius ?? null,
+      maxRadiusBorderContacts: contribution.after.maxRadiusBorderContacts ?? null,
+      maxRadiusReachableArea: contribution.after.maxRadiusReachableArea ?? null,
+    } : null,
+  } : null;
+
+  const compactRepairPaths = (topologyRepair?.acceptedPaths ?? topologyRepair?.repairPaths ?? [])
+    .slice(0, 240)
+    .map(item => ({
+      type: item.type ?? null,
+      sourceNodeId: item.sourceNodeId ?? null,
+      targetNodeId: item.targetNodeId ?? null,
+      x1: item.x1 ?? null,
+      y1: item.y1 ?? null,
+      x2: item.x2 ?? null,
+      y2: item.y2 ?? null,
+      distance: item.distance ?? null,
+      lengthPx: item.lengthPx ?? null,
+      pathEvidence: item.pathEvidence ?? null,
+      meanRidge: item.meanRidge ?? null,
+      meanColor: item.meanColor ?? null,
+      meanDendritePenalty: item.meanDendritePenalty ?? null,
+      maxCurvatureDeg: item.maxCurvatureDeg ?? null,
+      meanCurvatureDeg: item.meanCurvatureDeg ?? null,
+      localSplitIncrease: item.localSplitIncrease ?? null,
+      topologyTargetId: item.topologyTargetId ?? null,
+      topologyPriority: item.topologyPriority ?? null,
+      topologyRequiredRadiusBefore: item.topologyRequiredRadiusBefore ?? null,
+      bundleId: item.bundleId ?? null,
+      bundleSize: item.bundleSize ?? null,
+      bundleRank: item.bundleRank ?? null,
+      topologyContribution: compactTopologyContribution(item.topologyContribution),
+      individualTopologyContribution: compactTopologyContribution(item.individualTopologyContribution),
+      score: item.score ?? null,
+      addedPixels: item.addedPixels ?? null,
+      pathCoordinates: Array.isArray(item.pathCoordinates)
+        ? item.pathCoordinates.slice(0, 256).map(point => ({ x: point.x, y: point.y }))
+        : [],
+    }));
+  const topologyRepairSummary = topologyRepair ? {
+    version: topologyRepair.version ?? 4,
+    revision: topologyRepair.revision ?? null,
+    mode: topologyRepair.mode ?? "topology-v4",
+    acceptedRepairCount: topologyRepair.acceptedRepairCount ?? topologyRepair.acceptedBridgeCount ?? 0,
+    addedPixels: topologyRepair.addedPixels ?? 0,
+    sourceCandidateCount: topologyRepair.sourceCandidateCount ?? 0,
+    consideredCandidateCount: topologyRepair.consideredCandidateCount ?? 0,
+    candidateCountsByType: topologyRepair.candidateCountsByType ?? null,
+    acceptedCountsByType: topologyRepair.acceptedCountsByType ?? null,
+    topologyContributingCount: topologyRepair.topologyContributingCount ?? 0,
+    individuallyImprovingCandidateCount: topologyRepair.individuallyImprovingCandidateCount ?? 0,
+    topologyTargets: topologyRepair.topologyTargets ?? null,
+    acceptedBundles: (topologyRepair.acceptedBundles ?? []).slice(0, 120).map(bundle => ({
+      id: bundle.id ?? null,
+      targetId: bundle.targetId ?? null,
+      size: bundle.size ?? 0,
+      types: bundle.types ?? null,
+      addedPixels: bundle.addedPixels ?? 0,
+      rank: bundle.rank ?? null,
+      localSplitIncrease: bundle.localSplitIncrease ?? null,
+      contribution: compactTopologyContribution(bundle.contribution),
+    })),
+    bundleSearch: (topologyRepair.bundleSearch ?? []).slice(0, 120).map(item => ({
+      targetId: item.targetId ?? null,
+      poolSize: item.poolSize ?? 0,
+      tested: item.tested ?? 0,
+      compatible: item.compatible ?? 0,
+      improving: item.improving ?? 0,
+      selectedBundleSize: item.selectedBundleSize ?? 0,
+      selectedRank: item.selectedRank ?? null,
+      bestAttempt: item.bestAttempt ? {
+        bundleSize: item.bestAttempt.bundleSize ?? 0,
+        progressScore: item.bestAttempt.progressScore ?? 0,
+        reason: item.bestAttempt.reason ?? null,
+        types: item.bestAttempt.types ?? null,
+        additions: item.bestAttempt.additions ?? 0,
+        contribution: compactTopologyContribution(item.bestAttempt.contribution),
+      } : null,
+    })),
+    rejected: topologyRepair.rejected ?? null,
+    settings: topologyRepair.settings ?? null,
+    guard: topologyRepair.guard ?? null,
+    preservationInvariant: topologyRepair.preservationInvariant ?? null,
+    baseBoundaryPixels: topologyRepair.baseBoundaryPixels ?? null,
+    finalBoundaryPixels: topologyRepair.finalBoundaryPixels ?? null,
+    basePixelsRemovedByRepair: topologyRepair.basePixelsRemovedByRepair ?? null,
+    graph: topologyRepair.graphSummary ?? topology?.skeletonGraph ?? null,
+    repairPaths: compactRepairPaths,
+  } : null;
+
   const regions = metrics.regions.map(region => ({
     rx: region.rx,
     ry: region.ry,
@@ -432,7 +544,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v18",
+    schema: "graintracer-diagnostic-v19",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -489,6 +601,18 @@ export function buildDiagnosticReport(input) {
       precisionGuideActiveSelection: "low-recall-high-leakage-prediction-excess-local-risk-spatial-novelty",
       diagnosticBundleSchema: "graintracer-diagnostic-bundle-v1",
       oneClickStageDiagnostics: true,
+      topologyRepair: {
+        version: 4,
+        graph: "8-neighbor-skeleton / clustered-junction-pixels / endpoint-degree-1",
+        candidateTypes: ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction"],
+        pathSearch: "A*-style evidence path with spatial-indexed candidate discovery",
+        pathCost: "(1-boundary-probability)+curvature+dendrite+direction-mismatch",
+        candidatePolicy: "closed-negative topology targets first / balanced endpoint-endpoint, endpoint-boundary, endpoint-junction quotas / safe candidates grouped per target / 1-3 path bundle closure contribution required",
+        hardReject: ["negative", "exclusion", "protected-frame"],
+        guardPriority: ["recall", "negative-leakage", "verified-roi-precision", "topology-improvement", "alignment-f1"],
+        additiveOnly: true,
+        revertable: true,
+      },
     },
     precisionGuide: precisionGuide ?? null,
     evaluationRoles: {
@@ -538,6 +662,7 @@ export function buildDiagnosticReport(input) {
       autosaveSerializeMs: performance?.autosaveSerializeMs ?? null,
       autosaveWriteMs: performance?.autosaveWriteMs ?? null,
       topologyMs: performance?.topologyMs ?? null,
+      topologyRepairMs: performance?.topologyRepairMs ?? null,
       gapBridgeMs: performance?.gapBridgeMs ?? null,
       previewPixels: performance?.previewPixels ?? (preview.width * preview.height),
       closedFillSeedCount: performance?.closedFillSeedCount ?? (closedNegativeSeeds ?? []).length,
@@ -613,7 +738,10 @@ export function buildDiagnosticReport(input) {
       } : null,
     },
     topology: topology ?? null,
+    topologyGraph: topologyRepairSummary?.graph ?? topology?.skeletonGraph ?? null,
+    repairPaths: compactRepairPaths,
     postProcessing: {
+      topologyRepair: topologyRepairSummary,
       gapBridge: gapBridge ?? null,
       safeGapBridge: gapBridge && ((gapBridge.safeBridgeCount ?? 0) > 0 || gapBridge.mode === "safe")
         ? {
@@ -695,7 +823,7 @@ export function buildDiagnosticReport(input) {
     notes: [
       "Feature values are normalized to 0..1.",
       "Near image edges, extraction renormalizes the score over feature channels that are geometrically available; the outermost 1 px remains guarded to suppress image-frame artifacts.",
-      "Topology v3.0 adds a Minimum Closure Radius profile over 0/1/2/3 px probes so topology improvement can be measured even when exact 0 px closure remains zero.",
+      "Topology v3.0 Closure Profile remains the graded closure diagnostic; Batch 3 Topology Repair v4 adds Skeleton Graph and guarded evidence-path repair on top of it.",
       "Precision Guide v2 uses an 8x8 candidate grid. With no Positive reference, three spatially separated ROI candidates are selected deterministically from the source fingerprint; later rounds use active selection from Recall, Negative Leakage, prediction excess, Local risk, and spatial novelty.",
       "Guided precision-evaluation ROI suggestions remain provisional until the user explicitly confirms that every visible boundary inside the ROI has been labelled; only verified ROIs contribute formal True Precision / Recall / F1.",
       "Batch 1 separates Complete Evaluation ROIs into Training / Validation / Test roles. Test ROIs are diagnostic-only and are never used for Tune, parameter selection, or Guard decisions.",
