@@ -5,7 +5,7 @@
 **実装ブランチ:** `feature/topology-v4`  
 **基点:** `feature/hysteresis-tracking` / Batch 2 最終 `v0.4.3-alpha`  
 **作成日:** 2026-10-05  
-**状態:** コード実装・Synthetic/CI完了、実画像Baseline回帰評価待ち
+**状態:** 初回実画像評価でTopology寄与0を検出 → v4.1修正・Synthetic/CI完了、再実画像評価待ち
 
 ---
 
@@ -350,9 +350,45 @@ Synthetic Testの改善を実画像の改善値として代用しない。
 
 ---
 
-## 15. 既知の課題
+## 15. 初回実画像評価とv4.1修正
 
-- 実画像ではEndpoint数が多い可能性があるため、Repair探索時間と候補数を確認する必要がある。
+初回実画像評価では、Batch 2 Final Baselineの再現自体はPASSした。一方でTopology Repair v4候補は次の状態だった。
+
+```text
+Skeleton Endpoint        25,295
+Skeleton Junction        18,479
+Source candidates           240
+Accepted local repairs       89
+Added pixels                361
+Global topology gain          0
+Guard result               REJECT
+```
+
+Recall / Negative Leakage / Verified ROI Precision Guardは通過したが、Exact Closure / Weighted Closure / Open@3 / Mean Required Radiusがすべて不変だったため、最終Guardが正しく拒否した。
+
+原因は主に次の2点。
+
+1. Endpoint→Endpointを先に全探索してcandidate capへ詰める構造だったため、Endpoint→Boundary / Junctionが候補枠から押し出された。
+2. 画像全体の「繋ぎやすいEndpoint」を探索しており、Closed-Negative Closure評価対象へ直接向いていなかった。
+
+v4.1では以下へ変更した。
+
+- Closed-Negative componentをTopology targetとして明示
+- Exact Closureしていないtarget周辺だけを優先探索
+- Endpoint / Junctionを空間Gridで局所検索
+- Endpoint→Endpoint / Boundary / Junctionへ候補枠を均等配分
+- candidateごとに対象targetの局所Closure signatureをbefore/after評価
+- topology寄与0のcandidateをPath採用前にreject
+- 同一targetへ複数Repairする場合もincremental topology gainを再確認
+- candidate種別・target数・topology寄与数をDiagnosticへ追加
+
+これにより、初回実画像で約24.8秒を要した全域探索の主要ボトルネックも同時に除去する。
+
+---
+
+## 16. 既知の課題
+
+- v4.1の実画像再評価で探索時間と候補種別分布を確認する必要がある。
 - Junction clusterの8近傍統合が複雑な太いjunctionで過統合しないか実画像確認が必要。
 - Ridge/Colorから構成するBoundary evidenceの既定重みはSynthetic受入済みだが、実画像での最適値は未確定。
 - Local Split Guardは局所背景component数を使う近似であり、最終的な求積法Split/Merge評価そのものではない。
@@ -360,7 +396,7 @@ Synthetic Testの改善を実画像の改善値として代用しない。
 
 ---
 
-## 16. Batch 3 完了判定
+## 17. Batch 3 完了判定
 
 ### コード / Synthetic
 
@@ -383,7 +419,7 @@ Synthetic Testの改善を実画像の改善値として代用しない。
 
 ### 実画像
 
-- [ ] Batch 2 Baseline再現
+- [x] Batch 2 Baseline再現
 - [ ] Topology Repair v4 ON比較
 - [ ] Exact Closure改善
 - [ ] Open@3改善または維持
@@ -392,4 +428,4 @@ Synthetic Testの改善を実画像の改善値として代用しない。
 - [ ] Repair path目視確認
 - [ ] Revert完全復帰確認
 
-**判定:** Batch 3のコード実装は完了。実画像受入が完了するまではBatch 4へ正式移行しない。
+**判定:** Batch 2互換性は確認済み。初回Topology RepairはGuard REJECTとなりv4.1へ修正済み。再実画像受入が完了するまではBatch 4へ正式移行しない。
