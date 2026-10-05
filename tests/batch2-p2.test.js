@@ -177,10 +177,10 @@ test("NMS-before and NMS-after tracking paths both preserve the seeded weak line
   const features = featuresForHorizontalLine(width, height);
   const y = 6;
   for (let x = 3; x <= 22; x += 1) {
-    const value = x === 3 ? 240 : 125;
+    const value = x <= 5 ? 240 : 105;
     markEvidence(features, x, y, value, 170);
     // second row makes the fixture deliberately thick so NMS order is exercised
-    markEvidence(features, x, y + 1, value - 5, 165);
+    markEvidence(features, x, y + 1, Math.max(0, value - 5), 165);
   }
 
   const common = {
@@ -228,7 +228,7 @@ test("a false weak line without any Strong seed is not promoted", async () => {
   const height = 12;
   const features = featuresForHorizontalLine(width, height);
   const y = 6;
-  for (let x = 4; x <= 20; x += 1) markEvidence(features, x, y, 120, 180);
+  for (let x = 4; x <= 20; x += 1) markEvidence(features, x, y, 100, 180);
 
   const mask = await buildBoundaryMask(features, {
     sensitivity: 62,
@@ -249,4 +249,120 @@ test("a false weak line without any Strong seed is not promoted", async () => {
   });
 
   assert.equal(mask.reduce((sum, value) => sum + value, 0), 0);
+});
+
+
+test("additive P2 preserves every P1 base pixel and only adds guarded weak pixels", async () => {
+  const width = 24;
+  const height = 12;
+  const features = featuresForHorizontalLine(width, height);
+
+  // 2x2 Strong block survives P1 neighbor-support and becomes the only seed source.
+  for (const y of [5, 6]) {
+    for (const x of [3, 4]) markEvidence(features, x, y, 235, 210);
+  }
+  // Weak continuation is below the P1 threshold (Sensitivity 62 -> 0.45)
+  // but above the Hysteresis low threshold.
+  for (let x = 5; x <= 11; x += 1) markEvidence(features, x, 5, 105, 175);
+
+  const common = {
+    sensitivity: 62,
+    darkWeight: 0,
+    ridgeWeight: 100,
+    colorWeight: 0,
+    dendriteWeight: 0,
+    scoreMode: "legacy",
+    centerlineNms: false,
+    minComponent: 1,
+  };
+
+  const base = await buildBoundaryMask(features, {
+    ...common,
+    hysteresis: { enabled: false },
+  });
+
+  let diagnostics = null;
+  const recovered = await buildBoundaryMask(features, {
+    ...common,
+    hysteresis: {
+      enabled: true,
+      highThreshold: 0.70,
+      lowThreshold: 0.30,
+      maxTrackingDistance: 12,
+      maxScoreDelta: 0.55,
+      minColorEvidence: 0.04,
+      minRidgeEvidence: 0.05,
+      maxDirectionDeltaDeg: 35,
+      maxTangentMismatchDeg: 50,
+      maxCurvatureDeg: 55,
+      nmsOrder: "before-tracking",
+    },
+    onHysteresisDiagnostics: value => { diagnostics = value; },
+  });
+
+  let baseCount = 0;
+  let recoveredCount = 0;
+  for (let p = 0; p < base.length; p += 1) {
+    if (base[p]) {
+      baseCount += 1;
+      assert.equal(recovered[p], 1, `P1 base pixel ${p} must be preserved`);
+    }
+    if (recovered[p]) recoveredCount += 1;
+  }
+
+  assert.ok(baseCount > 0);
+  assert.ok(recoveredCount > baseCount, `base=${baseCount} final=${recoveredCount}`);
+  assert.equal(diagnostics.mode, "additive-recovery");
+  assert.equal(diagnostics.basePixelsRemovedByP2, 0);
+  assert.equal(diagnostics.preservationInvariant, true);
+  assert.equal(diagnostics.baseBoundaryPixels, baseCount);
+  assert.equal(diagnostics.finalBoundaryPixels, recoveredCount);
+  assert.ok(diagnostics.acceptedWeakPixels > 0);
+});
+
+test("P2 hard barriers apply only to additions and never erase an existing P1 base pixel", async () => {
+  const width = 18;
+  const height = 10;
+  const features = featuresForHorizontalLine(width, height);
+  const negative = new Uint8Array(width * height);
+
+  for (const y of [4, 5]) {
+    for (const x of [2, 3]) markEvidence(features, x, y, 235, 210);
+  }
+  for (let x = 4; x <= 10; x += 1) markEvidence(features, x, 4, 105, 175);
+  negative[4 * width + 7] = 1;
+
+  const common = {
+    sensitivity: 62,
+    darkWeight: 0,
+    ridgeWeight: 100,
+    colorWeight: 0,
+    dendriteWeight: 0,
+    scoreMode: "legacy",
+    centerlineNms: false,
+    minComponent: 1,
+  };
+  const base = await buildBoundaryMask(features, {
+    ...common,
+    negativeMask: negative,
+    hysteresis: { enabled: false },
+  });
+  const finalMask = await buildBoundaryMask(features, {
+    ...common,
+    negativeMask: negative,
+    hysteresis: {
+      enabled: true,
+      highThreshold: 0.70,
+      lowThreshold: 0.30,
+      maxTrackingDistance: 20,
+      maxScoreDelta: 0.55,
+      nmsOrder: "before-tracking",
+    },
+  });
+
+  for (let p = 0; p < base.length; p += 1) {
+    if (base[p]) assert.equal(finalMask[p], 1);
+  }
+  assert.equal(finalMask[4 * width + 7], 0, "new weak recovery must not enter Negative");
+  assert.equal(finalMask[4 * width + 8], 0, "new weak recovery must not cross Negative");
 });
