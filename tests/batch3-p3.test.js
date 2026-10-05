@@ -6,6 +6,7 @@ import {
   evaluateTopologyRepairGuard,
   proposeTopologyRepairs,
 } from "../src/topology-repair.js";
+import { computeClosureProfile } from "../src/topology.js";
 
 function mask(width, height) {
   return new Uint8Array(width * height);
@@ -115,6 +116,61 @@ for (const gapPx of [1, 2, 3]) {
   });
 }
 
+test("Repair improves exact closure and mean required radius without worsening Open@3", () => {
+  const fixture = squareGapFixture(3);
+  const before = computeClosureProfile(
+    fixture.boundary,
+    fixture.width,
+    fixture.height,
+    [{ x: 20, y: 20 }],
+    { bridgeRadii: [0, 1, 2, 3] },
+  );
+  const proposal = proposeTopologyRepairs(
+    fixture.boundary,
+    fixture.width,
+    fixture.height,
+    baseOptions(fixture),
+  );
+  const after = computeClosureProfile(
+    proposal.mask,
+    fixture.width,
+    fixture.height,
+    [{ x: 20, y: 20 }],
+    { bridgeRadii: [0, 1, 2, 3] },
+  );
+  const exactBefore = before.closureByBridgeRadius.find(item => item.bridgeRadius === 0);
+  const exactAfter = after.closureByBridgeRadius.find(item => item.bridgeRadius === 0);
+  assert.ok((exactAfter?.closureRate ?? 0) > (exactBefore?.closureRate ?? 0));
+  assert.ok(after.openAfterMaxRadius <= before.openAfterMaxRadius);
+  assert.ok(after.meanRequiredRadiusCapped < before.meanRequiredRadiusCapped);
+});
+
+test("A* evidence path can follow a curved high-evidence route instead of a straight low-evidence gap", () => {
+  const fixture = squareGapFixture(5);
+  const y = 8;
+  const xStart = fixture.missing[0] % fixture.width;
+  const xEnd = fixture.missing.at(-1) % fixture.width;
+  for (const p of fixture.missing) fixture.probability[p] = 0.01;
+  for (let x = xStart; x <= xEnd; x += 1) {
+    fixture.probability[(y + 1) * fixture.width + x] = 0.99;
+  }
+  const proposal = proposeTopologyRepairs(
+    fixture.boundary,
+    fixture.width,
+    fixture.height,
+    {
+      ...baseOptions(fixture),
+      minPathEvidence: 0.70,
+      maxCurvatureDeg: 90,
+      evidenceCostWeight: 6,
+    },
+  );
+  assert.ok(proposal.acceptedRepairCount >= 1);
+  const path = proposal.acceptedPaths.find(item => item.type === "endpoint-endpoint");
+  assert.ok(path);
+  assert.ok(path.pathCoordinates.some(point => point.y > y));
+});
+
 test("Negative crossing is a hard reject", () => {
   const fixture = squareGapFixture(3, "negative");
   const proposal = proposeTopologyRepairs(
@@ -201,6 +257,42 @@ test("Complete T/Y-style junctions do not create unsupported repair paths", () =
     protectedFrameMargin: 1,
   });
   assert.equal(proposal.acceptedRepairCount, 0);
+});
+
+test("One endpoint is not used by multiple accepted repairs", () => {
+  const width = 40;
+  const height = 40;
+  const boundary = mask(width, height);
+  const probability = new Float32Array(width * height);
+  probability.fill(0.02);
+  drawLine(boundary, width, 20, 7, 20, 15);
+  drawLine(boundary, width, 14, 21, 14, 31);
+  drawLine(boundary, width, 26, 21, 26, 31);
+  for (let y = 16; y <= 21; y += 1) {
+    probability[y * width + 18] = 0.95;
+    probability[y * width + 19] = 0.95;
+    probability[y * width + 20] = 0.95;
+    probability[y * width + 21] = 0.95;
+    probability[y * width + 22] = 0.95;
+  }
+  const proposal = proposeTopologyRepairs(boundary, width, height, {
+    boundaryProbability: probability,
+    maxSearchDistance: 12,
+    minPathEvidence: 0.5,
+    maxEndpointAngleDeg: 70,
+    maxCurvatureDeg: 90,
+    negativeGuardRadius: 0,
+    protectedFrameMargin: 1,
+  });
+  const seen = new Set();
+  for (const path of proposal.acceptedPaths) {
+    assert.equal(seen.has(path.sourceNodeId), false);
+    seen.add(path.sourceNodeId);
+    if (path.type === "endpoint-endpoint") {
+      assert.equal(seen.has(path.targetNodeId), false);
+      seen.add(path.targetNodeId);
+    }
+  }
 });
 
 test("Topology guard applies prioritized Recall/Leakage/Precision before topology gain", () => {
