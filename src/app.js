@@ -744,7 +744,7 @@ function updateHysteresisStatus(diagnostics = state.lastHysteresis) {
     return;
   }
   els.hysteresisStatus.textContent =
-    `Hysteresis: Strong ${diagnostics.strongCount ?? 0} / Weak ${diagnostics.weakCandidateCount ?? 0} / 採用 ${diagnostics.acceptedWeakCount ?? 0} / Reject ${diagnostics.rejectedWeakCount ?? 0} / ${diagnostics.nmsOrder ?? settings.nmsOrder}`;
+    `Hysteresis(add): Base ${diagnostics.baseBoundaryPixels ?? "-"} / Seed ${diagnostics.strongSeedCount ?? diagnostics.strongCount ?? 0} / Weak追加 ${diagnostics.acceptedWeakPixels ?? diagnostics.acceptedWeakCount ?? 0} / Final ${diagnostics.finalBoundaryPixels ?? "-"} / Base削除 ${diagnostics.basePixelsRemovedByP2 ?? 0} / ${diagnostics.nmsOrder ?? settings.nmsOrder}`;
 }
 
 function explicitTrainingEvaluationRois() {
