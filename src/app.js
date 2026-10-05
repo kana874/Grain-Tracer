@@ -1718,7 +1718,7 @@ function setImageEvaluationRole(value) {
   if (state.imageEvaluationRole === "test") {
     setStatus("画像役割をTestに設定しました。Tune処理は無効です。");
   } else if (state.imageEvaluationRole === "validation") {
-    setStatus("画像役割をValidationに設定しました。");
+    setStatus("画像役割をValidationに設定しました。Tune処理は無効です。");
   } else if (state.imageEvaluationRole === "development") {
     setStatus("画像役割をDevelopmentに設定しました。");
   } else {
@@ -3128,7 +3128,7 @@ function compareCurrent(record = true) {
 async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
   if (!state.preview || !hasReference()) return null;
   if (!canTuneImage(state.imageEvaluationRole)) {
-    setStatus("Test画像ではAuto Tuneを実行できません。");
+    setStatus("Validation/Test画像ではAuto Tuneを実行できません。Development画像で実行してください。");
     return null;
   }
   ensureClosedNegativeFresh();
@@ -3287,7 +3287,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
 async function localTune({ manageBusy = true, recordHistory = true, scheduleSave = true } = {}) {
   if (!state.preview || !hasReference()) return null;
   if (!canTuneImage(state.imageEvaluationRole)) {
-    setStatus("Test画像では局所自動調整を実行できません。");
+    setStatus("Validation/Test画像では局所自動調整を実行できません。Development画像で実行してください。");
     return null;
   }
   ensureClosedNegativeFresh();
@@ -3708,7 +3708,7 @@ async function guardedGapOptimizationPass(mode) {
 async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
   if (!state.preview) return null;
   if (!canTuneImage(state.imageEvaluationRole)) {
-    els.autoOptimizeStatus.textContent = "Test画像では自動最適化を実行できません。評価・診断のみ使用できます。";
+    els.autoOptimizeStatus.textContent = "Validation/Test画像では自動最適化を実行できません。評価・診断のみ使用できます。";
     setStatus(els.autoOptimizeStatus.textContent);
     return null;
   }
