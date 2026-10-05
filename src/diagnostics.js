@@ -255,6 +255,7 @@ export function buildDiagnosticReport(input) {
     imageEvaluationRole,
     baselineSnapshots,
     classifier,
+    hysteresis,
   } = input;
 
   const comparison = settings.comparison;
@@ -431,7 +432,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v16",
+    schema: "graintracer-diagnostic-v17",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -457,6 +458,13 @@ export function buildDiagnosticReport(input) {
       classifierSchema: classifier?.model?.schema ?? null,
       classifierAccepted: classifier?.accepted ?? false,
       autoTuneRecallGuardMaxDrop: 0.02,
+      hysteresis: {
+        enabled: settings.hysteresis?.enabled ?? false,
+        highThreshold: settings.hysteresis?.highThreshold ?? null,
+        lowThreshold: settings.hysteresis?.lowThreshold ?? null,
+        nmsOrder: settings.hysteresis?.nmsOrder ?? null,
+        trackingPolicy: "strong-seeded / ridge-direction / tangent / score / color / negative-exclusion-hard-reject",
+      },
       neighborSupportMinimum: 2,
       edgeAwareFeatureRenormalization: true,
       edgeFrameGuard: 1,
@@ -497,6 +505,7 @@ export function buildDiagnosticReport(input) {
       current: currentBaseline,
       recorded: (baselineSnapshots ?? []).map(item => ({ ...item })),
     },
+    hysteresis: hysteresis ?? null,
     classifier: classifier ? {
       accepted: Boolean(classifier.accepted),
       model: classifier.model ? {
