@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.2-alpha - 2026-10-05
+
+### Added
+- Batch 2 / P2 dual-threshold Hysteresis Boundary Tracking with explicit Strong and Weak boundary classes.
+- Weak pixels are promoted only when they are reachable from a Strong seed and satisfy score-continuity, Ridge-direction/tangent, Color evidence, curvature, and maximum-distance guards.
+- Negative and Exclusion masks are hard barriers during weak tracking; rejected weak pixels cannot bridge across either region.
+- NMS order is selectable between `NMS → Weak tracking` and `Weak tracking → NMS`; the former is the default staged setting and both paths are covered by synthetic regression tests.
+- Hysteresis tracking diagnostics record Strong/Weak counts, accepted/rejected weak counts, rejection reasons, thresholds, tracking limits, and NMS order.
+- UI controls expose Hysteresis enable/disable, High/Low thresholds, maximum tracking distance, maximum direction change, and NMS order.
+
+### Changed
+- App version advanced to `0.4.2-alpha`; boundary algorithm identifier advanced to `boundary-v15-hysteresis-tracking`.
+- Diagnostic schema advanced to `graintracer-diagnostic-v17`.
+- Project format remains v3; Hysteresis settings are stored under the existing extensible `settings.hysteresis` object, so no structural format bump is required.
+- Existing projects default Hysteresis to OFF until explicitly enabled, preserving the pre-P2 extraction path for backward compatibility.
+- Auto Tune and Local Tune now evaluate/finalize through the same Hysteresis-aware boundary pipeline when Hysteresis is enabled.
+
+### Validation
+- Synthetic tests cover Strong/Weak classification, Strong-seeded continuation, isolated false-line rejection, Negative/Exclusion hard barriers, direction/tangent guards, maximum tracking distance, and both NMS orderings.
+- Batch 1 and P1 regression suites remain active in the same Node/GitHub Actions run.
+- Real-image Batch 2 acceptance still requires comparison against the fixed Batch 1 baseline before enabling Hysteresis by default.
+
+
 ## v0.4.1-alpha - 2026-10-05
 
 ### Added
