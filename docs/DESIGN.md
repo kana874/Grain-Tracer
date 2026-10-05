@@ -242,6 +242,16 @@ Border-assisted closure is also made explicit in v2.3. The parent Closed Fill re
 
 v0.3.7 advances the diagnostic to Topology v3.0. Exact 0 px Closure can remain zero even when most regions are only one or two pixels from closing, so a binary exact-closure objective is too sparse for tuning. Topology v3 therefore summarizes the 0/1/2/3 px probes as a Minimum Closure Radius profile. It records the number of regions that first close at each probe radius, regions still open after the largest probe, a capped mean required radius, and a weighted closure score equal to the mean closure rate over the configured probes. This gives the optimization guard a graded signal: moving a region from 3 px to 2 px can count as improvement even before exact 0 px closure is achieved.
 
+## 9.4 Topology Repair v4
+
+Batch 3 adds a graph-and-path repair layer after boundary extraction. The Final Boundary Centerline is converted to an 8-neighbour Skeleton Graph. Degree-1 pixels become endpoint nodes, adjacent degree>=3 pixels are clustered into logical junction nodes, and paths between graph nodes become diagnostic edges carrying pixel coordinates, length, mean Boundary/Ridge/Color evidence, and curvature.
+
+Repair generation treats Endpoint→Endpoint, Endpoint→Existing Boundary, and Endpoint→Junction as distinct target classes. Candidate geometry is screened by endpoint tangent, distance, and junction-angle constraints. The missing path is then searched with an A* style image-space cost using low Boundary evidence, curvature, dendrite-line penalty, and direction mismatch as penalties. Negative, Exclusion, and protected image-frame pixels are hard barriers, and the search cannot pass through an existing boundary except at the intended target.
+
+The repair stage is additive. A valid proposal must satisfy `baseBoundaryPixels ⊆ finalBoundaryPixels`; diagnostics expose `basePixelsRemovedByRepair` and `preservationInvariant`. A single endpoint cannot be consumed by more than one accepted repair in a pass. Local background-component checks reject repairs that create excessive local splitting.
+
+Automatic adoption is evaluated as ordered constraints rather than a weighted objective: (1) Recall guard, (2) Negative Leakage guard, (3) Verified ROI Precision guard, (4) Exact Closure / Closure Profile improvement, then (5) Alignment/F1 as a tie-break diagnostic. Every accepted repair is retained in the same reversible base-mask mechanism used by Safe/Extended Gap so one action can restore the pre-repair boundary mask.
+
 ## 10. Persistence
 
 A `.graintracer.json` project stores:
