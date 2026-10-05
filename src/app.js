@@ -29,6 +29,12 @@ import {
   validationEvaluationRois,
   verifiedEvaluationRois,
 } from "./evaluation-roles.js";
+import {
+  buildRoiMask,
+  evaluateClassifierGuard,
+  maskedNegativeLeakage,
+  trainLogisticBoundaryClassifier,
+} from "./boundary-classifier.js";
 import { loadAutosave, saveAutosave } from "./storage.js";
 import { tuneLocalSensitivity } from "./local-tune.js";
 import {
@@ -158,6 +164,11 @@ const els = {
   ridgeWeight: $("ridgeWeight"),
   colorWeight: $("colorWeight"),
   dendriteWeight: $("dendriteWeight"),
+  scoreMode: $("scoreMode"),
+  negativeEvidenceWeight: $("negativeEvidenceWeight"),
+  trainClassifierButton: $("trainClassifierButton"),
+  resetClassifierButton: $("resetClassifierButton"),
+  classifierStatus: $("classifierStatus"),
   minComponent: $("minComponent"),
   centerlineNms: $("centerlineNms"),
   overlayOpacity: $("overlayOpacity"),
@@ -266,6 +277,7 @@ const state = {
   fullEvaluationRois: [],
   imageEvaluationRole: null,
   baselineSnapshots: [],
+  classifier: null,
   precisionGuide: createDefaultPrecisionGuideState(),
   comparisonMode: false,
   annotationAssist: false,
@@ -503,6 +515,8 @@ function currentExtractionOptions() {
     ridgeWeight: Number(els.ridgeWeight.value),
     colorWeight: Number(els.colorWeight.value),
     dendriteWeight: Number(els.dendriteWeight.value),
+    scoreMode: els.scoreMode?.value ?? "legacy",
+    negativeEvidenceWeight: Number(els.negativeEvidenceWeight?.value ?? 35),
     minComponent: Number(els.minComponent.value),
     centerlineNms: els.centerlineNms.checked,
   };
@@ -637,6 +651,7 @@ function buildNegativeHoldout() {
 function currentBoundaryOptions() {
   return {
     ...currentExtractionOptions(),
+    classifierModel: state.classifier?.accepted ? state.classifier.model : null,
     localCalibration: state.localCalibration,
     exclusionMask: state.exclusionMask,
     edgeFrameGuard: 1,
@@ -692,6 +707,12 @@ function applySettings(settings = {}) {
   if (extraction.ridgeWeight != null) setRangeValue(els.ridgeWeight, extraction.ridgeWeight);
   if (extraction.colorWeight != null) setRangeValue(els.colorWeight, extraction.colorWeight);
   if (extraction.dendriteWeight != null) setRangeValue(els.dendriteWeight, extraction.dendriteWeight);
+  if (els.scoreMode) els.scoreMode.value = ["legacy", "evidence", "classifier"].includes(extraction.scoreMode)
+    ? extraction.scoreMode
+    : "legacy";
+  if (extraction.negativeEvidenceWeight != null && els.negativeEvidenceWeight) {
+    setRangeValue(els.negativeEvidenceWeight, extraction.negativeEvidenceWeight);
+  }
   if (extraction.minComponent != null) setRangeValue(els.minComponent, extraction.minComponent);
   els.centerlineNms.checked = extraction.centerlineNms == null ? true : Boolean(extraction.centerlineNms);
   if (local.enabled != null) els.localEnabled.checked = Boolean(local.enabled);
@@ -2447,6 +2468,7 @@ function buildProject() {
     fullEvaluationRois: state.fullEvaluationRois,
     imageEvaluationRole: state.imageEvaluationRole,
     baselineSnapshots: state.baselineSnapshots,
+    classifier: state.classifier,
     precisionGuide: precisionGuidePersistentState(),
     localCalibration: state.localCalibration,
     history: state.history,
@@ -2534,6 +2556,9 @@ async function restoreProject(project, source = "プロジェクト") {
   state.baselineSnapshots = Array.isArray(project.baselineSnapshots)
     ? project.baselineSnapshots.map(item => ({ ...item }))
     : [];
+  state.classifier = project.classifier && typeof project.classifier === "object"
+    ? structuredClone(project.classifier)
+    : null;
   state.precisionGuide = createDefaultPrecisionGuideState(project.precisionGuide ?? {});
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -2544,6 +2569,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.localCalibration = project.localCalibration ?? null;
   applySettings(project.settings ?? {});
   updateLocalCalibrationStatus();
+  updateClassifierStatus();
   renderReferenceCanvas();
   // Prefer the persisted manual Negative mask on restore. Rebuilding it from
   // the centerline here could erase legacy/project data when the centerline is
@@ -2921,6 +2947,8 @@ async function loadBmp(file) {
   state.fullEvaluationRois = [];
   state.imageEvaluationRole = null;
   state.baselineSnapshots = [];
+  state.classifier = null;
+  updateClassifierStatus();
   state.precisionGuide = createDefaultPrecisionGuideState();
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
