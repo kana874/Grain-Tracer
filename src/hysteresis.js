@@ -29,6 +29,13 @@ function forbiddenAt(p, negativeMask, exclusionMask) {
   return Boolean(negativeMask?.[p] || exclusionMask?.[p]);
 }
 
+function countMask(mask) {
+  if (!mask) return 0;
+  let count = 0;
+  for (let p = 0; p < mask.length; p += 1) count += mask[p] ? 1 : 0;
+  return count;
+}
+
 export function classifyStrongWeak(score, width, height, options = {}) {
   if (!score || score.length !== width * height) {
     throw new Error("Hysteresis分類用Boundary scoreが不正です。");
@@ -75,8 +82,13 @@ export function trackWeakBoundaries(score, features, options = {}) {
   }
 
   const classified = options.classified ?? classifyStrongWeak(score, width, height, options);
-  const strong = classified.strong;
-  const weak = classified.weak;
+  const strongCandidates = classified.strong;
+  const seedMask = options.seedMask ?? strongCandidates;
+  const weak = options.weakMask ?? classified.weak;
+  if (seedMask.length !== score.length || weak.length !== score.length) {
+    throw new Error("Hysteresis seed/weak maskが不正です。");
+  }
+
   const negativeMask = options.negativeMask ?? null;
   const exclusionMask = options.exclusionMask ?? null;
   const maxTrackingDistance = Math.max(1, Number(options.maxTrackingDistance ?? 12));
@@ -87,7 +99,7 @@ export function trackWeakBoundaries(score, features, options = {}) {
   const maxTangentMismatch = degreeToRad(options.maxTangentMismatchDeg ?? 50);
   const maxCurvature = degreeToRad(options.maxCurvatureDeg ?? 55);
 
-  const accepted = strong.slice();
+  const accepted = new Uint8Array(score.length);
   const distance = new Float32Array(score.length);
   distance.fill(Number.POSITIVE_INFINITY);
   const parentStepAngle = new Float32Array(score.length);
@@ -95,11 +107,14 @@ export function trackWeakBoundaries(score, features, options = {}) {
   const queue = new Int32Array(score.length);
   let head = 0;
   let tail = 0;
+  let strongSeedCount = 0;
 
-  for (let p = 0; p < strong.length; p += 1) {
-    if (!strong[p] || forbiddenAt(p, negativeMask, exclusionMask)) continue;
+  for (let p = 0; p < seedMask.length; p += 1) {
+    if (!seedMask[p] || forbiddenAt(p, negativeMask, exclusionMask)) continue;
+    accepted[p] = 1;
     distance[p] = 0;
     queue[tail++] = p;
+    strongSeedCount += 1;
   }
 
   const rejected = {
@@ -197,13 +212,15 @@ export function trackWeakBoundaries(score, features, options = {}) {
 
   return {
     mask: accepted,
-    strongMask: strong,
+    strongMask: strongCandidates,
+    seedMask,
     weakMask: weak,
     distance,
     diagnostics: {
-      thresholds: classified.thresholds,
-      strongCount: classified.counts.strong,
-      weakCandidateCount: classified.counts.weak,
+      strongCandidateCount: classified.counts.strong,
+      strongSeedCount,
+      strongCount: strongSeedCount,
+      weakCandidateCount: countMask(weak),
       acceptedWeakCount,
       rejectedWeakCount,
       forbiddenCandidateCount: classified.counts.forbidden,
