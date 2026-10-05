@@ -15,6 +15,17 @@ import {
   restoreReferenceMasks,
   validateProject,
 } from "./project.js";
+import {
+  canTuneImage,
+  guardEvaluationRois,
+  normalizeImageEvaluationRole,
+  normalizeRoiEvaluationRole,
+  summarizeEvaluationRoles,
+  testEvaluationRois,
+  trainingEvaluationRois,
+  validationEvaluationRois,
+  verifiedEvaluationRois,
+} from "./evaluation-roles.js";
 import { loadAutosave, saveAutosave } from "./storage.js";
 import { tuneLocalSensitivity } from "./local-tune.js";
 import {
@@ -162,6 +173,9 @@ const els = {
   topologyStatus: $("topologyStatus"),
   historyList: $("historyList"),
   projectStatus: $("projectStatus"),
+  roiRoleSelect: $("roiRoleSelect"),
+  roiRoleStatus: $("roiRoleStatus"),
+  imageEvaluationRoleSelect: $("imageEvaluationRoleSelect"),
   metaName: $("metaName"),
   metaFileSize: $("metaFileSize"),
   metaWidth: $("metaWidth"),
@@ -244,6 +258,8 @@ const state = {
   exclusionMask: null,
   exclusionPixelCount: 0,
   fullEvaluationRois: [],
+  imageEvaluationRole: null,
+  baselineSnapshots: [],
   precisionGuide: createDefaultPrecisionGuideState(),
   comparisonMode: false,
   annotationAssist: false,
@@ -330,7 +346,23 @@ function hasExclusions() {
 }
 
 function verifiedFullEvaluationRois() {
-  return state.fullEvaluationRois.filter(rect => rect?.verified !== false);
+  return verifiedEvaluationRois(state.fullEvaluationRois);
+}
+
+function tuningFullEvaluationRois() {
+  return trainingEvaluationRois(state.fullEvaluationRois);
+}
+
+function validationFullEvaluationRois() {
+  return validationEvaluationRois(state.fullEvaluationRois);
+}
+
+function testFullEvaluationRois() {
+  return testEvaluationRois(state.fullEvaluationRois);
+}
+
+function guardFullEvaluationRois() {
+  return guardEvaluationRois(state.fullEvaluationRois);
 }
 
 function provisionalFullEvaluationRois() {
@@ -350,6 +382,7 @@ function updateControls() {
   const hasAnalysis = Boolean(state.analysisMask);
   const hasRef = hasReference();
   const disabled = state.busy;
+  const tuneAllowed = canTuneImage(state.imageEvaluationRole);
   els.fileInput.disabled = disabled;
   els.borderAssistedFill.disabled = disabled || !hasPreview;
   els.analyzeButton.disabled = disabled || !hasPreview;
@@ -376,12 +409,12 @@ function updateControls() {
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
-  els.autoOptimizeButton.disabled = disabled || !hasPreview || state.precisionGuide.active;
+  els.autoOptimizeButton.disabled = disabled || !hasPreview || state.precisionGuide.active || !tuneAllowed;
   els.precisionGuideButton.disabled = disabled || !hasPreview || state.precisionGuide.active;
   els.precisionVerifyButton.disabled = disabled || !state.precisionGuide.active;
   els.precisionSkipButton.disabled = disabled || !state.precisionGuide.active;
-  els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
-  els.localTuneButton.disabled = disabled || !hasPreview || !hasRef;
+  els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef || !tuneAllowed;
+  els.localTuneButton.disabled = disabled || !hasPreview || !hasRef || !tuneAllowed;
   els.clearLocalCalibrationButton.disabled = disabled || !state.localCalibration;
   els.clearReferenceButton.disabled = disabled || !hasRef;
   els.clearNegativeButton.disabled = disabled || !hasNegativeReference();
@@ -392,6 +425,8 @@ function updateControls() {
   els.loadProjectButton.disabled = disabled || !hasPreview;
   els.exportDiagnosticsButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   els.exportDiagnosticsIndividualButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
+  if (els.imageEvaluationRoleSelect) els.imageEvaluationRoleSelect.disabled = disabled || !hasPreview;
+  updateEvaluationRoleControls();
 }
 
 function setBusy(busy) {
@@ -1617,6 +1652,73 @@ function rebuildExclusionLayer(previewRect = null, showSelection = true) {
   updateAnnotationStatus();
 }
 
+function selectedFullEvaluationRoiIndex() {
+  if (state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0) {
+    return state.precisionGuide.currentRoiIndex;
+  }
+  return state.selectedFullRoiIndex;
+}
+
+function updateEvaluationRoleControls() {
+  const index = selectedFullEvaluationRoiIndex();
+  const rect = index >= 0 ? state.fullEvaluationRois[index] : null;
+  if (els.roiRoleSelect) {
+    els.roiRoleSelect.disabled = state.busy || !rect;
+    els.roiRoleSelect.value = normalizeRoiEvaluationRole(rect?.evaluationRole) ?? "";
+  }
+  if (els.roiRoleStatus) {
+    if (!rect) {
+      els.roiRoleStatus.textContent = "ROIを選択すると役割を設定できます。";
+    } else {
+      const role = normalizeRoiEvaluationRole(rect.evaluationRole);
+      const label = role === "training" ? "Training"
+        : role === "validation" ? "Validation"
+          : role === "test" ? "Test"
+            : "未設定（旧Project互換）";
+      els.roiRoleStatus.textContent = `選択ROI #${index + 1}: ${label}${rect.verified === false ? " / 未確認" : ""}`;
+    }
+  }
+  if (els.imageEvaluationRoleSelect) {
+    els.imageEvaluationRoleSelect.value = normalizeImageEvaluationRole(state.imageEvaluationRole) ?? "";
+  }
+}
+
+function setSelectedRoiEvaluationRole(value) {
+  const index = selectedFullEvaluationRoiIndex();
+  if (index < 0 || !state.fullEvaluationRois[index]) return;
+  const rect = state.fullEvaluationRois[index];
+  const before = { ...rect };
+  const role = normalizeRoiEvaluationRole(value);
+  if (role) rect.evaluationRole = role;
+  else delete rect.evaluationRole;
+  commitReferenceHistory({
+    kind: "roi-edit",
+    index,
+    before,
+    after: { ...rect },
+  });
+  rebuildFullRoiLayer();
+  invalidateEvaluationOnly();
+  scheduleAutosave();
+  updateControls();
+}
+
+function setImageEvaluationRole(value) {
+  state.imageEvaluationRole = normalizeImageEvaluationRole(value);
+  updateEvaluationRoleControls();
+  updateControls();
+  scheduleAutosave();
+  if (state.imageEvaluationRole === "test") {
+    setStatus("画像役割をTestに設定しました。Tune処理は無効です。");
+  } else if (state.imageEvaluationRole === "validation") {
+    setStatus("画像役割をValidationに設定しました。");
+  } else if (state.imageEvaluationRole === "development") {
+    setStatus("画像役割をDevelopmentに設定しました。");
+  } else {
+    setStatus("画像役割を未設定にしました。");
+  }
+}
+
 function currentFullRoiDisplayIndex(showSelection = true) {
   if (!showSelection) return -1;
   if (state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0) {
@@ -1638,6 +1740,7 @@ function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
   );
   applyAnnotationAssistView();
   updateAnnotationStatus();
+  updateEvaluationRoleControls();
 }
 
 function updateAnnotationStatus() {
@@ -1650,11 +1753,13 @@ function updateAnnotationStatus() {
   const invalidFillText = state.closedNegativeInvalidCount
     ? ` / 無効seed ${state.closedNegativeInvalidCount}`
     : "";
-  const verifiedRois = verifiedFullEvaluationRois().length;
-  const provisionalRois = provisionalFullEvaluationRois().length;
+  const roleSummary = summarizeEvaluationRoles(state.fullEvaluationRois);
+  const verifiedRois = roleSummary.verifiedTotal;
+  const provisionalRois = roleSummary.provisional;
+  const roleText = `Tn ${roleSummary.training} / Val ${roleSummary.validation} / Test ${roleSummary.test} / 未設定 ${roleSummary.legacyUnassigned}`;
   const roiText = provisionalRois
-    ? `${verifiedRois}確認済み + ${provisionalRois}候補`
-    : `${verifiedRois}領域`;
+    ? `${verifiedRois}確認済み + ${provisionalRois}候補 (${roleText})`
+    : `${verifiedRois}領域 (${roleText})`;
   els.annotationStatus.textContent =
     `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px) / 画像端Fill: ${borderSeeds}領域 (${borderNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${roiText}`;
 }
@@ -1853,7 +1958,12 @@ function startPrecisionEvaluationGuide({
       }
       return false;
     }
-    for (const rect of suggestions) state.fullEvaluationRois.push(rect);
+    for (const rect of suggestions) {
+      state.fullEvaluationRois.push({
+        ...rect,
+        evaluationRole: normalizeRoiEvaluationRole(rect.evaluationRole) ?? "training",
+      });
+    }
     provisional = state.fullEvaluationRois
       .map((rect, index) => ({ rect, index }))
       .filter(item => item.rect?.verified === false);
@@ -2328,6 +2438,8 @@ function buildProject() {
     closedNegativeSeeds: state.closedNegativeSeeds,
     exclusionRects: state.exclusionRects,
     fullEvaluationRois: state.fullEvaluationRois,
+    imageEvaluationRole: state.imageEvaluationRole,
+    baselineSnapshots: state.baselineSnapshots,
     precisionGuide: precisionGuidePersistentState(),
     localCalibration: state.localCalibration,
     history: state.history,
@@ -2382,7 +2494,7 @@ function scheduleAutosave() {
 }
 
 async function restoreProject(project, source = "プロジェクト") {
-  validateProject(project);
+  project = validateProject(project);
   if (!state.preview || !state.sourceFingerprint) throw new Error("先に対応するBMPを開いてください。");
   if (project.source?.fingerprint && project.source.fingerprint !== state.sourceFingerprint) {
     throw new Error("現在のBMPとプロジェクトの画像指紋が一致しません。");
@@ -2411,6 +2523,10 @@ async function restoreProject(project, source = "プロジェクト") {
     state.preview.width,
     state.preview.height,
   );
+  state.imageEvaluationRole = normalizeImageEvaluationRole(project.imageEvaluationRole);
+  state.baselineSnapshots = Array.isArray(project.baselineSnapshots)
+    ? project.baselineSnapshots.map(item => ({ ...item }))
+    : [];
   state.precisionGuide = createDefaultPrecisionGuideState(project.precisionGuide ?? {});
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -2710,6 +2826,8 @@ async function loadBmp(file) {
   state.exclusionMask = null;
   state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
+  state.imageEvaluationRole = null;
+  state.baselineSnapshots = [];
   state.precisionGuide = createDefaultPrecisionGuideState();
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -2816,6 +2934,8 @@ async function loadBmp(file) {
     state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
+    state.imageEvaluationRole = null;
+    state.baselineSnapshots = [];
     state.precisionGuide = createDefaultPrecisionGuideState();
     state.selectedExclusionIndex = -1;
     state.selectedFullRoiIndex = -1;
@@ -2917,11 +3037,16 @@ function compareCurrent(record = true) {
 
 async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
   if (!state.preview || !hasReference()) return null;
+  if (!canTuneImage(state.imageEvaluationRole)) {
+    setStatus("Test画像ではAuto Tuneを実行できません。");
+    return null;
+  }
   ensureClosedNegativeFresh();
   if (manageBusy) setBusy(true);
   try {
     const features = await ensureFeatures();
-    const useCompleteRoi = hasFullEvaluationRois();
+    const tuningRois = tuningFullEvaluationRois();
+    const useCompleteRoi = tuningRois.length > 0;
     const split = splitReferenceCenterline(
       state.referenceCenterline,
       state.preview.width,
@@ -2946,7 +3071,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
       ...currentComparisonOptions(),
       negativeMask: tuningNegative,
       exclusionMask: state.exclusionMask,
-      fullEvaluationRois: useCompleteRoi ? verifiedFullEvaluationRois() : null,
+      fullEvaluationRois: useCompleteRoi ? tuningRois : null,
       current: currentExtractionOptions(),
       topologyDiagnostics: {
         seeds: state.closedNegativeSeeds,
@@ -3001,7 +3126,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
         state.referenceCenterline,
         state.preview.width,
         state.preview.height,
-        verifiedFullEvaluationRois(),
+        tuningRois,
         {
           tolerance: currentComparisonOptions().tolerance,
           exclusionMask: state.exclusionMask,
@@ -3048,6 +3173,10 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
 
 async function localTune({ manageBusy = true, recordHistory = true, scheduleSave = true } = {}) {
   if (!state.preview || !hasReference()) return null;
+  if (!canTuneImage(state.imageEvaluationRole)) {
+    setStatus("Test画像では局所自動調整を実行できません。");
+    return null;
+  }
   ensureClosedNegativeFresh();
   if (manageBusy) setBusy(true);
   try {
@@ -3065,7 +3194,7 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
     const calibration = await tuneLocalSensitivity(features, tuningReference, {
       ...currentComparisonOptions(),
       completeReferenceCenterline: state.referenceCenterline,
-      verifiedFullEvaluationRois: verifiedFullEvaluationRois(),
+      verifiedFullEvaluationRois: tuningFullEvaluationRois(),
       negativeMask: negativeHoldout.tuningMask,
       exclusionMask: state.exclusionMask,
       ...extraction,
@@ -3168,14 +3297,14 @@ function evaluateOptimizationMask(mask = state.analysisMask) {
       rows: 4,
     },
   );
-  const verifiedRois = verifiedFullEvaluationRois();
-  const roiMetrics = verifiedRois.length
+  const guardRois = guardFullEvaluationRois();
+  const roiMetrics = guardRois.length
     ? computeFullEvaluationRoiMetrics(
       mask,
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      verifiedRois,
+      guardRois,
       {
         tolerance: currentComparisonOptions().tolerance,
         exclusionMask: state.exclusionMask,
@@ -3434,6 +3563,11 @@ async function guardedGapOptimizationPass(mode) {
 
 async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
   if (!state.preview) return null;
+  if (!canTuneImage(state.imageEvaluationRole)) {
+    els.autoOptimizeStatus.textContent = "Test画像では自動最適化を実行できません。評価・診断のみ使用できます。";
+    setStatus(els.autoOptimizeStatus.textContent);
+    return null;
+  }
   if (state.precisionGuide.active && !skipPrecisionGate) {
     setStatus("精密評価ガイドを完了するか、今回の候補を省略してください。");
     return { waitingForPrecisionGuide: true };
@@ -4026,7 +4160,7 @@ function endRectInteraction(event) {
       const index = rects.length;
       const storedRect = isExclusion
         ? { ...rect }
-        : { ...rect, verified: true, source: "manual" };
+        : { ...rect, verified: true, source: "manual", evaluationRole: "training" };
       rects.push(storedRect);
       setSelectedRectIndex(interaction.kind, index);
       commitReferenceHistory({ kind: historyPrefix + "-add", index, rect: { ...storedRect } });
@@ -4108,6 +4242,12 @@ els.autoOptimizeButton.addEventListener("click", () => runOneClickOptimization()
 els.precisionGuideButton.addEventListener("click", () => startPrecisionEvaluationGuide({ autoRunAfterComplete: false, forceRegenerate: true }));
 els.precisionVerifyButton.addEventListener("click", verifyCurrentPrecisionRoi);
 els.precisionSkipButton.addEventListener("click", skipPrecisionGuide);
+if (els.roiRoleSelect) {
+  els.roiRoleSelect.addEventListener("change", () => setSelectedRoiEvaluationRole(els.roiRoleSelect.value));
+}
+if (els.imageEvaluationRoleSelect) {
+  els.imageEvaluationRoleSelect.addEventListener("change", () => setImageEvaluationRole(els.imageEvaluationRoleSelect.value));
+}
 els.autoTuneButton.addEventListener("click", () => autoTune());
 els.localTuneButton.addEventListener("click", () => localTune());
 els.clearLocalCalibrationButton.addEventListener("click", () => clearLocalCalibration(false));
