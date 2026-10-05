@@ -142,7 +142,7 @@ test("Topology-first mode targets labelled closure regions and keeps only contri
     fixture.height,
     topologyTargetOptions(fixture),
   );
-  assert.match(proposal.revision, /^4\.5-/);
+  assert.match(proposal.revision, /^4\.6-/);
   assert.equal(proposal.topologyTargets.activeTargetCount, 1);
   assert.ok(proposal.acceptedRepairCount >= 1);
   assert.equal(proposal.topologyContributingCount, proposal.acceptedRepairCount);
@@ -458,4 +458,20 @@ test("Overlapping target membership preserves a shared repair despite different 
   assert.equal(candidates[0].topologyTargetId, 2);
   context.targetMemberships.set(b, new Set([3]));
   assert.equal(candidateGeometry(graph, boundary, width, height, {}, context).length, 0);
+});
+
+
+test("Escape-guided search keeps the adaptive budget bounded and preserves base pixels", () => {
+  const f = squareGapFixture(3);
+  for (const budget of [0, 2]) {
+    const proposal = proposeTopologyRepairs(f.boundary, f.width, f.height, {
+      ...topologyTargetOptions(f), maxCandidates: 3, maxAdditionalCandidates: budget,
+    });
+    assert.ok(proposal.leakGuidance.targetsWithEscapePath > 0);
+    assert.ok(proposal.leakGuidance.selectedOnEscapePath > 0);
+    assert.ok(proposal.adaptiveSearch.additionalCandidateCount <= budget);
+    assert.equal(proposal.sourceCandidateCount, proposal.adaptiveSearch.initialCandidateCount + proposal.adaptiveSearch.additionalCandidateCount);
+    assert.equal(proposal.basePixelsRemovedByRepair, 0);
+    assert.ok(proposal.acceptedRepairCount > 0);
+  }
 });

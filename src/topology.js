@@ -1170,6 +1170,7 @@ export function createTargetClosureEvaluator(width, height, options = {}) {
   for (let p = 0; p < size; p++) byLabel.get(core.labels[p])?.pixels.push(p);
   const maxRadius = Math.max(0, Math.min(4, Math.round(options.topologyProbeMaxRadius ?? 3)));
   const cache = new WeakMap();
+  const escapeCache = new WeakMap();
   const visited = new Uint32Array(size);
   const queue = new Int32Array(size);
   let stamp = 0;
@@ -1188,7 +1189,50 @@ export function createTargetClosureEvaluator(width, height, options = {}) {
   }
   return {
     stats,
-    invalidate(mask) { cache.delete(mask); },
+    invalidate(mask) { cache.delete(mask); escapeCache.delete(mask); },
+    // A shared reverse flood gives each open background pixel a route to the
+    // true image edge. It guides search only; evaluate remains the authority.
+    escapePath(mask, seedP, radius = 0) {
+      const selected = groups.get(fill.labels[seedP]) ?? [];
+      if (!selected.length || selected.some(item => item.borderAssisted)) return [];
+      radius = Math.max(0, Math.min(maxRadius, Math.round(radius)));
+      let routes = escapeCache.get(mask);
+      if (!routes) escapeCache.set(mask, routes = new Map());
+      const { wall, background } = baseFor(mask)[radius];
+      let parent = routes.get(radius);
+      if (!parent) {
+        parent = new Int32Array(size).fill(-2);
+        let head = 0, tail = 0;
+        for (let p = 0; p < size; p++) {
+          const x = p % width, y = Math.floor(p / width);
+          if (!wall[p] && (x === 0 || y === 0 || x === width - 1 || y === height - 1)) {
+            parent[p] = -1; queue[tail++] = p;
+          }
+        }
+        while (head < tail) {
+          const p = queue[head++], x = p % width, y = Math.floor(p / width);
+          const neighbors = [];
+          if (x > 0) neighbors.push(p - 1);
+          if (x + 1 < width) neighbors.push(p + 1);
+          if (y > 0) neighbors.push(p - width);
+          if (y + 1 < height) neighbors.push(p + width);
+          for (const np of neighbors) if (!wall[np] && parent[np] === -2) {
+            parent[np] = p; queue[tail++] = np;
+          }
+        }
+        routes.set(radius, parent);
+      }
+      let start = -1, best = Infinity;
+      const sx = seedP % width, sy = Math.floor(seedP / width);
+      for (const item of selected) for (const p of item.pixels) {
+        if (wall[p] || !background.edgeMasks[background.labels[p]]) continue;
+        const distance = (p % width - sx) ** 2 + (Math.floor(p / width) - sy) ** 2;
+        if (distance < best) { start = p; best = distance; }
+      }
+      const path = [];
+      for (let p = start; p >= 0 && parent[p] !== -2; p = parent[p]) path.push(p);
+      return path;
+    },
     evaluate(mask, seedP, additions = null) {
       stats.evaluations++;
       const selected = groups.get(fill.labels[seedP]) ?? [];

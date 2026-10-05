@@ -92,3 +92,23 @@ test('Border-assisted targets use the shared full-image fallback', () => {
   assert.deepEqual(fast, targetClosureSignature(f.boundary, f.width, f.height, f.target, options));
   assert.equal(evaluator.stats.fallbackEvaluations, 1);
 });
+
+
+test('Escape guidance follows a real gap to the image edge and disappears after repair', () => {
+  const f = fixture();
+  for (let x = 25; x <= 38; x++) f.boundary[8 * f.width + x] = 0;
+  const evaluator = createTargetClosureEvaluator(f.width, f.height, { closedNegativeMask: f.closed });
+  const route = evaluator.escapePath(f.boundary, f.target.seedP, 0);
+  assert.ok(route.length > 0);
+  assert.ok(route.some(p => Math.floor(p / f.width) === 8 && p % f.width >= 25 && p % f.width <= 38));
+  for (let i = 1; i < route.length; i++) {
+    const a = route[i - 1], b = route[i];
+    assert.equal(Math.abs(a % f.width - b % f.width) + Math.abs(Math.floor(a / f.width) - Math.floor(b / f.width)), 1);
+    assert.equal(f.boundary[b], 0);
+  }
+  const end = route.at(-1), x = end % f.width, y = Math.floor(end / f.width);
+  assert.ok(x === 0 || y === 0 || x === f.width - 1 || y === f.height - 1);
+  for (let x = 25; x <= 38; x++) f.boundary[8 * f.width + x] = 1;
+  evaluator.invalidate(f.boundary);
+  assert.deepEqual(evaluator.escapePath(f.boundary, f.target.seedP, 0), []);
+});

@@ -1,3 +1,10 @@
+## Repair revision 4.6
+
+- Prioritize candidates intersecting an open core-to-image-edge route at the last open closure radius. Shared reverse floods are cached per mask and radius. Guidance never changes acceptance guards.
+- Evaluate up to 180 reserve candidates for targets without individually improving candidates after the initial 360-candidate pass.
+- Export leak guidance and adaptive-search counts in diagnostics.
+- Real-image efficacy and duration require a new run using diagnostic (11) settings and annotations.
+
 ## Repair revision 4.5
 
 - Preserve all overlapping topology target memberships when assigning repair candidates.

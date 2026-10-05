@@ -482,6 +482,8 @@ export function buildDiagnosticReport(input) {
     individuallyImprovingCandidateCount: topologyRepair.individuallyImprovingCandidateCount ?? 0,
     topologyTargets: topologyRepair.topologyTargets ?? null,
     closureEvaluation: topologyRepair.closureEvaluation ?? null,
+    leakGuidance: topologyRepair.leakGuidance ?? null,
+    adaptiveSearch: topologyRepair.adaptiveSearch ?? null,
     targetDiagnostics: topologyRepair.targetDiagnostics ?? [],
     acceptedBundles: (topologyRepair.acceptedBundles ?? []).slice(0, 120).map(bundle => ({
       id: bundle.id ?? null,

@@ -710,7 +710,8 @@ export function selectBalancedCandidates(byType, maxCandidates) {
   }
 
   leftovers.sort((a, b) =>
-    (b.topologyPriority ?? 0) - (a.topologyPriority ?? 0)
+    (b.leakRouteScore ?? 0) - (a.leakRouteScore ?? 0)
+    || (b.topologyPriority ?? 0) - (a.topologyPriority ?? 0)
     || candidateTypePriority(b.type) - candidateTypePriority(a.type)
     || (b.facing ?? 0) - (a.facing ?? 0)
     || a.distance - b.distance);
@@ -739,6 +740,26 @@ export function candidateGeometry(graph, mask, width, height, options, topologyC
     "endpoint-junction": [],
   };
   const dedupe = new Set();
+  const leakRoutes = new Map();
+  for (const target of topologyContext?.targets ?? []) {
+    if (!target.before) continue;
+    const radius = Math.max(0, Math.min(target.before.maxRadius, target.before.requiredRadius - 1));
+    leakRoutes.set(target.id, { radius, pixels: new Set(
+      options.targetClosureEvaluator?.escapePath(mask, target.seedP, radius) ?? []) });
+  }
+  const leakScore = (candidate, id) => {
+    const route = leakRoutes.get(id);
+    if (!route?.pixels.size) return 0;
+    const steps = Math.max(1, Math.ceil(candidate.distance));
+    for (let i = 1; i < steps; i++) {
+      const x = Math.round(candidate.x1 + (candidate.x2 - candidate.x1) * i / steps);
+      const y = Math.round(candidate.y1 + (candidate.y2 - candidate.y1) * i / steps);
+      for (let dy = -route.radius; dy <= route.radius; dy++) for (let dx = -route.radius; dx <= route.radius; dx++) {
+        if (inBounds(width, height, x + dx, y + dy) && route.pixels.has(indexOf(width, x + dx, y + dy))) return 1;
+      }
+    }
+    return 0;
+  };
 
   const topologyMeta = p => {
     if (!topologyContext) return { id: 0, priority: 0, target: null };
@@ -771,6 +792,7 @@ export function candidateGeometry(graph, mask, width, height, options, topologyC
     const enriched = {
       ...candidate,
       topologyTargetId: topologyTargetId || null,
+      leakRouteScore: leakScore(candidate, topologyTargetId),
       topologyPriority: topologyTarget?.priority ?? Math.max(sourceMeta.priority, targetMeta.priority),
       topologyRequiredRadiusBefore: topologyTarget?.before?.requiredRadius ?? null,
     };
@@ -877,12 +899,21 @@ export function candidateGeometry(graph, mask, width, height, options, topologyC
 
   for (const items of Object.values(byType)) {
     items.sort((a, b) =>
-      (b.topologyPriority ?? 0) - (a.topologyPriority ?? 0)
+      (b.leakRouteScore ?? 0) - (a.leakRouteScore ?? 0)
+      || (b.topologyPriority ?? 0) - (a.topologyPriority ?? 0)
       || (b.facing ?? 0) - (a.facing ?? 0)
       || a.distance - b.distance);
   }
 
   const selected = selectBalancedCandidates(byType, maxCandidates);
+  const selectedSet = new Set(selected);
+  const reserveByType = Object.fromEntries(Object.entries(byType).map(([type, items]) =>
+    [type, items.filter(item => !selectedSet.has(item))]));
+  selected.reserveCandidates = selectBalancedCandidates(reserveByType,
+    Math.max(0, Math.min(360, Math.round(options.maxAdditionalCandidates ?? maxCandidates / 2))));
+  selected.leakGuidance = { targetCount: leakRoutes.size,
+    targetsWithEscapePath: [...leakRoutes.values()].filter(route => route.pixels.size).length,
+    selectedOnEscapePath: selected.filter(item => item.leakRouteScore > 0).length };
   selected.candidateCountsByType = Object.fromEntries(
     Object.entries(byType).map(([type, items]) => [type, {
       generated: items.length,
@@ -1385,7 +1416,18 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     limit: 0,
   };
 
-  for (const candidate of sourceCandidates) {
+  const initialCandidateCount = sourceCandidates.length;
+  let additionalCandidateCount = 0;
+  for (let candidateIndex = 0; candidateIndex <= sourceCandidates.length; candidateIndex++) {
+    if (candidateIndex === initialCandidateCount) {
+      const improvingTargets = new Set(viable.filter(item => item.topologyContribution?.improved).map(item => item.topologyTargetId));
+      const extra = (sourceCandidates.reserveCandidates ?? []).filter(item =>
+        item.topologyTargetId && !improvingTargets.has(item.topologyTargetId));
+      sourceCandidates.push(...extra);
+      additionalCandidateCount = extra.length;
+    }
+    if (candidateIndex >= sourceCandidates.length) break;
+    const candidate = sourceCandidates[candidateIndex];
     const source = pointFromIndex(candidate.sourceP, width);
     const target = pointFromIndex(candidate.targetP, width);
     if (protectedByFrame(width, height, source.x, source.y, guard.protectedFrameMargin)
@@ -1672,7 +1714,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.5-overlapping-target-candidates",
+    revision: "4.6-escape-guided-adaptive-search",
     mask,
     repairMask,
     graph,
@@ -1690,6 +1732,8 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     individuallyImprovingCandidateCount,
     acceptedBundles,
     bundleSearch,
+    leakGuidance: sourceCandidates.leakGuidance,
+    adaptiveSearch: { initialCandidateCount, additionalCandidateCount },
     closureEvaluation: options.targetClosureEvaluator?.stats ?? null,
     targetDiagnostics: (topologyContext?.targets ?? []).map(target => ({
       targetId: target.id, seedP: target.seedP, coreRegionCount: target.before.coreRegionCount,
