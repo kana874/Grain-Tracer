@@ -6,8 +6,10 @@ import {
 } from "./evaluation.js";
 import { buildBaselineSnapshot } from "./baseline.js";
 import {
+  maskExcludingRois,
   partitionEvaluationRois,
   summarizeEvaluationRoles,
+  tuningExcludedRois,
   verifiedEvaluationRois,
 } from "./evaluation-roles.js";
 
@@ -325,15 +327,32 @@ export function buildDiagnosticReport(input) {
     ? regionsWithReference.reduce((sum, region) => sum + region.f1, 0) / regionsWithReference.length
     : 0;
 
-  const split = splitReferenceCenterline(
+  const tuneExcluded = tuningExcludedRois(fullEvaluationRois);
+  const tuningReferenceCenterline = maskExcludingRois(
     referenceCenterline,
+    preview.width,
+    preview.height,
+    tuneExcluded,
+  );
+  const split = splitReferenceCenterline(
+    tuningReferenceCenterline,
     preview.width,
     preview.height,
     { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
   );
   const negativeSplit = negativeHoldout ?? null;
-  const tuningNegativeMask = negativeSplit?.tuningMask ?? negativeMask;
-  const validationNegativeMask = negativeSplit?.validationMask ?? null;
+  const tuningNegativeMask = maskExcludingRois(
+    negativeSplit?.tuningMask ?? negativeMask,
+    preview.width,
+    preview.height,
+    tuneExcluded,
+  );
+  const validationNegativeMask = maskExcludingRois(
+    negativeSplit?.validationMask ?? null,
+    preview.width,
+    preview.height,
+    tuneExcluded,
+  );
   const tuningMetrics = computeRegionalMetrics(
     prediction,
     split.tuneMask,
