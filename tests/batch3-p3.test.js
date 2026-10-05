@@ -73,6 +73,22 @@ function baseOptions(fixture) {
   };
 }
 
+function topologyTargetOptions(fixture) {
+  const closedNegativeMask = mask(fixture.width, fixture.height);
+  for (let y = 11; y <= 28; y += 1) {
+    for (let x = 11; x <= 28; x += 1) set(closedNegativeMask, fixture.width, x, y);
+  }
+  return {
+    ...baseOptions(fixture),
+    closedNegativeMask,
+    closedNegativeSeeds: [{ x: 20, y: 20, borderAssisted: false }],
+    requireTopologyTarget: true,
+    topologyTargetMargin: 10,
+    topologyProbeMaxRadius: 3,
+    maxCandidates: 12,
+  };
+}
+
 test("Skeleton Graph exposes endpoint/junction nodes and edge diagnostics", () => {
   const width = 30;
   const height = 30;
@@ -115,6 +131,23 @@ for (const gapPx of [1, 2, 3]) {
     assert.ok(proposal.acceptedPaths.some(item => item.type === "endpoint-endpoint"));
   });
 }
+
+test("Topology-first mode targets labelled closure regions and keeps only contributing repairs", () => {
+  const fixture = squareGapFixture(3);
+  const proposal = proposeTopologyRepairs(
+    fixture.boundary,
+    fixture.width,
+    fixture.height,
+    topologyTargetOptions(fixture),
+  );
+  assert.match(proposal.revision, /^4\.1-/);
+  assert.equal(proposal.topologyTargets.activeTargetCount, 1);
+  assert.ok(proposal.acceptedRepairCount >= 1);
+  assert.equal(proposal.topologyContributingCount, proposal.acceptedRepairCount);
+  assert.ok(proposal.acceptedPaths.every(item => item.topologyTargetId != null));
+  assert.ok(proposal.acceptedPaths.every(item => item.topologyContribution?.improved === true));
+  for (const p of fixture.missing) assert.equal(proposal.mask[p], 1);
+});
 
 test("Repair improves exact closure and mean required radius without worsening Open@3", () => {
   const fixture = squareGapFixture(3);
@@ -211,6 +244,8 @@ test("Endpoint can repair to an existing ordinary boundary", () => {
     negativeGuardRadius: 0,
     protectedFrameMargin: 1,
   });
+  assert.ok((proposal.candidateCountsByType["endpoint-boundary"]?.generated ?? 0) >= 1);
+  assert.ok((proposal.candidateCountsByType["endpoint-boundary"]?.selected ?? 0) >= 1);
   assert.ok(proposal.acceptedPaths.some(item => item.type === "endpoint-boundary"));
   for (let y = 16; y <= 19; y += 1) assert.equal(proposal.mask[y * width + 20], 1);
 });
@@ -235,6 +270,8 @@ test("Endpoint can repair to a junction", () => {
     protectedFrameMargin: 1,
   });
   assert.ok(proposal.graph.junctionCount >= 1);
+  assert.ok((proposal.candidateCountsByType["endpoint-junction"]?.generated ?? 0) >= 1);
+  assert.ok((proposal.candidateCountsByType["endpoint-junction"]?.selected ?? 0) >= 1);
   assert.ok(proposal.acceptedPaths.some(item => item.type === "endpoint-junction"));
 });
 
