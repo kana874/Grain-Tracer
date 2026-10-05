@@ -2941,6 +2941,7 @@ async function exportDiagnostics(mode = "zip") {
       appVersion: APP_VERSION,
       imageEvaluationRole: state.imageEvaluationRole,
       baselineSnapshots: state.baselineSnapshots,
+      classifier: state.classifier,
     });
 
     const comparison = renderComparisonOverlay(
@@ -3394,7 +3395,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
       negativeMask: tuningNegative,
       exclusionMask: state.exclusionMask,
       fullEvaluationRois: useCompleteRoi ? tuningRois : null,
-      current: currentExtractionOptions(),
+      current: currentBoundaryOptions(),
       topologyDiagnostics: {
         seeds: state.closedNegativeSeeds,
         options: closureDiagnosticOptions(),
@@ -3407,6 +3408,9 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
     setRangeValue(els.ridgeWeight, result.parameters.ridgeWeight);
     setRangeValue(els.colorWeight, result.parameters.colorWeight);
     setRangeValue(els.dendriteWeight, result.parameters.dendriteWeight ?? Number(els.dendriteWeight.value));
+    if (result.parameters.negativeEvidenceWeight != null && els.negativeEvidenceWeight) {
+      setRangeValue(els.negativeEvidenceWeight, result.parameters.negativeEvidenceWeight);
+    }
     setRangeValue(els.minComponent, result.parameters.minComponent);
     state.localCalibration = null;
     updateLocalCalibrationStatus();
@@ -4639,6 +4643,18 @@ bindRange(els.darkWeight, $("darkWeightValue"), extractionSettingChanged);
 bindRange(els.ridgeWeight, $("ridgeWeightValue"), extractionSettingChanged);
 bindRange(els.colorWeight, $("colorWeightValue"), extractionSettingChanged);
 bindRange(els.dendriteWeight, $("dendriteWeightValue"), extractionSettingChanged);
+if (els.negativeEvidenceWeight) {
+  bindRange(els.negativeEvidenceWeight, $("negativeEvidenceWeightValue"), extractionSettingChanged);
+}
+els.scoreMode?.addEventListener("change", () => {
+  if (els.scoreMode.value === "classifier" && !state.classifier?.accepted) {
+    els.scoreMode.value = "legacy";
+    setStatus("ClassifierはGuard合格後に選択できます。");
+  }
+  extractionSettingChanged();
+});
+els.trainClassifierButton?.addEventListener("click", trainBoundaryClassifier);
+els.resetClassifierButton?.addEventListener("click", resetBoundaryClassifier);
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
 els.centerlineNms.addEventListener("change", extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), scheduleAutosave);
@@ -4691,7 +4707,8 @@ const gapSettingChanged = () => {
     }
     els.gapStatus.textContent = "Gap Bridge: 設定変更のため適用を自動解除しました";
   }
-  updateControls();
+  updateClassifierStatus();
+updateControls();
   scheduleAutosave();
 };
 bindRange(els.gapMaxDistance, $("gapMaxDistanceValue"), gapSettingChanged);
