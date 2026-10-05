@@ -4,6 +4,14 @@ import {
   computeRegionalMetrics,
   splitReferenceCenterline,
 } from "./evaluation.js";
+import { buildBaselineSnapshot } from "./baseline.js";
+import {
+  maskExcludingRois,
+  partitionEvaluationRois,
+  summarizeEvaluationRoles,
+  tuningExcludedRois,
+  verifiedEvaluationRois,
+} from "./evaluation-roles.js";
 
 function quantile(sorted, q) {
   if (!sorted.length) return 0;
@@ -238,6 +246,8 @@ export function buildDiagnosticReport(input) {
     gapBridge,
     algorithmVersion,
     appVersion,
+    imageEvaluationRole,
+    baselineSnapshots,
   } = input;
 
   const comparison = settings.comparison;
@@ -279,8 +289,10 @@ export function buildDiagnosticReport(input) {
       exclusionMask,
     },
   );
-  const verifiedFullEvaluationRois = (fullEvaluationRois ?? []).filter(rect => rect?.verified !== false);
+  const verifiedFullEvaluationRois = verifiedEvaluationRois(fullEvaluationRois);
   const provisionalFullEvaluationRois = (fullEvaluationRois ?? []).filter(rect => rect?.verified === false);
+  const evaluationRoleParts = partitionEvaluationRois(fullEvaluationRois);
+  const evaluationRoleSummary = summarizeEvaluationRoles(fullEvaluationRois);
   const fullEvaluationRoi = computeFullEvaluationRoiMetrics(
     prediction,
     referenceCenterline,
@@ -292,21 +304,55 @@ export function buildDiagnosticReport(input) {
       exclusionMask,
     },
   );
+  const roleRoiMetrics = {};
+  for (const role of ["training", "validation", "test", "legacy"]) {
+    const rois = evaluationRoleParts[role] ?? [];
+    roleRoiMetrics[role] = rois.length
+      ? computeFullEvaluationRoiMetrics(
+        prediction,
+        referenceCenterline,
+        preview.width,
+        preview.height,
+        rois,
+        {
+          tolerance: comparison.tolerance,
+          exclusionMask,
+        },
+      )
+      : null;
+  }
 
   const regionsWithReference = metrics.regions.filter(region => region.referencePixels > 0);
   const macroRegionF1 = regionsWithReference.length
     ? regionsWithReference.reduce((sum, region) => sum + region.f1, 0) / regionsWithReference.length
     : 0;
 
-  const split = splitReferenceCenterline(
+  const tuneExcluded = tuningExcludedRois(fullEvaluationRois);
+  const tuningReferenceCenterline = maskExcludingRois(
     referenceCenterline,
+    preview.width,
+    preview.height,
+    tuneExcluded,
+  );
+  const split = splitReferenceCenterline(
+    tuningReferenceCenterline,
     preview.width,
     preview.height,
     { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
   );
   const negativeSplit = negativeHoldout ?? null;
-  const tuningNegativeMask = negativeSplit?.tuningMask ?? negativeMask;
-  const validationNegativeMask = negativeSplit?.validationMask ?? null;
+  const tuningNegativeMask = maskExcludingRois(
+    negativeSplit?.tuningMask ?? negativeMask,
+    preview.width,
+    preview.height,
+    tuneExcluded,
+  );
+  const validationNegativeMask = maskExcludingRois(
+    negativeSplit?.validationMask ?? null,
+    preview.width,
+    preview.height,
+    tuneExcluded,
+  );
   const tuningMetrics = computeRegionalMetrics(
     prediction,
     split.tuneMask,
@@ -338,6 +384,21 @@ export function buildDiagnosticReport(input) {
     )
     : null;
 
+  const boundaryPixelCount = prediction.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  const currentBaseline = buildBaselineSnapshot({
+    sourceFingerprint: source?.fingerprint ?? null,
+    appVersion,
+    algorithmVersion,
+    multiTolerance,
+    metrics,
+    fullEvaluationRoi,
+    topology,
+    boundaryPixelCount,
+    unknownPredictionCount: metrics.unknownPrediction,
+    evaluationRoles: evaluationRoleSummary,
+    imageEvaluationRole: imageEvaluationRole ?? null,
+  });
+
   const regions = metrics.regions.map(region => ({
     rx: region.rx,
     ry: region.ry,
@@ -363,7 +424,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v14",
+    schema: "graintracer-diagnostic-v15",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -392,7 +453,7 @@ export function buildDiagnosticReport(input) {
         dendrite: 14,
       },
       localCalibrationGrid: "4x4",
-      localCalibrationObjective: "partial-label-plus-verified-roi-when-available",
+      localCalibrationObjective: "partial-label-plus-training-roi-only; validation-for-guard; test-final-only",
       localCalibrationPolicy: "v2.1-measured-zero-anchor-adjacent-only-propagation-regional-recall-guard",
       localCalibrationMaxRegionalRecallDrop: 0.02,
       localCalibrationPropagationRadiusCells: Math.SQRT2,
@@ -404,6 +465,20 @@ export function buildDiagnosticReport(input) {
       oneClickStageDiagnostics: true,
     },
     precisionGuide: precisionGuide ?? null,
+    evaluationRoles: {
+      imageRole: imageEvaluationRole ?? null,
+      counts: evaluationRoleSummary,
+      policy: {
+        training: "eligible for Auto Tune / Local Tune / classifier / hysteresis tuning",
+        validation: "eligible for candidate selection and guards; excluded from direct learning",
+        test: "final evaluation only; excluded from tune, parameter selection and guards",
+        legacyUnassigned: "backward-compatible pre-Batch-1 behaviour until explicitly assigned",
+      },
+    },
+    baseline: {
+      current: currentBaseline,
+      recorded: (baselineSnapshots ?? []).map(item => ({ ...item })),
+    },
     localCalibration: localCalibration ?? null,
     performance: {
       featureComputeMs: performance?.featureComputeMs ?? null,
@@ -446,6 +521,7 @@ export function buildDiagnosticReport(input) {
       },
       multiTolerance,
       fullEvaluationRoi,
+      fullEvaluationRoiByRole: roleRoiMetrics,
       tuning: {
         positiveRecall: tuningMetrics.positiveRecall,
         negativeLeakage: tuningMetrics.negativeLeakage,
@@ -527,6 +603,7 @@ export function buildDiagnosticReport(input) {
       excludedPixels: metrics.excludedPixels,
       fullEvaluationRoiCount: verifiedFullEvaluationRois.length,
       provisionalFullEvaluationRoiCount: provisionalFullEvaluationRois.length,
+      fullEvaluationRoiRoleCounts: evaluationRoleSummary,
       fullEvaluationRoiPixels: fullEvaluationRoi.roiPixels,
     },
     featureStatistics: {
@@ -574,6 +651,7 @@ export function buildDiagnosticReport(input) {
       "Topology v3.0 adds a Minimum Closure Radius profile over 0/1/2/3 px probes so topology improvement can be measured even when exact 0 px closure remains zero.",
       "Precision Guide v2 uses an 8x8 candidate grid. With no Positive reference, three spatially separated ROI candidates are selected deterministically from the source fingerprint; later rounds use active selection from Recall, Negative Leakage, prediction excess, Local risk, and spatial novelty.",
       "Guided precision-evaluation ROI suggestions remain provisional until the user explicitly confirms that every visible boundary inside the ROI has been labelled; only verified ROIs contribute formal True Precision / Recall / F1.",
+      "Batch 1 separates Complete Evaluation ROIs into Training / Validation / Test roles. Test ROIs are diagnostic-only and are never used for Tune, parameter selection, or Guard decisions.",
       "Extended Gap evaluates paths beyond the Safe Gap distance up to 8 preview pixels and requires Ridge/Color path evidence; it is preview-only until the user explicitly applies the displayed proposal.",
       "Gap post-processing stores before/after closure snapshots and closed-region/closure-rate deltas in diagnostic JSON.",
       "Evaluation mode is Partial Label: Positive=boundary, Negative=non-boundary, Unknown=unlabelled.",

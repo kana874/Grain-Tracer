@@ -15,6 +15,20 @@ import {
   restoreReferenceMasks,
   validateProject,
 } from "./project.js";
+import {
+  canTuneImage,
+  guardEvaluationRois,
+  guardExcludedRois,
+  maskExcludingRois,
+  normalizeImageEvaluationRole,
+  normalizeRoiEvaluationRole,
+  summarizeEvaluationRoles,
+  testEvaluationRois,
+  trainingEvaluationRois,
+  tuningExcludedRois,
+  validationEvaluationRois,
+  verifiedEvaluationRois,
+} from "./evaluation-roles.js";
 import { loadAutosave, saveAutosave } from "./storage.js";
 import { tuneLocalSensitivity } from "./local-tune.js";
 import {
@@ -31,6 +45,7 @@ import {
   imageDataToBlob,
 } from "./diagnostics.js";
 import { buildStoredZip } from "./zip.js";
+import { buildBaselineSnapshot } from "./baseline.js";
 import {
   PRECISION_GUIDE_COLS,
   PRECISION_GUIDE_ROWS,
@@ -132,6 +147,8 @@ const els = {
   loadProjectButton: $("loadProjectButton"),
   exportDiagnosticsButton: $("exportDiagnosticsButton"),
   exportDiagnosticsIndividualButton: $("exportDiagnosticsIndividualButton"),
+  recordBaselineButton: $("recordBaselineButton"),
+  baselineStatus: $("baselineStatus"),
   autosaveEnabled: $("autosaveEnabled"),
   zoomLabel: $("zoomLabel"),
   statusText: $("statusText"),
@@ -162,6 +179,9 @@ const els = {
   topologyStatus: $("topologyStatus"),
   historyList: $("historyList"),
   projectStatus: $("projectStatus"),
+  roiRoleSelect: $("roiRoleSelect"),
+  roiRoleStatus: $("roiRoleStatus"),
+  imageEvaluationRoleSelect: $("imageEvaluationRoleSelect"),
   metaName: $("metaName"),
   metaFileSize: $("metaFileSize"),
   metaWidth: $("metaWidth"),
@@ -244,6 +264,8 @@ const state = {
   exclusionMask: null,
   exclusionPixelCount: 0,
   fullEvaluationRois: [],
+  imageEvaluationRole: null,
+  baselineSnapshots: [],
   precisionGuide: createDefaultPrecisionGuideState(),
   comparisonMode: false,
   annotationAssist: false,
@@ -322,7 +344,7 @@ function hasReference() {
 }
 
 function hasNegativeReference() {
-  return state.negativeCount > 0 || state.closedNegativeSeeds.length > 0;
+  return state.negativeCount > 0 || state.combinedNegativeCount > 0 || state.closedNegativeSeeds.length > 0;
 }
 
 function hasExclusions() {
@@ -330,7 +352,23 @@ function hasExclusions() {
 }
 
 function verifiedFullEvaluationRois() {
-  return state.fullEvaluationRois.filter(rect => rect?.verified !== false);
+  return verifiedEvaluationRois(state.fullEvaluationRois);
+}
+
+function tuningFullEvaluationRois() {
+  return trainingEvaluationRois(state.fullEvaluationRois);
+}
+
+function validationFullEvaluationRois() {
+  return validationEvaluationRois(state.fullEvaluationRois);
+}
+
+function testFullEvaluationRois() {
+  return testEvaluationRois(state.fullEvaluationRois);
+}
+
+function guardFullEvaluationRois() {
+  return guardEvaluationRois(state.fullEvaluationRois);
 }
 
 function provisionalFullEvaluationRois() {
@@ -350,6 +388,7 @@ function updateControls() {
   const hasAnalysis = Boolean(state.analysisMask);
   const hasRef = hasReference();
   const disabled = state.busy;
+  const tuneAllowed = canTuneImage(state.imageEvaluationRole);
   els.fileInput.disabled = disabled;
   els.borderAssistedFill.disabled = disabled || !hasPreview;
   els.analyzeButton.disabled = disabled || !hasPreview;
@@ -376,12 +415,12 @@ function updateControls() {
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
-  els.autoOptimizeButton.disabled = disabled || !hasPreview || state.precisionGuide.active;
+  els.autoOptimizeButton.disabled = disabled || !hasPreview || state.precisionGuide.active || !tuneAllowed;
   els.precisionGuideButton.disabled = disabled || !hasPreview || state.precisionGuide.active;
   els.precisionVerifyButton.disabled = disabled || !state.precisionGuide.active;
   els.precisionSkipButton.disabled = disabled || !state.precisionGuide.active;
-  els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef;
-  els.localTuneButton.disabled = disabled || !hasPreview || !hasRef;
+  els.autoTuneButton.disabled = disabled || !hasPreview || !hasRef || !tuneAllowed;
+  els.localTuneButton.disabled = disabled || !hasPreview || !hasRef || !tuneAllowed;
   els.clearLocalCalibrationButton.disabled = disabled || !state.localCalibration;
   els.clearReferenceButton.disabled = disabled || !hasRef;
   els.clearNegativeButton.disabled = disabled || !hasNegativeReference();
@@ -392,6 +431,9 @@ function updateControls() {
   els.loadProjectButton.disabled = disabled || !hasPreview;
   els.exportDiagnosticsButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   els.exportDiagnosticsIndividualButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
+  if (els.recordBaselineButton) els.recordBaselineButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
+  if (els.imageEvaluationRoleSelect) els.imageEvaluationRoleSelect.disabled = disabled || !hasPreview;
+  updateEvaluationRoleControls();
 }
 
 function setBusy(busy) {
@@ -1617,6 +1659,73 @@ function rebuildExclusionLayer(previewRect = null, showSelection = true) {
   updateAnnotationStatus();
 }
 
+function selectedFullEvaluationRoiIndex() {
+  if (state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0) {
+    return state.precisionGuide.currentRoiIndex;
+  }
+  return state.selectedFullRoiIndex;
+}
+
+function updateEvaluationRoleControls() {
+  const index = selectedFullEvaluationRoiIndex();
+  const rect = index >= 0 ? state.fullEvaluationRois[index] : null;
+  if (els.roiRoleSelect) {
+    els.roiRoleSelect.disabled = state.busy || !rect;
+    els.roiRoleSelect.value = normalizeRoiEvaluationRole(rect?.evaluationRole) ?? "";
+  }
+  if (els.roiRoleStatus) {
+    if (!rect) {
+      els.roiRoleStatus.textContent = "ROIを選択すると役割を設定できます。";
+    } else {
+      const role = normalizeRoiEvaluationRole(rect.evaluationRole);
+      const label = role === "training" ? "Training"
+        : role === "validation" ? "Validation"
+          : role === "test" ? "Test"
+            : "未設定（旧Project互換）";
+      els.roiRoleStatus.textContent = `選択ROI #${index + 1}: ${label}${rect.verified === false ? " / 未確認" : ""}`;
+    }
+  }
+  if (els.imageEvaluationRoleSelect) {
+    els.imageEvaluationRoleSelect.value = normalizeImageEvaluationRole(state.imageEvaluationRole) ?? "";
+  }
+}
+
+function setSelectedRoiEvaluationRole(value) {
+  const index = selectedFullEvaluationRoiIndex();
+  if (index < 0 || !state.fullEvaluationRois[index]) return;
+  const rect = state.fullEvaluationRois[index];
+  const before = { ...rect };
+  const role = normalizeRoiEvaluationRole(value);
+  if (role) rect.evaluationRole = role;
+  else delete rect.evaluationRole;
+  commitReferenceHistory({
+    kind: "roi-edit",
+    index,
+    before,
+    after: { ...rect },
+  });
+  rebuildFullRoiLayer();
+  invalidateEvaluationOnly();
+  scheduleAutosave();
+  updateControls();
+}
+
+function setImageEvaluationRole(value) {
+  state.imageEvaluationRole = normalizeImageEvaluationRole(value);
+  updateEvaluationRoleControls();
+  updateControls();
+  scheduleAutosave();
+  if (state.imageEvaluationRole === "test") {
+    setStatus("画像役割をTestに設定しました。Tune処理は無効です。");
+  } else if (state.imageEvaluationRole === "validation") {
+    setStatus("画像役割をValidationに設定しました。Tune処理は無効です。");
+  } else if (state.imageEvaluationRole === "development") {
+    setStatus("画像役割をDevelopmentに設定しました。");
+  } else {
+    setStatus("画像役割を未設定にしました。");
+  }
+}
+
 function currentFullRoiDisplayIndex(showSelection = true) {
   if (!showSelection) return -1;
   if (state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0) {
@@ -1638,6 +1747,7 @@ function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
   );
   applyAnnotationAssistView();
   updateAnnotationStatus();
+  updateEvaluationRoleControls();
 }
 
 function updateAnnotationStatus() {
@@ -1650,11 +1760,13 @@ function updateAnnotationStatus() {
   const invalidFillText = state.closedNegativeInvalidCount
     ? ` / 無効seed ${state.closedNegativeInvalidCount}`
     : "";
-  const verifiedRois = verifiedFullEvaluationRois().length;
-  const provisionalRois = provisionalFullEvaluationRois().length;
+  const roleSummary = summarizeEvaluationRoles(state.fullEvaluationRois);
+  const verifiedRois = roleSummary.verifiedTotal;
+  const provisionalRois = roleSummary.provisional;
+  const roleText = `Tn ${roleSummary.training} / Val ${roleSummary.validation} / Test ${roleSummary.test} / 未設定 ${roleSummary.legacyUnassigned}`;
   const roiText = provisionalRois
-    ? `${verifiedRois}確認済み + ${provisionalRois}候補`
-    : `${verifiedRois}領域`;
+    ? `${verifiedRois}確認済み + ${provisionalRois}候補 (${roleText})`
+    : `${verifiedRois}領域 (${roleText})`;
   els.annotationStatus.textContent =
     `非粒界線: ${manualNegative.toLocaleString()} px / 閉領域Fill: ${state.closedNegativeValidCount}領域 (${closedNegative.toLocaleString()} px) / 画像端Fill: ${borderSeeds}領域 (${borderNegative.toLocaleString()} px)${invalidFillText} / Negative合計: ${combinedNegative.toLocaleString()} px / 除外: ${state.exclusionRects.length}領域 (${excluded.toLocaleString()} px) / 完全評価ROI: ${roiText}`;
 }
@@ -1853,7 +1965,12 @@ function startPrecisionEvaluationGuide({
       }
       return false;
     }
-    for (const rect of suggestions) state.fullEvaluationRois.push(rect);
+    for (const rect of suggestions) {
+      state.fullEvaluationRois.push({
+        ...rect,
+        evaluationRole: normalizeRoiEvaluationRole(rect.evaluationRole) ?? "training",
+      });
+    }
     provisional = state.fullEvaluationRois
       .map((rect, index) => ({ rect, index }))
       .filter(item => item.rect?.verified === false);
@@ -2328,6 +2445,8 @@ function buildProject() {
     closedNegativeSeeds: state.closedNegativeSeeds,
     exclusionRects: state.exclusionRects,
     fullEvaluationRois: state.fullEvaluationRois,
+    imageEvaluationRole: state.imageEvaluationRole,
+    baselineSnapshots: state.baselineSnapshots,
     precisionGuide: precisionGuidePersistentState(),
     localCalibration: state.localCalibration,
     history: state.history,
@@ -2382,7 +2501,7 @@ function scheduleAutosave() {
 }
 
 async function restoreProject(project, source = "プロジェクト") {
-  validateProject(project);
+  project = validateProject(project);
   if (!state.preview || !state.sourceFingerprint) throw new Error("先に対応するBMPを開いてください。");
   if (project.source?.fingerprint && project.source.fingerprint !== state.sourceFingerprint) {
     throw new Error("現在のBMPとプロジェクトの画像指紋が一致しません。");
@@ -2393,8 +2512,8 @@ async function restoreProject(project, source = "プロジェクト") {
   const masks = restoreReferenceMasks(project);
   state.referenceMask = masks.referenceMask;
   state.referenceCenterline = masks.referenceCenterline;
+  state.manualNegativeMask = masks.manualNegativeMask ?? masks.negativeMask;
   state.negativeMask = masks.negativeMask;
-  state.manualNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
   state.negativeCenterline = masks.negativeCenterline;
   state.closedNegativeSeeds = masks.closedNegativeSeeds ?? [];
   state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
@@ -2411,6 +2530,10 @@ async function restoreProject(project, source = "プロジェクト") {
     state.preview.width,
     state.preview.height,
   );
+  state.imageEvaluationRole = normalizeImageEvaluationRole(project.imageEvaluationRole);
+  state.baselineSnapshots = Array.isArray(project.baselineSnapshots)
+    ? project.baselineSnapshots.map(item => ({ ...item }))
+    : [];
   state.precisionGuide = createDefaultPrecisionGuideState(project.precisionGuide ?? {});
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -2422,7 +2545,10 @@ async function restoreProject(project, source = "プロジェクト") {
   applySettings(project.settings ?? {});
   updateLocalCalibrationStatus();
   renderReferenceCanvas();
-  renderNegativeCanvas();
+  // Prefer the persisted manual Negative mask on restore. Rebuilding it from
+  // the centerline here could erase legacy/project data when the centerline is
+  // absent or sparse. Closed Fill regions are still regenerated from seeds.
+  renderNegativeCanvas(true, !masks.hasStoredManualNegativeMask);
   rebuildExclusionLayer();
   rebuildFullRoiLayer();
   renderHistory();
@@ -2434,6 +2560,87 @@ async function restoreProject(project, source = "プロジェクト") {
   updateControls();
   els.projectStatus.textContent = `${source}を復元しました`;
   setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界線 ${state.negativeCount.toLocaleString()} px / 閉領域Fill ${state.closedNegativeValidCount}領域 / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
+}
+
+function currentBaselineSnapshot() {
+  if (!state.preview || !state.analysisMask || !hasReference()) return null;
+  ensureClosedNegativeFresh();
+  const comparisonOptions = currentComparisonOptions();
+  const metrics = computeRegionalMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    {
+      ...comparisonOptions,
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+      cols: 4,
+      rows: 4,
+    },
+  );
+  const multiTolerance = computeMultiToleranceMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    {
+      tolerances: [1, 2, 3, 4],
+      reviewRadius: comparisonOptions.reviewRadius,
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+    },
+  );
+  const verifiedRois = verifiedFullEvaluationRois();
+  const fullEvaluationRoi = computeFullEvaluationRoiMetrics(
+    state.analysisMask,
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    verifiedRois,
+    {
+      tolerance: comparisonOptions.tolerance,
+      exclusionMask: state.exclusionMask,
+    },
+  );
+  const topology = state.lastTopology ?? computeBoundaryTopology(
+    state.analysisMask,
+    state.preview.width,
+    state.preview.height,
+    state.closedNegativeSeeds,
+    topologyOptions(),
+  );
+  if (!state.lastTopology) state.lastTopology = topology;
+  return buildBaselineSnapshot({
+    sourceFingerprint: state.sourceFingerprint,
+    appVersion: APP_VERSION,
+    algorithmVersion: ALGORITHM_VERSION,
+    multiTolerance,
+    metrics,
+    fullEvaluationRoi,
+    topology,
+    boundaryPixelCount: countMaskPixels(state.analysisMask),
+    unknownPredictionCount: metrics.unknownPrediction,
+    evaluationRoles: summarizeEvaluationRoles(state.fullEvaluationRois),
+    imageEvaluationRole: state.imageEvaluationRole,
+  });
+}
+
+function recordBaselineSnapshot() {
+  const snapshot = currentBaselineSnapshot();
+  if (!snapshot) return;
+  state.baselineSnapshots.push(snapshot);
+  if (state.baselineSnapshots.length > 20) {
+    state.baselineSnapshots.splice(0, state.baselineSnapshots.length - 20);
+  }
+  if (els.baselineStatus) {
+    const f1 = snapshot.verifiedRoi.f1;
+    const recall2 = snapshot.positiveRecall.at2px;
+    els.baselineStatus.textContent =
+      `Baseline #${state.baselineSnapshots.length} を記録: R@2 ${recall2 == null ? "-" : (recall2 * 100).toFixed(1) + "%"} / ROI F1 ${f1 == null ? "-" : (f1 * 100).toFixed(1) + "%"} / Boundary ${snapshot.boundaryPixelCount.toLocaleString()} px`;
+  }
+  scheduleAutosave();
+  setStatus("Baseline SnapshotをProjectへ記録しました。", 100);
 }
 
 async function saveProjectManual() {
@@ -2523,6 +2730,8 @@ async function exportDiagnostics(mode = "zip") {
       gapBridge: state.gapApplied,
       algorithmVersion: ALGORITHM_VERSION,
       appVersion: APP_VERSION,
+      imageEvaluationRole: state.imageEvaluationRole,
+      baselineSnapshots: state.baselineSnapshots,
     });
 
     const comparison = renderComparisonOverlay(
@@ -2710,6 +2919,8 @@ async function loadBmp(file) {
   state.exclusionMask = null;
   state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
+  state.imageEvaluationRole = null;
+  state.baselineSnapshots = [];
   state.precisionGuide = createDefaultPrecisionGuideState();
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -2816,6 +3027,8 @@ async function loadBmp(file) {
     state.exclusionPixelCount = 0;
     state.exclusionRects = [];
     state.fullEvaluationRois = [];
+    state.imageEvaluationRole = null;
+    state.baselineSnapshots = [];
     state.precisionGuide = createDefaultPrecisionGuideState();
     state.selectedExclusionIndex = -1;
     state.selectedFullRoiIndex = -1;
@@ -2917,26 +3130,49 @@ function compareCurrent(record = true) {
 
 async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
   if (!state.preview || !hasReference()) return null;
+  if (!canTuneImage(state.imageEvaluationRole)) {
+    setStatus("Validation/Test画像ではAuto Tuneを実行できません。Development画像で実行してください。");
+    return null;
+  }
   ensureClosedNegativeFresh();
   if (manageBusy) setBusy(true);
   try {
     const features = await ensureFeatures();
-    const useCompleteRoi = hasFullEvaluationRois();
-    const split = splitReferenceCenterline(
+    const tuningRois = tuningFullEvaluationRois();
+    const useCompleteRoi = tuningRois.length > 0;
+    const tuneExcluded = tuningExcludedRois(state.fullEvaluationRois);
+    const roleFilteredReference = maskExcludingRois(
       state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
+    const roleFilteredNegative = maskExcludingRois(
+      state.negativeMask,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
+    const split = splitReferenceCenterline(
+      roleFilteredReference,
       state.preview.width,
       state.preview.height,
       { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
     );
     const negativeHoldout = buildNegativeHoldout();
     const tuningReference = useCompleteRoi
-      ? state.referenceCenterline
+      ? roleFilteredReference
       : split.validationPixels >= 40
         ? split.tuneMask
-        : state.referenceCenterline;
+        : roleFilteredReference;
     const tuningNegative = useCompleteRoi
-      ? state.negativeMask
-      : negativeHoldout.tuningMask;
+      ? roleFilteredNegative
+      : maskExcludingRois(
+        negativeHoldout.tuningMask,
+        state.preview.width,
+        state.preview.height,
+        tuneExcluded,
+      );
     const objectiveText = useCompleteRoi
       ? "完全評価ROIのTrue F1"
       : "Positive Recall / Macro Negative Leakage";
@@ -2946,7 +3182,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
       ...currentComparisonOptions(),
       negativeMask: tuningNegative,
       exclusionMask: state.exclusionMask,
-      fullEvaluationRois: useCompleteRoi ? verifiedFullEvaluationRois() : null,
+      fullEvaluationRois: useCompleteRoi ? tuningRois : null,
       current: currentExtractionOptions(),
       topologyDiagnostics: {
         seeds: state.closedNegativeSeeds,
@@ -2988,7 +3224,12 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
         state.preview.height,
         {
           ...currentComparisonOptions(),
-          negativeMask: negativeHoldout.validationMask,
+          negativeMask: maskExcludingRois(
+            negativeHoldout.validationMask,
+            state.preview.width,
+            state.preview.height,
+            tuneExcluded,
+          ),
           exclusionMask: state.exclusionMask,
           cols: 4,
           rows: 4,
@@ -3001,7 +3242,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
         state.referenceCenterline,
         state.preview.width,
         state.preview.height,
-        verifiedFullEvaluationRois(),
+        tuningRois,
         {
           tolerance: currentComparisonOptions().tolerance,
           exclusionMask: state.exclusionMask,
@@ -3048,25 +3289,42 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
 
 async function localTune({ manageBusy = true, recordHistory = true, scheduleSave = true } = {}) {
   if (!state.preview || !hasReference()) return null;
+  if (!canTuneImage(state.imageEvaluationRole)) {
+    setStatus("Validation/Test画像では局所自動調整を実行できません。Development画像で実行してください。");
+    return null;
+  }
   ensureClosedNegativeFresh();
   if (manageBusy) setBusy(true);
   try {
     const features = await ensureFeatures();
     const extraction = currentExtractionOptions();
-    const split = splitReferenceCenterline(
+    const tuneExcluded = tuningExcludedRois(state.fullEvaluationRois);
+    const roleFilteredReference = maskExcludingRois(
       state.referenceCenterline,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
+    const split = splitReferenceCenterline(
+      roleFilteredReference,
       state.preview.width,
       state.preview.height,
       { validationFraction: 0.20, minComponentPixels: 8, strategy: "spatial-balanced", cols: 4, rows: 4 },
     );
-    const tuningReference = split.validationPixels >= 40 ? split.tuneMask : state.referenceCenterline;
+    const tuningReference = split.validationPixels >= 40 ? split.tuneMask : roleFilteredReference;
     const negativeHoldout = buildNegativeHoldout();
+    const tuningNegative = maskExcludingRois(
+      negativeHoldout.tuningMask,
+      state.preview.width,
+      state.preview.height,
+      tuneExcluded,
+    );
     setStatus("調整用お手本＋非粒界例を使って範囲ごとの感度を調整中...", 1);
     const calibration = await tuneLocalSensitivity(features, tuningReference, {
       ...currentComparisonOptions(),
-      completeReferenceCenterline: state.referenceCenterline,
-      verifiedFullEvaluationRois: verifiedFullEvaluationRois(),
-      negativeMask: negativeHoldout.tuningMask,
+      completeReferenceCenterline: roleFilteredReference,
+      verifiedFullEvaluationRois: tuningFullEvaluationRois(),
+      negativeMask: tuningNegative,
       exclusionMask: state.exclusionMask,
       ...extraction,
       cols: 4,
@@ -3108,7 +3366,12 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
         state.preview.height,
         {
           ...currentComparisonOptions(),
-          negativeMask: negativeHoldout.validationMask,
+          negativeMask: maskExcludingRois(
+            negativeHoldout.validationMask,
+            state.preview.width,
+            state.preview.height,
+            tuneExcluded,
+          ),
           exclusionMask: state.exclusionMask,
           cols: 4,
           rows: 4,
@@ -3155,27 +3418,40 @@ function cloneOptimizationValue(value) {
 function evaluateOptimizationMask(mask = state.analysisMask) {
   if (!state.preview || !mask || !hasReference()) return null;
   ensureClosedNegativeFresh();
+  const guardExcluded = guardExcludedRois(state.fullEvaluationRois);
+  const guardReference = maskExcludingRois(
+    state.referenceCenterline,
+    state.preview.width,
+    state.preview.height,
+    guardExcluded,
+  );
+  const guardNegative = maskExcludingRois(
+    state.negativeMask,
+    state.preview.width,
+    state.preview.height,
+    guardExcluded,
+  );
   const metrics = computeRegionalMetrics(
     mask,
-    state.referenceCenterline,
+    guardReference,
     state.preview.width,
     state.preview.height,
     {
       ...currentComparisonOptions(),
-      negativeMask: state.negativeMask,
+      negativeMask: guardNegative,
       exclusionMask: state.exclusionMask,
       cols: 4,
       rows: 4,
     },
   );
-  const verifiedRois = verifiedFullEvaluationRois();
-  const roiMetrics = verifiedRois.length
+  const guardRois = guardFullEvaluationRois();
+  const roiMetrics = guardRois.length
     ? computeFullEvaluationRoiMetrics(
       mask,
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
-      verifiedRois,
+      guardRois,
       {
         tolerance: currentComparisonOptions().tolerance,
         exclusionMask: state.exclusionMask,
@@ -3434,6 +3710,11 @@ async function guardedGapOptimizationPass(mode) {
 
 async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
   if (!state.preview) return null;
+  if (!canTuneImage(state.imageEvaluationRole)) {
+    els.autoOptimizeStatus.textContent = "Validation/Test画像では自動最適化を実行できません。評価・診断のみ使用できます。";
+    setStatus(els.autoOptimizeStatus.textContent);
+    return null;
+  }
   if (state.precisionGuide.active && !skipPrecisionGate) {
     setStatus("精密評価ガイドを完了するか、今回の候補を省略してください。");
     return { waitingForPrecisionGuide: true };
@@ -4026,7 +4307,7 @@ function endRectInteraction(event) {
       const index = rects.length;
       const storedRect = isExclusion
         ? { ...rect }
-        : { ...rect, verified: true, source: "manual" };
+        : { ...rect, verified: true, source: "manual", evaluationRole: "training" };
       rects.push(storedRect);
       setSelectedRectIndex(interaction.kind, index);
       commitReferenceHistory({ kind: historyPrefix + "-add", index, rect: { ...storedRect } });
@@ -4108,6 +4389,12 @@ els.autoOptimizeButton.addEventListener("click", () => runOneClickOptimization()
 els.precisionGuideButton.addEventListener("click", () => startPrecisionEvaluationGuide({ autoRunAfterComplete: false, forceRegenerate: true }));
 els.precisionVerifyButton.addEventListener("click", verifyCurrentPrecisionRoi);
 els.precisionSkipButton.addEventListener("click", skipPrecisionGuide);
+if (els.roiRoleSelect) {
+  els.roiRoleSelect.addEventListener("change", () => setSelectedRoiEvaluationRole(els.roiRoleSelect.value));
+}
+if (els.imageEvaluationRoleSelect) {
+  els.imageEvaluationRoleSelect.addEventListener("change", () => setImageEvaluationRole(els.imageEvaluationRoleSelect.value));
+}
 els.autoTuneButton.addEventListener("click", () => autoTune());
 els.localTuneButton.addEventListener("click", () => localTune());
 els.clearLocalCalibrationButton.addEventListener("click", () => clearLocalCalibration(false));
@@ -4125,6 +4412,7 @@ els.saveProjectButton.addEventListener("click", saveProjectManual);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
 els.exportDiagnosticsButton.addEventListener("click", () => exportDiagnostics("zip"));
 els.exportDiagnosticsIndividualButton.addEventListener("click", () => exportDiagnostics("individual"));
+if (els.recordBaselineButton) els.recordBaselineButton.addEventListener("click", recordBaselineSnapshot);
 els.panToolButton.addEventListener("click", () => setTool("pan"));
 els.referenceToolButton.addEventListener("click", () => setTool("reference"));
 els.negativeToolButton.addEventListener("click", () => setTool("negative-reference"));

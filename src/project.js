@@ -1,7 +1,49 @@
 export const PROJECT_FORMAT = "graintracer-project";
-export const PROJECT_VERSION = 1;
-export const APP_VERSION = "0.3.9.2-alpha";
+export const PROJECT_VERSION = 2;
+export const APP_VERSION = "0.4.0-alpha";
 export const ALGORITHM_VERSION = "boundary-v13-precision-guide-v2";
+
+const ROI_ROLES = new Set(["training", "validation", "test"]);
+const IMAGE_ROLES = new Set(["development", "validation", "test"]);
+
+function cleanRoiRole(rect) {
+  const role = rect?.evaluationRole;
+  return ROI_ROLES.has(role) ? role : null;
+}
+
+function cleanImageRole(role) {
+  return IMAGE_ROLES.has(role) ? role : null;
+}
+
+export function migrateProject(project) {
+  if (!project || project.format !== PROJECT_FORMAT) {
+    throw new Error("GrainTracerプロジェクトではありません。");
+  }
+  const version = Number(project.formatVersion ?? 1);
+  if (version < 1 || version > PROJECT_VERSION) {
+    throw new Error(`未対応のプロジェクト形式です: ${project.formatVersion}`);
+  }
+
+  const rois = Array.isArray(project.fullEvaluationRois)
+    ? project.fullEvaluationRois.map(rect => {
+      const copy = { ...rect };
+      const role = cleanRoiRole(copy);
+      if (role) copy.evaluationRole = role;
+      else delete copy.evaluationRole;
+      return copy;
+    })
+    : [];
+
+  return {
+    ...project,
+    formatVersion: PROJECT_VERSION,
+    imageEvaluationRole: cleanImageRole(project.imageEvaluationRole),
+    baselineSnapshots: Array.isArray(project.baselineSnapshots)
+      ? project.baselineSnapshots.map(item => ({ ...item }))
+      : [],
+    fullEvaluationRois: rois,
+  };
+}
 
 export function packBinaryMask(mask) {
   const bytes = new Uint8Array(Math.ceil(mask.length / 8));
@@ -65,6 +107,8 @@ export function createProjectSnapshot(input) {
     precisionGuide,
     localCalibration,
     history,
+    imageEvaluationRole,
+    baselineSnapshots,
   } = input;
   return {
     format: PROJECT_FORMAT,
@@ -90,6 +134,8 @@ export function createProjectSnapshot(input) {
     },
     exclusionRects: (exclusionRects ?? []).map(rect => ({ ...rect })),
     fullEvaluationRois: (fullEvaluationRois ?? []).map(rect => ({ ...rect })),
+    imageEvaluationRole: cleanImageRole(imageEvaluationRole),
+    baselineSnapshots: (baselineSnapshots ?? []).map(item => ({ ...item })),
     precisionGuide: precisionGuide ? {
       version: Number(precisionGuide.version) || 2,
       grid: precisionGuide.grid ? { ...precisionGuide.grid } : { cols: 8, rows: 8 },
@@ -105,32 +151,39 @@ export function createProjectSnapshot(input) {
 }
 
 export function validateProject(project) {
-  if (!project || project.format !== PROJECT_FORMAT) throw new Error("GrainTracerプロジェクトではありません。");
-  if (project.formatVersion !== PROJECT_VERSION) throw new Error(`未対応のプロジェクト形式です: ${project.formatVersion}`);
-  if (!project.preview?.width || !project.preview?.height) throw new Error("プレビュー情報がありません。");
-  return project;
+  const migrated = migrateProject(project);
+  if (!migrated.preview?.width || !migrated.preview?.height) throw new Error("プレビュー情報がありません。");
+  return migrated;
 }
 
 export function restoreReferenceMasks(project) {
-  validateProject(project);
-  const length = project.preview.width * project.preview.height;
+  const migrated = validateProject(project);
+  const length = migrated.preview.width * migrated.preview.height;
+  const hasStoredManualNegativeMask =
+    typeof migrated.nonBoundary?.mask === "string" && migrated.nonBoundary.mask.length > 0;
+  const manualNegativeMask = unpackBinaryMask(migrated.nonBoundary?.mask, length);
   return {
-    referenceMask: unpackBinaryMask(project.reference?.mask, length),
-    referenceCenterline: unpackBinaryMask(project.reference?.centerline, length),
-    negativeMask: unpackBinaryMask(project.nonBoundary?.mask, length),
-    negativeCenterline: unpackBinaryMask(project.nonBoundary?.centerline, length),
-    closedNegativeSeeds: Array.isArray(project.nonBoundary?.closedFillSeeds)
-      ? project.nonBoundary.closedFillSeeds.map(seed => ({
+    referenceMask: unpackBinaryMask(migrated.reference?.mask, length),
+    referenceCenterline: unpackBinaryMask(migrated.reference?.centerline, length),
+    // nonBoundary.mask has always stored the manual Negative mask, not the
+    // seed-derived Closed Fill expansion. Keep the old negativeMask alias for
+    // callers while exposing the intent explicitly for project restoration.
+    manualNegativeMask,
+    negativeMask: manualNegativeMask.slice(),
+    hasStoredManualNegativeMask,
+    negativeCenterline: unpackBinaryMask(migrated.nonBoundary?.centerline, length),
+    closedNegativeSeeds: Array.isArray(migrated.nonBoundary?.closedFillSeeds)
+      ? migrated.nonBoundary.closedFillSeeds.map(seed => ({
         x: Math.round(Number(seed.x)),
         y: Math.round(Number(seed.y)),
         borderAssisted: Boolean(seed.borderAssisted),
       })).filter(seed => Number.isFinite(seed.x) && Number.isFinite(seed.y))
       : [],
-    exclusionRects: Array.isArray(project.exclusionRects)
-      ? project.exclusionRects.map(rect => ({ ...rect }))
+    exclusionRects: Array.isArray(migrated.exclusionRects)
+      ? migrated.exclusionRects.map(rect => ({ ...rect }))
       : [],
-    fullEvaluationRois: Array.isArray(project.fullEvaluationRois)
-      ? project.fullEvaluationRois.map(rect => ({ ...rect }))
+    fullEvaluationRois: Array.isArray(migrated.fullEvaluationRois)
+      ? migrated.fullEvaluationRois.map(rect => ({ ...rect }))
       : [],
   };
 }

@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.3.9.2-alpha</div>
+    <div class="version">v0.4.0-alpha</div>
   </header>
 
   <main class="layout">
@@ -59,6 +59,16 @@
           <button id="loadProjectButton" type="button" disabled>読込</button>
         </div>
         <label class="check-row"><input id="autosaveEnabled" type="checkbox" checked> 自動保存（IndexedDB）</label>
+        <label class="select-row">
+          <span>画像の評価役割</span>
+          <select id="imageEvaluationRoleSelect" disabled>
+            <option value="">未設定</option>
+            <option value="development">Development</option>
+            <option value="validation">Validation（Tune禁止）</option>
+            <option value="test">Test（Tune禁止）</option>
+          </select>
+        </label>
+        <p class="help">複数画像でHoldoutする場合に使用します。DevelopmentのみTune可能で、Validation/Test画像ではAuto Tune・局所調整・自動最適化を実行しません。</p>
         <p id="projectStatus" class="help project-status">-</p>
       </section>
     </aside>
@@ -137,8 +147,23 @@
         <p class="help">ONで追加したFillだけ、画像端を仮想境界として保存します。巨大領域・反対側2辺への接触・黄色線との接触不足は安全のため拒否します。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
 
+        <div class="subpanel">
+          <strong class="subpanel-title">完全評価ROIの役割</strong>
+          <label class="select-row">
+            <span>選択ROI</span>
+            <select id="roiRoleSelect" disabled>
+              <option value="">未設定（旧Project互換）</option>
+              <option value="training">Training</option>
+              <option value="validation">Validation（Tune禁止）</option>
+              <option value="test">Test</option>
+            </select>
+          </label>
+          <p id="roiRoleStatus" class="help metric-detail">ROIを選択すると役割を設定できます。</p>
+          <p class="help">TrainingはTuneに使用、Validationは候補選択・Guardに使用、Testは最終評価専用です。Test ROIはTune・Guardへ混入しません。</p>
+        </div>
+
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.3.9.2</strong>
+          <strong class="subpanel-title">自動最適化 v0.4.0</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
           <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。お手本線が無い初回は8×8グリッドから3つのROI候補を固定seedで提示し、2回目以降は必要な場合だけ未評価領域を追加提案します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
@@ -208,8 +233,14 @@
       <section>
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
+        <div class="subpanel">
+          <strong class="subpanel-title">Baseline Snapshot</strong>
+          <button id="recordBaselineButton" class="full" type="button" disabled>現在値をBaselineとして記録</button>
+          <p id="baselineStatus" class="help metric-detail">未記録</p>
+          <p class="help">Recall @1/2/3/4 px、Negative Leakage、ROI Precision/Recall/F1、Alignment、Closure、Open@3、Boundary/Unknown画素数をProjectへ保存します。</p>
+        </div>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
-        <p class="help">ZIP出力: manifest.json / diagnostic.json v14 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">ZIP出力: manifest.json / diagnostic.json v15 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
           <summary>個別ファイル出力</summary>
           <button id="exportDiagnosticsIndividualButton" class="full" type="button" disabled>診断ファイルを個別に書き出す</button>
@@ -223,7 +254,7 @@
       </section>
 
       <section>
-        <h2>v0.3 状態</h2>
+        <h2>v0.4 状態</h2>
         <ul class="check-list">
           <li class="done">Multi-scale Dark Ridge</li>
           <li class="done">方向付きLab色差</li>
