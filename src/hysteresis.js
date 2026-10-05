@@ -132,7 +132,7 @@ export function trackWeakBoundaries(score, features, options = {}) {
       const ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
       const next = ny * width + nx;
-      if (!weak[next]) continue;
+      if (!weak[next] || accepted[next]) continue;
 
       if (forbiddenAt(next, negativeMask, exclusionMask)) {
         rejected.forbidden += 1;
@@ -182,12 +182,10 @@ export function trackWeakBoundaries(score, features, options = {}) {
         continue;
       }
 
-      if (nextDistance + 1e-9 >= distance[next]) continue;
-      const firstAcceptance = !accepted[next];
       distance[next] = nextDistance;
       parentStepAngle[next] = stepAngle;
       accepted[next] = 1;
-      if (firstAcceptance) acceptedWeakCount += 1;
+      acceptedWeakCount += 1;
       queue[tail++] = next;
     }
   }
