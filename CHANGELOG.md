@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.0-alpha - 2026-10-05
+
+### Added
+- Batch 1 / P0 evaluation foundation: Complete Evaluation ROIs can be assigned `Training`, `Validation`, or `Test` roles.
+- Image-level holdout role: `Development`, `Validation`, or `Test`. Direct Auto Tune, Local Tune, and One-click Optimization are enabled only for Development/unassigned images.
+- Test/Validation ROI labels are masked out of direct tuning; Test ROI labels are also excluded from automatic guard metrics.
+- Project schema v2 stores ROI roles, image holdout role, and Baseline Snapshots while migrating v1 projects without discarding legacy ROI data.
+- Baseline Snapshot capture records Recall @1/2/3/4 px, Negative Leakage, Macro Negative Leakage, verified-ROI Precision/Recall/F1, Alignment mean/median/p90, Weighted Closure Score, Mean Required Radius, Open@3, Exact Closure, boundary pixel count, and Unknown prediction count.
+- Diagnostic JSON v15 adds role counts, role-specific complete-ROI metrics, current/recorded Baseline data, and explicit role policy metadata.
+- Batch 1 / P8 zero-dependency Node test harness and GitHub Actions CI.
+- Synthetic fixture catalogs for boundary evidence, false structures, Gap/Topology cases, and future intercept/planimetric measurement cases.
+
+### Compatibility
+- Existing v1 `.graintracer.json` files migrate to v2 on load.
+- Legacy verified ROIs without `evaluationRole` remain visibly unassigned and retain old-compatible Training behavior until explicitly assigned.
+- The boundary extraction algorithm identifier remains `boundary-v13-precision-guide-v2`; Batch 1 changes evaluation and regression infrastructure rather than the detector itself.
+
+### Validation
+- GitHub Actions Node 22 syntax and synthetic/regression suite: 25 passed, 0 failed.
+- Tests cover ROI-role isolation, Test/Validation label masking, image holdout tuning protection, v1→v2 migration, role/baseline persistence, Partial Label Unknown semantics, true complete-ROI metrics, Baseline schema fields, Boundary fixture catalog, Topology closure-profile fields, and future measurement fixture truth.
+- Real-image Baseline reacquisition is intentionally left as the next validation step before Batch 2; the repository contains no reference BMP/project dataset to run that comparison in CI.
+
+
 ## v0.3.9.2-alpha - 2026-10-02
 
 ### Fixed
