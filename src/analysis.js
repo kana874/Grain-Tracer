@@ -6,6 +6,7 @@ import { interpolateSensitivityDelta } from "./local-tune.js";
 import { computeDendriteDifference, computeDendriteLinePenalty, computeDendriteOrientation } from "./dendrite.js";
 import { isUsableClassifierModel, predictBoundaryProbability } from "./boundary-classifier.js";
 import { computeClosureSnapshot } from "./topology.js";
+import { classifyStrongWeak, trackWeakBoundaries } from "./hysteresis.js";
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -423,21 +424,100 @@ function applyExclusionInPlace(mask, exclusionMask) {
   return mask;
 }
 
+function combineMasks(a, b) {
+  const out = new Uint8Array(a.length);
+  for (let p = 0; p < out.length; p += 1) {
+    if (a[p] || b[p]) out[p] = 1;
+  }
+  return out;
+}
+
+function prepareBoundaryRaw(features, candidates, options = {}) {
+  const hysteresis = options.hysteresis ?? {};
+  if (!hysteresis.enabled) {
+    applyExclusionInPlace(candidates.mask, options.exclusionMask);
+    const raw = options.centerlineNms === false
+      ? candidates.mask
+      : applyDirectionalNonMaximumSuppression(candidates.mask, candidates.score, features, options);
+    applyExclusionInPlace(raw, options.exclusionMask);
+    return { raw, hysteresisDiagnostics: null };
+  }
+
+  const classificationOptions = {
+    highThreshold: hysteresis.highThreshold ?? 0.45,
+    lowThreshold: hysteresis.lowThreshold ?? 0.30,
+    negativeMask: options.negativeMask ?? null,
+    exclusionMask: options.exclusionMask ?? null,
+  };
+  const nmsOrder = hysteresis.nmsOrder === "after-tracking"
+    ? "after-tracking"
+    : "before-tracking";
+
+  let tracked;
+  if (nmsOrder === "before-tracking") {
+    const initial = classifyStrongWeak(
+      candidates.score,
+      features.width,
+      features.height,
+      classificationOptions,
+    );
+    const lowOrStrong = combineMasks(initial.strong, initial.weak);
+    const allowedMask = options.centerlineNms === false
+      ? lowOrStrong
+      : applyDirectionalNonMaximumSuppression(
+        lowOrStrong,
+        candidates.score,
+        features,
+        options,
+      );
+    tracked = trackWeakBoundaries(candidates.score, features, {
+      ...classificationOptions,
+      ...hysteresis,
+      allowedMask,
+    });
+  } else {
+    tracked = trackWeakBoundaries(candidates.score, features, {
+      ...classificationOptions,
+      ...hysteresis,
+    });
+    if (options.centerlineNms !== false) {
+      tracked.mask = applyDirectionalNonMaximumSuppression(
+        tracked.mask,
+        candidates.score,
+        features,
+        options,
+      );
+    }
+  }
+
+  applyExclusionInPlace(tracked.mask, options.exclusionMask);
+  if (options.negativeMask) {
+    for (let p = 0; p < tracked.mask.length; p += 1) {
+      if (options.negativeMask[p]) tracked.mask[p] = 0;
+    }
+  }
+  tracked.diagnostics.nmsOrder = nmsOrder;
+  tracked.diagnostics.centerlineNms = options.centerlineNms !== false;
+  return { raw: tracked.mask, hysteresisDiagnostics: tracked.diagnostics };
+}
+
 export async function buildBoundaryMask(features, options = {}) {
   const onProgress = options.onProgress ?? (() => {});
   onProgress(0.10);
   await new Promise(resolve => setTimeout(resolve, 0));
   const candidates = buildBoundaryCandidates(features, options);
-  applyExclusionInPlace(candidates.mask, options.exclusionMask);
   onProgress(0.38);
   await new Promise(resolve => setTimeout(resolve, 0));
-  const raw = options.centerlineNms === false
-    ? candidates.mask
-    : applyDirectionalNonMaximumSuppression(candidates.mask, candidates.score, features, options);
-  applyExclusionInPlace(raw, options.exclusionMask);
-  onProgress(0.62);
+  const prepared = prepareBoundaryRaw(features, candidates, options);
+  options.onHysteresisDiagnostics?.(prepared.hysteresisDiagnostics);
+  onProgress(0.68);
   await new Promise(resolve => setTimeout(resolve, 0));
-  const result = applyMinComponent(raw, features.width, features.height, options.minComponent ?? 24);
+  const result = applyMinComponent(
+    prepared.raw,
+    features.width,
+    features.height,
+    options.minComponent ?? 24,
+  );
   applyExclusionInPlace(result, options.exclusionMask);
   onProgress(1);
   return result;
@@ -857,12 +937,12 @@ async function optimizeMinComponent(features, referenceCenterline, config, optio
     ...config,
     edgeFrameGuard: options.edgeFrameGuard ?? 1,
   });
-  applyExclusionInPlace(candidates.mask, options.exclusionMask);
-  const raw = config.centerlineNms === false
-    ? candidates.mask
-    : applyDirectionalNonMaximumSuppression(candidates.mask, candidates.score, features, config);
-  applyExclusionInPlace(raw, options.exclusionMask);
-  const supported = neighborSupport(raw, features.width, features.height);
+  const prepared = prepareBoundaryRaw(features, candidates, {
+    ...options,
+    ...config,
+    hysteresis: options.hysteresis ?? config.hysteresis ?? null,
+  });
+  const supported = neighborSupport(prepared.raw, features.width, features.height);
   const sizes = computeComponentSizeMap(supported, features.width, features.height);
 
   const minCandidates = uniqueSorted(
@@ -903,13 +983,13 @@ function evaluateProcessedConfiguration(features, referenceCenterline, config, o
     ...config,
     edgeFrameGuard: options.edgeFrameGuard ?? 1,
   });
-  applyExclusionInPlace(candidates.mask, options.exclusionMask);
-  const raw = config.centerlineNms === false
-    ? candidates.mask
-    : applyDirectionalNonMaximumSuppression(candidates.mask, candidates.score, features, config);
-  applyExclusionInPlace(raw, options.exclusionMask);
+  const prepared = prepareBoundaryRaw(features, candidates, {
+    ...options,
+    ...config,
+    hysteresis: options.hysteresis ?? config.hysteresis ?? null,
+  });
   const mask = applyMinComponent(
-    raw,
+    prepared.raw,
     features.width,
     features.height,
     config.minComponent ?? 24,
