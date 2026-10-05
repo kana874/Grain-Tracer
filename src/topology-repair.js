@@ -1,0 +1,1079 @@
+const DIRS8 = Object.freeze([
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0],             [1, 0],
+  [-1, 1],  [0, 1],   [1, 1],
+]);
+
+function clamp01(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function evidenceValue(source, index) {
+  if (!source || index < 0 || index >= source.length) return null;
+  const value = Number(source[index]);
+  if (!Number.isFinite(value)) return null;
+  return clamp01(value > 1 ? value / 255 : value);
+}
+
+function pointFromIndex(index, width) {
+  return { x: index % width, y: Math.floor(index / width) };
+}
+
+function indexOf(width, x, y) {
+  return y * width + x;
+}
+
+function inBounds(width, height, x, y) {
+  return x >= 0 && y >= 0 && x < width && y < height;
+}
+
+function boundaryNeighbors(mask, width, height, p) {
+  const x = p % width;
+  const y = Math.floor(p / width);
+  const result = [];
+  for (const [dx, dy] of DIRS8) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (!inBounds(width, height, nx, ny)) continue;
+    const np = indexOf(width, nx, ny);
+    if (mask[np]) result.push(np);
+  }
+  return result;
+}
+
+function angleDeg(ax, ay, bx, by) {
+  const al = Math.hypot(ax, ay);
+  const bl = Math.hypot(bx, by);
+  if (!al || !bl) return 180;
+  const dot = Math.max(-1, Math.min(1, (ax * bx + ay * by) / (al * bl)));
+  return Math.acos(dot) * 180 / Math.PI;
+}
+
+function normalized(dx, dy) {
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: dx / length, y: dy / length };
+}
+
+function estimateEndpointOutward(mask, width, height, p, depth = 4) {
+  const start = pointFromIndex(p, width);
+  const chain = [p];
+  let prev = -1;
+  let current = p;
+  for (let step = 0; step < depth; step += 1) {
+    const next = boundaryNeighbors(mask, width, height, current)
+      .filter(np => np !== prev);
+    if (!next.length) break;
+    const chosen = next[0];
+    chain.push(chosen);
+    prev = current;
+    current = chosen;
+    if (next.length > 1) break;
+  }
+  if (chain.length < 2) return { x: 0, y: 0 };
+  const tail = pointFromIndex(chain[chain.length - 1], width);
+  return normalized(start.x - tail.x, start.y - tail.y);
+}
+
+function meanEvidenceForPixels(pixels, options = {}) {
+  if (!pixels?.length) return {
+    boundaryProbability: null,
+    ridge: null,
+    color: null,
+    dendritePenalty: null,
+  };
+  let probability = 0;
+  let probabilityCount = 0;
+  let ridge = 0;
+  let ridgeCount = 0;
+  let color = 0;
+  let colorCount = 0;
+  let dendritePenalty = 0;
+  let dendriteCount = 0;
+
+  for (const p of pixels) {
+    const direct = evidenceValue(options.boundaryProbability, p);
+    const r = evidenceValue(options.ridge, p);
+    const c = evidenceValue(options.color, p);
+    const d = evidenceValue(options.dendritePenalty, p);
+    if (direct != null) {
+      probability += direct;
+      probabilityCount += 1;
+    } else if (r != null || c != null) {
+      const rr = r ?? 0;
+      const cc = c ?? 0;
+      probability += rr * 0.65 + cc * 0.35;
+      probabilityCount += 1;
+    }
+    if (r != null) {
+      ridge += r;
+      ridgeCount += 1;
+    }
+    if (c != null) {
+      color += c;
+      colorCount += 1;
+    }
+    if (d != null) {
+      dendritePenalty += d;
+      dendriteCount += 1;
+    }
+  }
+
+  return {
+    boundaryProbability: probabilityCount ? probability / probabilityCount : null,
+    ridge: ridgeCount ? ridge / ridgeCount : null,
+    color: colorCount ? color / colorCount : null,
+    dendritePenalty: dendriteCount ? dendritePenalty / dendriteCount : null,
+  };
+}
+
+function edgeCurvature(pixels, width) {
+  if (!pixels || pixels.length < 3) return 0;
+  let total = 0;
+  let count = 0;
+  for (let i = 1; i + 1 < pixels.length; i += 1) {
+    const a = pointFromIndex(pixels[i - 1], width);
+    const b = pointFromIndex(pixels[i], width);
+    const c = pointFromIndex(pixels[i + 1], width);
+    total += angleDeg(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y);
+    count += 1;
+  }
+  return count ? total / count : 0;
+}
+
+function representativePixel(pixels, width) {
+  if (!pixels.length) return -1;
+  let cx = 0;
+  let cy = 0;
+  for (const p of pixels) {
+    const pt = pointFromIndex(p, width);
+    cx += pt.x;
+    cy += pt.y;
+  }
+  cx /= pixels.length;
+  cy /= pixels.length;
+  let best = pixels[0];
+  let bestDistance = Infinity;
+  for (const p of pixels) {
+    const pt = pointFromIndex(p, width);
+    const distance = (pt.x - cx) ** 2 + (pt.y - cy) ** 2;
+    if (distance < bestDistance) {
+      best = p;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+export function buildSkeletonGraph(mask, width, height, options = {}) {
+  if (!mask || mask.length !== width * height) {
+    throw new Error("Skeleton Graph用の境界マスクが不正です。");
+  }
+
+  const degree = new Uint8Array(mask.length);
+  for (let p = 0; p < mask.length; p += 1) {
+    if (!mask[p]) continue;
+    degree[p] = boundaryNeighbors(mask, width, height, p).length;
+  }
+
+  const pixelToNode = new Int32Array(mask.length);
+  pixelToNode.fill(-1);
+  const nodes = [];
+  const visitedJunction = new Uint8Array(mask.length);
+  const junctionQueue = new Int32Array(mask.length);
+
+  // Adjacent junction pixels are one logical graph node.
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || degree[start] < 3 || visitedJunction[start]) continue;
+    let head = 0;
+    let tail = 0;
+    const pixels = [];
+    visitedJunction[start] = 1;
+    junctionQueue[tail++] = start;
+    while (head < tail) {
+      const p = junctionQueue[head++];
+      pixels.push(p);
+      const x = p % width;
+      const y = Math.floor(p / width);
+      for (const [dx, dy] of DIRS8) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(width, height, nx, ny)) continue;
+        const np = indexOf(width, nx, ny);
+        if (!mask[np] || degree[np] < 3 || visitedJunction[np]) continue;
+        visitedJunction[np] = 1;
+        junctionQueue[tail++] = np;
+      }
+    }
+    const representative = representativePixel(pixels, width);
+    const pt = pointFromIndex(representative, width);
+    const node = {
+      id: nodes.length,
+      type: "junction",
+      p: representative,
+      x: pt.x,
+      y: pt.y,
+      degree: 0,
+      pixels,
+      incidentEdgeIds: [],
+      incidentDirections: [],
+    };
+    nodes.push(node);
+    for (const p of pixels) pixelToNode[p] = node.id;
+  }
+
+  // Endpoints remain one pixel / one node.
+  for (let p = 0; p < mask.length; p += 1) {
+    if (!mask[p] || degree[p] !== 1 || pixelToNode[p] >= 0) continue;
+    const pt = pointFromIndex(p, width);
+    const outward = estimateEndpointOutward(mask, width, height, p, options.tangentDepth ?? 4);
+    const node = {
+      id: nodes.length,
+      type: "endpoint",
+      p,
+      x: pt.x,
+      y: pt.y,
+      degree: 1,
+      pixels: [p],
+      outward,
+      incidentEdgeIds: [],
+      incidentDirections: [],
+    };
+    pixelToNode[p] = node.id;
+    nodes.push(node);
+  }
+
+  const edges = [];
+  const walkedSegments = new Set();
+  const segmentKey = (a, b) => a < b ? `${a}:${b}` : `${b}:${a}`;
+
+  for (const startNode of nodes) {
+    for (const startPixel of startNode.pixels) {
+      for (const first of boundaryNeighbors(mask, width, height, startPixel)) {
+        if (pixelToNode[first] === startNode.id) continue;
+        const firstKey = segmentKey(startPixel, first);
+        if (walkedSegments.has(firstKey)) continue;
+
+        const pixels = [startPixel];
+        let prev = startPixel;
+        let current = first;
+        let endNodeId = pixelToNode[current];
+
+        while (true) {
+          pixels.push(current);
+          walkedSegments.add(segmentKey(prev, current));
+          if (endNodeId >= 0) break;
+
+          const nextCandidates = boundaryNeighbors(mask, width, height, current)
+            .filter(np => np !== prev);
+          if (!nextCandidates.length) break;
+          let next = nextCandidates[0];
+          if (nextCandidates.length > 1) {
+            // In a valid skeleton, branch pixels should have been clustered as
+            // junction nodes. Prefer a node candidate if diagonal topology made
+            // an extra adjacency appear.
+            next = nextCandidates.find(np => pixelToNode[np] >= 0) ?? next;
+          }
+          prev = current;
+          current = next;
+          endNodeId = pixelToNode[current];
+          if (pixels.length > mask.length) break;
+        }
+
+        if (endNodeId < 0 || endNodeId === startNode.id || pixels.length < 2) continue;
+        const endNode = nodes[endNodeId];
+        const metrics = meanEvidenceForPixels(pixels, options);
+        const edge = {
+          id: edges.length,
+          startNodeId: startNode.id,
+          endNodeId,
+          pixels,
+          lengthPx: Math.max(0, pixels.length - 1),
+          meanBoundaryScore: metrics.boundaryProbability,
+          meanRidge: metrics.ridge,
+          meanColor: metrics.color,
+          curvature: edgeCurvature(pixels, width),
+        };
+        edges.push(edge);
+        startNode.incidentEdgeIds.push(edge.id);
+        endNode.incidentEdgeIds.push(edge.id);
+      }
+    }
+  }
+
+  for (const node of nodes) {
+    node.degree = node.incidentEdgeIds.length || node.degree;
+    for (const edgeId of node.incidentEdgeIds) {
+      const edge = edges[edgeId];
+      if (!edge) continue;
+      const fromStart = edge.startNodeId === node.id;
+      const list = fromStart ? edge.pixels : [...edge.pixels].reverse();
+      const a = pointFromIndex(list[0], width);
+      const b = pointFromIndex(list[Math.min(list.length - 1, 2)], width);
+      node.incidentDirections.push(normalized(b.x - a.x, b.y - a.y));
+    }
+  }
+
+  return {
+    version: 4,
+    width,
+    height,
+    nodes,
+    edges,
+    degree,
+    pixelToNode,
+    endpointCount: nodes.filter(node => node.type === "endpoint").length,
+    junctionCount: nodes.filter(node => node.type === "junction").length,
+    edgeCount: edges.length,
+    boundaryPixels: mask.reduce((sum, value) => sum + (value ? 1 : 0), 0),
+  };
+}
+
+export function compactSkeletonGraph(graph, options = {}) {
+  if (!graph) return null;
+  const maxNodes = Math.max(1, Math.round(options.maxNodes ?? 240));
+  const maxEdges = Math.max(1, Math.round(options.maxEdges ?? 360));
+  return {
+    version: graph.version ?? 4,
+    width: graph.width,
+    height: graph.height,
+    boundaryPixels: graph.boundaryPixels ?? 0,
+    endpointCount: graph.endpointCount ?? 0,
+    junctionCount: graph.junctionCount ?? 0,
+    edgeCount: graph.edgeCount ?? 0,
+    nodes: (graph.nodes ?? []).slice(0, maxNodes).map(node => ({
+      id: node.id,
+      type: node.type,
+      x: node.x,
+      y: node.y,
+      degree: node.degree,
+      incidentEdgeIds: [...(node.incidentEdgeIds ?? [])],
+    })),
+    edges: (graph.edges ?? []).slice(0, maxEdges).map(edge => ({
+      id: edge.id,
+      startNodeId: edge.startNodeId,
+      endNodeId: edge.endNodeId,
+      lengthPx: edge.lengthPx,
+      meanBoundaryScore: edge.meanBoundaryScore,
+      meanRidge: edge.meanRidge,
+      meanColor: edge.meanColor,
+      curvature: edge.curvature,
+      pixelCount: edge.pixels?.length ?? 0,
+    })),
+    nodesTruncated: (graph.nodes?.length ?? 0) > maxNodes,
+    edgesTruncated: (graph.edges?.length ?? 0) > maxEdges,
+  };
+}
+
+function buildGuardMask(source, width, height, radius) {
+  if (!source || source.length !== width * height) return null;
+  if (radius <= 0) return source;
+  const result = new Uint8Array(source.length);
+  for (let p = 0; p < source.length; p += 1) {
+    if (!source[p]) continue;
+    const x = p % width;
+    const y = Math.floor(p / width);
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      const ny = y + dy;
+      if (ny < 0 || ny >= height) continue;
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        const nx = x + dx;
+        if (nx < 0 || nx >= width) continue;
+        result[indexOf(width, nx, ny)] = 1;
+      }
+    }
+  }
+  return result;
+}
+
+function protectedByFrame(width, height, x, y, margin) {
+  return margin > 0 && (
+    x < margin || y < margin || x >= width - margin || y >= height - margin
+  );
+}
+
+function junctionAcceptsDirection(node, vx, vy, minAngleDeg) {
+  if (!node?.incidentDirections?.length) return true;
+  const outwardFromJunction = normalized(-vx, -vy);
+  let minimum = 180;
+  for (const direction of node.incidentDirections) {
+    minimum = Math.min(
+      minimum,
+      angleDeg(outwardFromJunction.x, outwardFromJunction.y, direction.x, direction.y),
+    );
+  }
+  return minimum >= minAngleDeg;
+}
+
+function candidateGeometry(graph, mask, width, height, options) {
+  const maxDistance = Math.max(2, Number(options.maxSearchDistance ?? 10));
+  const maxEndpointAngleDeg = Math.max(5, Math.min(85, Number(options.maxEndpointAngleDeg ?? 50)));
+  const junctionMinAngleDeg = Math.max(0, Math.min(90, Number(options.junctionMinAngleDeg ?? 20)));
+  const minFacing = Math.cos(maxEndpointAngleDeg * Math.PI / 180);
+  const maxBoundaryTargets = Math.max(1, Math.min(8, Math.round(options.maxBoundaryTargetsPerEndpoint ?? 3)));
+  const endpoints = graph.nodes.filter(node => node.type === "endpoint");
+  const junctions = graph.nodes.filter(node => node.type === "junction");
+  const candidates = [];
+  const dedupe = new Set();
+
+  const addCandidate = candidate => {
+    const targetKey = candidate.targetNodeId != null
+      ? `n${candidate.targetNodeId}`
+      : `p${candidate.targetP}`;
+    const key = `${candidate.sourceNodeId}->${targetKey}`;
+    if (dedupe.has(key)) return;
+    dedupe.add(key);
+    candidates.push(candidate);
+  };
+
+  for (let i = 0; i < endpoints.length; i += 1) {
+    const source = endpoints[i];
+    const out = source.outward ?? estimateEndpointOutward(mask, width, height, source.p);
+
+    for (let j = i + 1; j < endpoints.length; j += 1) {
+      const target = endpoints[j];
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= 1.1 || distance > maxDistance) continue;
+      const v = normalized(dx, dy);
+      const targetOut = target.outward ?? estimateEndpointOutward(mask, width, height, target.p);
+      const facingSource = out.x * v.x + out.y * v.y;
+      const facingTarget = targetOut.x * -v.x + targetOut.y * -v.y;
+      if (facingSource < minFacing || facingTarget < minFacing) continue;
+      addCandidate({
+        type: "endpoint-endpoint",
+        sourceNodeId: source.id,
+        targetNodeId: target.id,
+        sourceP: source.p,
+        targetP: target.p,
+        x1: source.x,
+        y1: source.y,
+        x2: target.x,
+        y2: target.y,
+        distance,
+        facing: Math.min(facingSource, facingTarget),
+        sourceOutward: out,
+        targetOutward: targetOut,
+      });
+    }
+
+    for (const target of junctions) {
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= 1.1 || distance > maxDistance) continue;
+      const v = normalized(dx, dy);
+      const facing = out.x * v.x + out.y * v.y;
+      if (facing < minFacing) continue;
+      if (!junctionAcceptsDirection(target, v.x, v.y, junctionMinAngleDeg)) continue;
+      addCandidate({
+        type: "endpoint-junction",
+        sourceNodeId: source.id,
+        targetNodeId: target.id,
+        sourceP: source.p,
+        targetP: target.p,
+        x1: source.x,
+        y1: source.y,
+        x2: target.x,
+        y2: target.y,
+        distance,
+        facing,
+        sourceOutward: out,
+        targetOutward: null,
+      });
+    }
+
+    const nearbyBoundary = [];
+    const radius = Math.ceil(maxDistance);
+    for (let y = Math.max(0, source.y - radius); y <= Math.min(height - 1, source.y + radius); y += 1) {
+      for (let x = Math.max(0, source.x - radius); x <= Math.min(width - 1, source.x + radius); x += 1) {
+        const p = indexOf(width, x, y);
+        if (!mask[p] || p === source.p) continue;
+        if (graph.pixelToNode[p] >= 0) continue;
+        if (graph.degree[p] !== 2) continue;
+        const dx = x - source.x;
+        const dy = y - source.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance <= 2.1 || distance > maxDistance) continue;
+        const v = normalized(dx, dy);
+        const facing = out.x * v.x + out.y * v.y;
+        if (facing < minFacing) continue;
+        nearbyBoundary.push({ p, x, y, distance, facing });
+      }
+    }
+    nearbyBoundary.sort((a, b) => b.facing - a.facing || a.distance - b.distance);
+    for (const target of nearbyBoundary.slice(0, maxBoundaryTargets)) {
+      addCandidate({
+        type: "endpoint-boundary",
+        sourceNodeId: source.id,
+        targetNodeId: null,
+        sourceP: source.p,
+        targetP: target.p,
+        x1: source.x,
+        y1: source.y,
+        x2: target.x,
+        y2: target.y,
+        distance: target.distance,
+        facing: target.facing,
+        sourceOutward: out,
+        targetOutward: null,
+      });
+    }
+  }
+
+  candidates.sort((a, b) => {
+    const priority = type => type === "endpoint-endpoint" ? 0 : type === "endpoint-junction" ? 1 : 2;
+    return priority(a.type) - priority(b.type)
+      || b.facing - a.facing
+      || a.distance - b.distance;
+  });
+  return candidates.slice(0, Math.max(1, Math.min(1000, Math.round(options.maxCandidates ?? 240))));
+}
+
+class MinHeap {
+  constructor() {
+    this.items = [];
+  }
+  push(item) {
+    const items = this.items;
+    items.push(item);
+    let i = items.length - 1;
+    while (i > 0) {
+      const parent = Math.floor((i - 1) / 2);
+      if (items[parent].priority <= item.priority) break;
+      items[i] = items[parent];
+      i = parent;
+    }
+    items[i] = item;
+  }
+  pop() {
+    const items = this.items;
+    if (!items.length) return null;
+    const root = items[0];
+    const last = items.pop();
+    if (!items.length) return root;
+    let i = 0;
+    while (true) {
+      const left = i * 2 + 1;
+      const right = left + 1;
+      if (left >= items.length) break;
+      let child = left;
+      if (right < items.length && items[right].priority < items[left].priority) child = right;
+      if (items[child].priority >= last.priority) break;
+      items[i] = items[child];
+      i = child;
+    }
+    items[i] = last;
+    return root;
+  }
+  get length() {
+    return this.items.length;
+  }
+}
+
+function pathPixelEvidence(p, options) {
+  const direct = evidenceValue(options.boundaryProbability, p);
+  const ridge = evidenceValue(options.ridge, p);
+  const color = evidenceValue(options.color, p);
+  const boundaryProbability = direct != null
+    ? direct
+    : (ridge != null || color != null)
+      ? (ridge ?? 0) * 0.65 + (color ?? 0) * 0.35
+      : 0.5;
+  return {
+    boundaryProbability,
+    ridge: ridge ?? 0,
+    color: color ?? 0,
+    dendritePenalty: evidenceValue(options.dendritePenalty, p) ?? 0,
+  };
+}
+
+function reconstructPath(parent, finalKey, width) {
+  const pixels = [];
+  let key = finalKey;
+  while (key != null) {
+    const p = Math.floor(key / 9);
+    pixels.push(p);
+    key = parent.get(key) ?? null;
+  }
+  pixels.reverse();
+  return pixels;
+}
+
+function findEvidencePath(mask, width, height, candidate, guard, options) {
+  const maxDistance = Math.max(2, Number(options.maxSearchDistance ?? 10));
+  const maxStepTurnDeg = Math.max(20, Math.min(120, Number(options.maxCurvatureDeg ?? 65)));
+  const maxEndpointAngleDeg = Math.max(5, Math.min(85, Number(options.maxEndpointAngleDeg ?? 50)));
+  const maxPathLength = Math.max(3, Math.ceil(
+    Number(options.maxPathLength ?? Math.max(candidate.distance * 1.8 + 3, maxDistance + 2)),
+  ));
+  const evidenceWeight = Math.max(0, Number(options.evidenceCostWeight ?? 1.6));
+  const curvatureWeight = Math.max(0, Number(options.curvatureCostWeight ?? 0.6));
+  const dendriteWeight = Math.max(0, Number(options.dendriteCostWeight ?? 1.0));
+  const directionWeight = Math.max(0, Number(options.directionCostWeight ?? 0.7));
+  const expansion = Math.ceil(maxDistance + 2);
+  const minX = Math.max(0, Math.min(candidate.x1, candidate.x2) - expansion);
+  const maxX = Math.min(width - 1, Math.max(candidate.x1, candidate.x2) + expansion);
+  const minY = Math.max(0, Math.min(candidate.y1, candidate.y2) - expansion);
+  const maxY = Math.min(height - 1, Math.max(candidate.y1, candidate.y2) + expansion);
+  const sourceP = candidate.sourceP;
+  const targetP = candidate.targetP;
+
+  const heap = new MinHeap();
+  const best = new Map();
+  const parent = new Map();
+  const pathLength = new Map();
+  const startKey = sourceP * 9 + 8;
+  best.set(startKey, 0);
+  pathLength.set(startKey, 0);
+  heap.push({ key: startKey, p: sourceP, dir: 8, cost: 0, priority: candidate.distance * 0.25 });
+
+  while (heap.length) {
+    const current = heap.pop();
+    if (!current) break;
+    if ((best.get(current.key) ?? Infinity) !== current.cost) continue;
+    if (current.p === targetP && current.key !== startKey) {
+      if (candidate.type === "endpoint-endpoint" && current.dir < 8 && candidate.targetOutward) {
+        const [dx, dy] = DIRS8[current.dir];
+        const targetArrivalMismatch = angleDeg(dx, dy, -candidate.targetOutward.x, -candidate.targetOutward.y);
+        if (targetArrivalMismatch > maxEndpointAngleDeg) continue;
+      }
+      const pixels = reconstructPath(parent, current.key, width);
+      const interior = pixels.slice(1, -1);
+      let maxTurn = 0;
+      let turnSum = 0;
+      let turnCount = 0;
+      for (let i = 2; i < pixels.length; i += 1) {
+        const a = pointFromIndex(pixels[i - 2], width);
+        const b = pointFromIndex(pixels[i - 1], width);
+        const c = pointFromIndex(pixels[i], width);
+        const turn = angleDeg(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y);
+        maxTurn = Math.max(maxTurn, turn);
+        turnSum += turn;
+        turnCount += 1;
+      }
+      const ev = meanEvidenceForPixels(interior.length ? interior : pixels, options);
+      return {
+        pixels,
+        interiorPixels: interior,
+        cost: current.cost,
+        lengthPx: Math.max(0, pixels.length - 1),
+        pathEvidence: ev.boundaryProbability ?? 0.5,
+        meanRidge: ev.ridge,
+        meanColor: ev.color,
+        meanDendritePenalty: ev.dendritePenalty,
+        maxCurvatureDeg: maxTurn,
+        meanCurvatureDeg: turnCount ? turnSum / turnCount : 0,
+      };
+    }
+
+    const currentLength = pathLength.get(current.key) ?? 0;
+    if (currentLength >= maxPathLength) continue;
+    const x = current.p % width;
+    const y = Math.floor(current.p / width);
+
+    for (let dir = 0; dir < DIRS8.length; dir += 1) {
+      const [dx, dy] = DIRS8[dir];
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+      if (!inBounds(width, height, nx, ny)) continue;
+      const np = indexOf(width, nx, ny);
+      if (np !== targetP) {
+        if (guard.protectedFrameMargin && protectedByFrame(width, height, nx, ny, guard.protectedFrameMargin)) continue;
+        if (guard.negative?.[np]) continue;
+        if (guard.exclusion?.[np]) continue;
+        if (mask[np]) continue;
+      }
+
+      const firstMove = current.dir === 8;
+      if (firstMove && candidate.sourceOutward) {
+        const mismatch = angleDeg(dx, dy, candidate.sourceOutward.x, candidate.sourceOutward.y);
+        if (mismatch > maxEndpointAngleDeg) continue;
+      }
+
+      let turn = 0;
+      if (!firstMove) {
+        const [pdx, pdy] = DIRS8[current.dir];
+        turn = angleDeg(pdx, pdy, dx, dy);
+        if (turn > maxStepTurnDeg) continue;
+      }
+
+      const ev = pathPixelEvidence(np, options);
+      const stepDistance = dx && dy ? Math.SQRT2 : 1;
+      const evidenceCost = (1 - ev.boundaryProbability) * evidenceWeight;
+      const curvatureCost = (turn / 180) * curvatureWeight;
+      const dendriteCost = ev.dendritePenalty * dendriteWeight;
+      const sourceDirectionMismatch = firstMove && candidate.sourceOutward
+        ? angleDeg(dx, dy, candidate.sourceOutward.x, candidate.sourceOutward.y) / 180
+        : 0;
+      const nextCost = current.cost + stepDistance + evidenceCost + curvatureCost
+        + dendriteCost + sourceDirectionMismatch * directionWeight;
+      const nextKey = np * 9 + dir;
+      if (nextCost >= (best.get(nextKey) ?? Infinity)) continue;
+      best.set(nextKey, nextCost);
+      parent.set(nextKey, current.key);
+      pathLength.set(nextKey, currentLength + 1);
+      const tx = candidate.x2 - nx;
+      const ty = candidate.y2 - ny;
+      const heuristic = Math.hypot(tx, ty) * 0.25;
+      heap.push({ key: nextKey, p: np, dir, cost: nextCost, priority: nextCost + heuristic });
+    }
+  }
+
+  return null;
+}
+
+function localBackgroundComponents(mask, width, height, pixels, padding = 2) {
+  if (!pixels?.length) return 0;
+  let minX = width - 1;
+  let maxX = 0;
+  let minY = height - 1;
+  let maxY = 0;
+  for (const p of pixels) {
+    const x = p % width;
+    const y = Math.floor(p / width);
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  minX = Math.max(0, minX - padding);
+  maxX = Math.min(width - 1, maxX + padding);
+  minY = Math.max(0, minY - padding);
+  maxY = Math.min(height - 1, maxY + padding);
+  const boxWidth = maxX - minX + 1;
+  const boxHeight = maxY - minY + 1;
+  const visited = new Uint8Array(boxWidth * boxHeight);
+  const queue = new Int32Array(boxWidth * boxHeight);
+  let components = 0;
+
+  for (let by = 0; by < boxHeight; by += 1) {
+    for (let bx = 0; bx < boxWidth; bx += 1) {
+      const local = by * boxWidth + bx;
+      const gx = minX + bx;
+      const gy = minY + by;
+      const gp = indexOf(width, gx, gy);
+      if (mask[gp] || visited[local]) continue;
+      components += 1;
+      let head = 0;
+      let tail = 0;
+      visited[local] = 1;
+      queue[tail++] = local;
+      while (head < tail) {
+        const q = queue[head++];
+        const qx = q % boxWidth;
+        const qy = Math.floor(q / boxWidth);
+        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+          const nx = qx + dx;
+          const ny = qy + dy;
+          if (nx < 0 || ny < 0 || nx >= boxWidth || ny >= boxHeight) continue;
+          const nl = ny * boxWidth + nx;
+          if (visited[nl]) continue;
+          const ngp = indexOf(width, minX + nx, minY + ny);
+          if (mask[ngp]) continue;
+          visited[nl] = 1;
+          queue[tail++] = nl;
+        }
+      }
+    }
+  }
+  return components;
+}
+
+function pathCoordinates(path, width) {
+  return (path?.pixels ?? []).map(p => pointFromIndex(p, width));
+}
+
+export function proposeTopologyRepairs(prediction, width, height, options = {}) {
+  if (!prediction || prediction.length !== width * height) {
+    throw new Error("Topology Repair v4用の境界マスクが不正です。");
+  }
+
+  const graph = buildSkeletonGraph(prediction, width, height, options);
+  const negativeGuardRadius = Math.max(0, Math.min(4, Math.round(options.negativeGuardRadius ?? 1)));
+  const guard = {
+    negative: buildGuardMask(options.negativeMask, width, height, negativeGuardRadius),
+    exclusion: options.exclusionMask?.length === prediction.length ? options.exclusionMask : null,
+    protectedFrameMargin: Math.max(0, Math.min(8, Math.round(options.protectedFrameMargin ?? 1))),
+  };
+  const minPathEvidence = clamp01(options.minPathEvidence ?? 0.32);
+  const maxAcceptedRepairs = Math.max(1, Math.min(1000, Math.round(options.maxAcceptedRepairs ?? 240)));
+  const maxSplitIncrease = Math.max(0, Math.min(4, Math.round(options.maxLocalSplitIncrease ?? 1)));
+  const sourceCandidates = candidateGeometry(graph, prediction, width, height, options);
+  const viable = [];
+  const reviewCandidates = [];
+  const rejected = {
+    noPath: 0,
+    evidence: 0,
+    curvature: 0,
+    negative: 0,
+    exclusion: 0,
+    protectedFrame: 0,
+    boundaryCrossing: 0,
+    localSplit: 0,
+    endpointConflict: 0,
+    targetConflict: 0,
+    overlap: 0,
+    limit: 0,
+  };
+
+  for (const candidate of sourceCandidates) {
+    const source = pointFromIndex(candidate.sourceP, width);
+    const target = pointFromIndex(candidate.targetP, width);
+    if (protectedByFrame(width, height, source.x, source.y, guard.protectedFrameMargin)
+        || protectedByFrame(width, height, target.x, target.y, guard.protectedFrameMargin)) {
+      rejected.protectedFrame += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-protected-frame", rejectionReason: "protected-frame" });
+      continue;
+    }
+    if (guard.negative?.[candidate.sourceP] || guard.negative?.[candidate.targetP]) {
+      rejected.negative += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-negative", rejectionReason: "negative" });
+      continue;
+    }
+    if (guard.exclusion?.[candidate.sourceP] || guard.exclusion?.[candidate.targetP]) {
+      rejected.exclusion += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-exclusion", rejectionReason: "exclusion" });
+      continue;
+    }
+
+    const path = findEvidencePath(prediction, width, height, candidate, guard, options);
+    if (!path) {
+      rejected.noPath += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-no-path", rejectionReason: "no-path" });
+      continue;
+    }
+    if ((path.pathEvidence ?? 0) < minPathEvidence) {
+      rejected.evidence += 1;
+      reviewCandidates.push({
+        ...candidate,
+        disposition: "rejected-evidence",
+        rejectionReason: "evidence",
+        pathEvidence: path.pathEvidence,
+        pathCoordinates: pathCoordinates(path, width),
+      });
+      continue;
+    }
+    const maxCurvature = Number(options.maxCurvatureDeg ?? 65);
+    if ((path.maxCurvatureDeg ?? 0) > maxCurvature + 1e-9) {
+      rejected.curvature += 1;
+      reviewCandidates.push({
+        ...candidate,
+        disposition: "rejected-curvature",
+        rejectionReason: "curvature",
+        pathEvidence: path.pathEvidence,
+        pathCoordinates: pathCoordinates(path, width),
+      });
+      continue;
+    }
+
+    const testMask = prediction.slice();
+    for (const p of path.interiorPixels) testMask[p] = 1;
+    const localBefore = localBackgroundComponents(prediction, width, height, path.pixels, 2);
+    const localAfter = localBackgroundComponents(testMask, width, height, path.pixels, 2);
+    const localSplitIncrease = Math.max(0, localAfter - localBefore);
+    if (localSplitIncrease > maxSplitIncrease) {
+      rejected.localSplit += 1;
+      reviewCandidates.push({
+        ...candidate,
+        disposition: "rejected-local-split",
+        rejectionReason: "local-split",
+        localSplitIncrease,
+        pathEvidence: path.pathEvidence,
+        pathCoordinates: pathCoordinates(path, width),
+      });
+      continue;
+    }
+
+    const distanceScore = 1 - Math.min(1, candidate.distance / Math.max(1, Number(options.maxSearchDistance ?? 10)));
+    const normalizedCost = path.cost / Math.max(1, path.lengthPx);
+    const score = (path.pathEvidence ?? 0.5) * 0.55
+      + clamp01(candidate.facing ?? 0) * 0.20
+      + distanceScore * 0.15
+      + clamp01(1 - normalizedCost / 4) * 0.10;
+    viable.push({
+      ...candidate,
+      ...path,
+      score,
+      localSplitIncrease,
+      pathCoordinates: pathCoordinates(path, width),
+    });
+  }
+
+  viable.sort((a, b) => b.score - a.score || a.distance - b.distance);
+  const mask = prediction.slice();
+  const repairMask = new Uint8Array(prediction.length);
+  const acceptedPaths = [];
+  const usedEndpoints = new Set();
+  const usedTargets = new Set();
+  let addedPixels = 0;
+
+  for (const candidate of viable) {
+    const endpointIds = [candidate.sourceNodeId];
+    if (candidate.type === "endpoint-endpoint" && candidate.targetNodeId != null) {
+      endpointIds.push(candidate.targetNodeId);
+    }
+    if (endpointIds.some(id => usedEndpoints.has(id))) {
+      rejected.endpointConflict += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-endpoint-conflict", rejectionReason: "endpoint-conflict" });
+      continue;
+    }
+    const targetKey = candidate.targetNodeId != null
+      ? `node:${candidate.targetNodeId}`
+      : `pixel:${candidate.targetP}`;
+    if (usedTargets.has(targetKey)) {
+      rejected.targetConflict += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-target-conflict", rejectionReason: "target-conflict" });
+      continue;
+    }
+    if (candidate.interiorPixels.some(p => mask[p])) {
+      rejected.overlap += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-boundary-crossing", rejectionReason: "boundary-crossing" });
+      continue;
+    }
+    if (acceptedPaths.length >= maxAcceptedRepairs) {
+      rejected.limit += 1;
+      reviewCandidates.push({ ...candidate, disposition: "rejected-limit", rejectionReason: "limit" });
+      continue;
+    }
+
+    let pathAdded = 0;
+    for (const p of candidate.interiorPixels) {
+      if (!mask[p]) {
+        mask[p] = 1;
+        repairMask[p] = 1;
+        pathAdded += 1;
+      }
+    }
+    if (!pathAdded) continue;
+    endpointIds.forEach(id => usedEndpoints.add(id));
+    usedTargets.add(targetKey);
+    addedPixels += pathAdded;
+    const accepted = {
+      ...candidate,
+      addedPixels: pathAdded,
+      disposition: "accepted-topology-v4",
+    };
+    acceptedPaths.push(accepted);
+    reviewCandidates.push(accepted);
+  }
+
+  const baseBoundaryPixels = graph.boundaryPixels;
+  const finalBoundaryPixels = mask.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  let basePixelsRemovedByRepair = 0;
+  for (let p = 0; p < prediction.length; p += 1) {
+    if (prediction[p] && !mask[p]) basePixelsRemovedByRepair += 1;
+  }
+
+  return {
+    mode: "topology-v4",
+    version: 4,
+    revision: "4.0-skeleton-graph-evidence-path-repair",
+    mask,
+    repairMask,
+    graph,
+    graphSummary: compactSkeletonGraph(graph),
+    repairPaths: acceptedPaths,
+    acceptedPaths,
+    acceptedRepairCount: acceptedPaths.length,
+    acceptedBridgeCount: acceptedPaths.length,
+    addedPixels,
+    sourceCandidateCount: sourceCandidates.length,
+    consideredCandidateCount: viable.length,
+    reviewCandidates,
+    rejected,
+    baseBoundaryPixels,
+    finalBoundaryPixels,
+    basePixelsRemovedByRepair,
+    preservationInvariant: basePixelsRemovedByRepair === 0,
+    settings: {
+      maxSearchDistance: Math.max(2, Number(options.maxSearchDistance ?? 10)),
+      maxEndpointAngleDeg: Math.max(5, Math.min(85, Number(options.maxEndpointAngleDeg ?? 50))),
+      junctionMinAngleDeg: Math.max(0, Math.min(90, Number(options.junctionMinAngleDeg ?? 20))),
+      minPathEvidence,
+      maxCurvatureDeg: Math.max(20, Math.min(120, Number(options.maxCurvatureDeg ?? 65))),
+      negativeGuardRadius,
+      protectedFrameMargin: guard.protectedFrameMargin,
+      maxLocalSplitIncrease: maxSplitIncrease,
+      maxAcceptedRepairs,
+    },
+  };
+}
+
+export function evaluateTopologyRepairGuard(before, after, options = {}) {
+  if (!before || !after) {
+    return { accepted: false, stage: "input", reason: "missing-evaluation", checks: [] };
+  }
+  const maxRecallDrop = Math.max(0, Number(options.maxRecallDrop ?? 0.001));
+  const maxLeakIncrease = Math.max(0, Number(options.maxLeakIncrease ?? 0.001));
+  const maxPrecisionDrop = Math.max(0, Number(options.maxPrecisionDrop ?? 0.002));
+  const checks = [];
+
+  const beforeRecall = before.positiveRecall ?? before.metrics?.positiveRecall ?? null;
+  const afterRecall = after.positiveRecall ?? after.metrics?.positiveRecall ?? null;
+  if (beforeRecall != null && afterRecall != null) {
+    const passed = afterRecall >= beforeRecall - maxRecallDrop;
+    checks.push({ priority: 1, name: "recall", passed, before: beforeRecall, after: afterRecall });
+    if (!passed) return { accepted: false, stage: "recall", reason: "recall-guard", checks };
+  }
+
+  const beforeLeak = before.macroNegativeLeakage ?? before.negativeLeakage
+    ?? before.metrics?.macroNegativeLeakage ?? before.metrics?.negativeLeakage ?? null;
+  const afterLeak = after.macroNegativeLeakage ?? after.negativeLeakage
+    ?? after.metrics?.macroNegativeLeakage ?? after.metrics?.negativeLeakage ?? null;
+  if (beforeLeak != null && afterLeak != null) {
+    const passed = afterLeak <= beforeLeak + maxLeakIncrease;
+    checks.push({ priority: 2, name: "negative-leakage", passed, before: beforeLeak, after: afterLeak });
+    if (!passed) return { accepted: false, stage: "negative-leakage", reason: "negative-leakage-guard", checks };
+  }
+
+  const beforePrecision = before.roiPrecision ?? before.precision ?? before.roiMetrics?.precision ?? null;
+  const afterPrecision = after.roiPrecision ?? after.precision ?? after.roiMetrics?.precision ?? null;
+  if (beforePrecision != null && afterPrecision != null) {
+    const passed = afterPrecision >= beforePrecision - maxPrecisionDrop;
+    checks.push({ priority: 3, name: "verified-roi-precision", passed, before: beforePrecision, after: afterPrecision });
+    if (!passed) return { accepted: false, stage: "precision", reason: "verified-roi-precision-guard", checks };
+  }
+
+  const beforeTopology = before.topology ?? before.closureProfile ?? null;
+  const afterTopology = after.topology ?? after.closureProfile ?? null;
+  let topologyImproved = false;
+  if (beforeTopology && afterTopology) {
+    const weightedGain = (afterTopology.weightedClosureScore ?? 0) - (beforeTopology.weightedClosureScore ?? 0);
+    const openGain = (beforeTopology.openAfterMaxRadius ?? 0) - (afterTopology.openAfterMaxRadius ?? 0);
+    const radiusGain = (beforeTopology.meanRequiredRadiusCapped ?? Infinity)
+      - (afterTopology.meanRequiredRadiusCapped ?? Infinity);
+    const exactGain = (afterTopology.exactClosureRate ?? afterTopology.baseClosureRate ?? 0)
+      - (beforeTopology.exactClosureRate ?? beforeTopology.baseClosureRate ?? 0);
+    topologyImproved = exactGain > 1e-9 || weightedGain > 0.00025 || openGain > 0 || radiusGain > 0.002;
+    checks.push({
+      priority: 4,
+      name: "topology-improvement",
+      passed: topologyImproved,
+      exactGain,
+      weightedGain,
+      openGain,
+      radiusGain,
+    });
+  }
+  if (!topologyImproved && beforeTopology && afterTopology) {
+    return { accepted: false, stage: "topology", reason: "no-topology-improvement", checks };
+  }
+
+  const beforeF1 = before.roiF1 ?? before.f1 ?? before.roiMetrics?.f1 ?? null;
+  const afterF1 = after.roiF1 ?? after.f1 ?? after.roiMetrics?.f1 ?? null;
+  const beforeAlignment = before.alignmentMean ?? before.metrics?.alignmentError?.mean ?? null;
+  const afterAlignment = after.alignmentMean ?? after.metrics?.alignmentError?.mean ?? null;
+  checks.push({
+    priority: 5,
+    name: "alignment-f1-tiebreak",
+    passed: true,
+    f1Delta: beforeF1 != null && afterF1 != null ? afterF1 - beforeF1 : null,
+    alignmentDelta: beforeAlignment != null && afterAlignment != null ? afterAlignment - beforeAlignment : null,
+  });
+
+  return { accepted: true, stage: "accepted", reason: null, checks };
+}
