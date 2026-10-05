@@ -3,7 +3,8 @@ import { computeDirectionalColorDifference } from "./color.js";
 import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./local-adaptive.js";
 import { compareBoundaryMasks, computeFullEvaluationRoiMetrics, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
 import { interpolateSensitivityDelta } from "./local-tune.js";
-import { computeDendriteDifference, computeDendriteOrientation } from "./dendrite.js";
+import { computeDendriteDifference, computeDendriteLinePenalty, computeDendriteOrientation } from "./dendrite.js";
+import { isUsableClassifierModel, predictBoundaryProbability } from "./boundary-classifier.js";
 import { computeClosureSnapshot } from "./topology.js";
 
 function clamp01(value) {
@@ -67,7 +68,7 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
     height,
     {
       distances: dendriteDistances,
-      onProgress: ratio => onProgress(0.84 + ratio * 0.14),
+      onProgress: ratio => onProgress(0.84 + ratio * 0.08),
     },
   );
 
@@ -78,6 +79,20 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
     ? normalizeFeatureLocally(directionalColor, width, height, { radius: localRadius, strength: localStrength })
     : directionalColor;
 
+  const dendriteLinePenalty = await computeDendriteLinePenalty(
+    ridge,
+    color,
+    dendrite,
+    dendriteOrientation.orientation,
+    dendriteOrientation.coherence,
+    ridgeResult.orientation,
+    width,
+    height,
+    {
+      onProgress: ratio => onProgress(0.92 + ratio * 0.08),
+    },
+  );
+
   onProgress(1);
   return {
     width,
@@ -86,6 +101,7 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
     ridge,
     color,
     dendrite,
+    dendriteLinePenalty,
     dendriteOrientation: dendriteOrientation.orientation,
     dendriteCoherence: dendriteOrientation.coherence,
     orientation: ridgeResult.orientation,
@@ -96,6 +112,7 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
       ridge: Math.max(...ridgeScales) + 1,
       color: Math.max(...colorDistances) + 1,
       dendrite: Math.max(...dendriteDistances) + 1,
+      dendriteLinePenalty: Math.max(9, ...dendriteDistances) + 1,
     },
     local: {
       enabled: localEnabled,
@@ -105,22 +122,33 @@ export async function computeBoundaryFeatures(imageData, options = {}) {
   };
 }
 
-function buildBoundaryCandidates(features, options = {}) {
+export function buildBoundaryCandidates(features, options = {}) {
   const sensitivity = options.sensitivity ?? 62;
+  const requestedMode = options.scoreMode ?? "legacy";
+  const classifierUsable = isUsableClassifierModel(options.classifierModel);
+  const scoreMode = requestedMode === "classifier" && classifierUsable
+    ? "classifier"
+    : requestedMode === "evidence"
+      ? "evidence"
+      : "legacy";
   const rawWeights = {
     dark: Math.max(0, Number(options.darkWeight ?? 15)),
     ridge: Math.max(0, Number(options.ridgeWeight ?? 40)),
     color: Math.max(0, Number(options.colorWeight ?? 25)),
     dendrite: Math.max(0, Number(options.dendriteWeight ?? 20)),
   };
+  const negativeEvidenceWeight = clamp01(Number(options.negativeEvidenceWeight ?? 35) / 100);
   const calibration = options.localCalibration ?? null;
   const score = new Float32Array(features.width * features.height);
-  const mask = new Uint8Array(features.width * features.height);
+  const positiveEvidence = new Float32Array(score.length);
+  const negativeEvidence = new Float32Array(score.length);
+  const mask = new Uint8Array(score.length);
   const margins = features.featureMargins ?? {
     dark: 0,
     ridge: 5,
     color: 7,
     dendrite: 14,
+    dendriteLinePenalty: 14,
   };
   const frameGuard = Math.max(0, Math.round(options.edgeFrameGuard ?? 1));
 
@@ -129,7 +157,7 @@ function buildBoundaryCandidates(features, options = {}) {
     && x < features.width - margin
     && y < features.height - margin;
 
-  const scoreAt = (p, x, y) => {
+  const positiveScoreAt = (p, x, y) => {
     let scoreSum = 0;
     let weightSum = 0;
 
@@ -157,8 +185,22 @@ function buildBoundaryCandidates(features, options = {}) {
     const base = y * features.width;
     for (let x = frameGuard; x < features.width - frameGuard; x += 1) {
       const p = base + x;
-      const value = scoreAt(p, x, y);
+      const positive = positiveScoreAt(p, x, y);
+      const penaltyAvailable = available(margins.dendriteLinePenalty ?? margins.dendrite ?? 0, x, y);
+      const negative = penaltyAvailable
+        ? ((features.dendriteLinePenalty?.[p] ?? 0) / 255) * negativeEvidenceWeight
+        : 0;
+      positiveEvidence[p] = positive;
+      negativeEvidence[p] = negative;
+
+      let value = positive;
+      if (scoreMode === "evidence") {
+        value = clamp01(positive - negative);
+      } else if (scoreMode === "classifier") {
+        value = predictBoundaryProbability(features, p, options.classifierModel) ?? positive;
+      }
       score[p] = value;
+
       const localSensitivity = calibration?.values?.length
         ? Math.max(1, Math.min(100, sensitivity + interpolateSensitivityDelta(
           calibration,
@@ -171,7 +213,15 @@ function buildBoundaryCandidates(features, options = {}) {
       if (value >= thresholdFromSensitivity(localSensitivity)) mask[p] = 1;
     }
   }
-  return { score, mask };
+  return {
+    score,
+    mask,
+    positiveEvidence,
+    negativeEvidence,
+    scoreMode,
+    requestedMode,
+    classifierFallback: requestedMode === "classifier" && !classifierUsable,
+  };
 }
 
 export function buildRawBoundaryMask(features, options = {}) {
@@ -618,6 +668,14 @@ function scorePredictionFunction(features, helpers, scoreIsPrediction) {
 }
 
 function evaluateRawConfiguration(features, helpers, config) {
+  if ((config.scoreMode ?? "legacy") !== "legacy") {
+    const candidates = buildBoundaryCandidates(features, {
+      ...config,
+      edgeFrameGuard: 1,
+    });
+    return scorePredictionFunction(features, helpers, p => Boolean(candidates.mask[p]));
+  }
+
   const threshold = thresholdFromSensitivity(config.sensitivity);
   const rawWeights = {
     dark: Math.max(0, Number(config.darkWeight ?? 0)),
@@ -677,6 +735,7 @@ function evaluateRawConfiguration(features, helpers, config) {
     return weightSum > 0 && scoreSum / weightSum >= threshold;
   };
   return scorePredictionFunction(features, helpers, scoreIsPrediction);
+
 }
 
 function betterTuneScore(candidate, best) {
@@ -898,6 +957,9 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     dendriteWeight: clampInt(options.current?.dendriteWeight ?? 20, 0, 100),
     minComponent: clampInt(options.current?.minComponent ?? 24, 1, 300),
     centerlineNms: options.current?.centerlineNms !== false,
+    scoreMode: options.current?.scoreMode ?? "legacy",
+    negativeEvidenceWeight: clampInt(options.current?.negativeEvidenceWeight ?? 35, 0, 100),
+    classifierModel: options.current?.classifierModel ?? null,
   };
 
   const helpers = buildFastEvaluationHelpers(
@@ -962,7 +1024,11 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
 
   let working = { ...globalBest.parameters };
   let processedWorking = globalBest;
-  const coordinates = ["sensitivity", "darkWeight", "ridgeWeight", "colorWeight", "dendriteWeight"];
+  const coordinates = current.scoreMode === "classifier"
+    ? ["sensitivity"]
+    : current.scoreMode === "evidence"
+      ? ["sensitivity", "darkWeight", "ridgeWeight", "colorWeight", "dendriteWeight", "negativeEvidenceWeight"]
+      : ["sensitivity", "darkWeight", "ridgeWeight", "colorWeight", "dendriteWeight"];
 
   for (let round = 0; round < maxRounds; round += 1) {
     const roundTrace = {
