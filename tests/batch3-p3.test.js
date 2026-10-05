@@ -1,0 +1,238 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  buildSkeletonGraph,
+  compactSkeletonGraph,
+  evaluateTopologyRepairGuard,
+  proposeTopologyRepairs,
+} from "../src/topology-repair.js";
+
+function mask(width, height) {
+  return new Uint8Array(width * height);
+}
+
+function set(target, width, x, y, value = 1) {
+  target[y * width + x] = value;
+}
+
+function drawLine(target, width, x1, y1, x2, y2, value = 1) {
+  const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+  for (let i = 0; i <= steps; i += 1) {
+    const t = steps ? i / steps : 0;
+    set(target, width, Math.round(x1 + (x2 - x1) * t), Math.round(y1 + (y2 - y1) * t), value);
+  }
+}
+
+function squareGapFixture(gapPx, barrier = null) {
+  const width = 40;
+  const height = 40;
+  const boundary = mask(width, height);
+  const truth = mask(width, height);
+  const probability = new Float32Array(width * height);
+  probability.fill(0.02);
+  const x0 = 8;
+  const y0 = 8;
+  const x1 = 31;
+  const y1 = 31;
+  drawLine(truth, width, x0, y0, x1, y0);
+  drawLine(truth, width, x0, y1, x1, y1);
+  drawLine(truth, width, x0, y0, x0, y1);
+  drawLine(truth, width, x1, y0, x1, y1);
+  boundary.set(truth);
+  const cx = 20;
+  const start = cx - Math.floor((gapPx - 1) / 2);
+  const missing = [];
+  for (let i = 0; i < gapPx; i += 1) {
+    const x = start + i;
+    set(boundary, width, x, y0, 0);
+    missing.push(y0 * width + x);
+  }
+  for (let p = 0; p < truth.length; p += 1) {
+    if (truth[p]) probability[p] = 0.98;
+  }
+  const negativeMask = mask(width, height);
+  const exclusionMask = mask(width, height);
+  if (barrier === "negative") missing.forEach(p => { negativeMask[p] = 1; });
+  if (barrier === "exclusion") missing.forEach(p => { exclusionMask[p] = 1; });
+  return { width, height, boundary, truth, probability, negativeMask, exclusionMask, missing };
+}
+
+function baseOptions(fixture) {
+  return {
+    boundaryProbability: fixture.probability,
+    negativeMask: fixture.negativeMask,
+    exclusionMask: fixture.exclusionMask,
+    maxSearchDistance: 8,
+    minPathEvidence: 0.75,
+    maxEndpointAngleDeg: 55,
+    maxCurvatureDeg: 70,
+    protectedFrameMargin: 1,
+    negativeGuardRadius: 0,
+    maxAcceptedRepairs: 20,
+  };
+}
+
+test("Skeleton Graph exposes endpoint/junction nodes and edge diagnostics", () => {
+  const width = 30;
+  const height = 30;
+  const boundary = mask(width, height);
+  drawLine(boundary, width, 15, 5, 15, 15);
+  drawLine(boundary, width, 8, 15, 22, 15);
+  drawLine(boundary, width, 15, 15, 15, 24);
+  const graph = buildSkeletonGraph(boundary, width, height);
+  assert.ok(graph.endpointCount >= 3);
+  assert.ok(graph.junctionCount >= 1);
+  assert.ok(graph.edgeCount >= 3);
+  for (const edge of graph.edges) {
+    assert.ok("startNodeId" in edge);
+    assert.ok("endNodeId" in edge);
+    assert.ok(Array.isArray(edge.pixels));
+    assert.ok("lengthPx" in edge);
+    assert.ok("meanBoundaryScore" in edge);
+    assert.ok("meanRidge" in edge);
+    assert.ok("meanColor" in edge);
+    assert.ok("curvature" in edge);
+  }
+  const compact = compactSkeletonGraph(graph);
+  assert.equal(compact.version, 4);
+  assert.equal(compact.endpointCount, graph.endpointCount);
+});
+
+for (const gapPx of [1, 2, 3]) {
+  test(`Topology Repair v4 repairs synthetic ${gapPx}px endpoint gap`, () => {
+    const fixture = squareGapFixture(gapPx);
+    const proposal = proposeTopologyRepairs(
+      fixture.boundary,
+      fixture.width,
+      fixture.height,
+      baseOptions(fixture),
+    );
+    assert.ok(proposal.acceptedRepairCount >= 1);
+    assert.equal(proposal.basePixelsRemovedByRepair, 0);
+    assert.equal(proposal.preservationInvariant, true);
+    for (const p of fixture.missing) assert.equal(proposal.mask[p], 1);
+    assert.ok(proposal.acceptedPaths.some(item => item.type === "endpoint-endpoint"));
+  });
+}
+
+test("Negative crossing is a hard reject", () => {
+  const fixture = squareGapFixture(3, "negative");
+  const proposal = proposeTopologyRepairs(
+    fixture.boundary,
+    fixture.width,
+    fixture.height,
+    baseOptions(fixture),
+  );
+  assert.equal(proposal.acceptedRepairCount, 0);
+  for (const p of fixture.missing) assert.equal(proposal.mask[p], 0);
+});
+
+test("Exclusion crossing is a hard reject", () => {
+  const fixture = squareGapFixture(3, "exclusion");
+  const proposal = proposeTopologyRepairs(
+    fixture.boundary,
+    fixture.width,
+    fixture.height,
+    baseOptions(fixture),
+  );
+  assert.equal(proposal.acceptedRepairCount, 0);
+  for (const p of fixture.missing) assert.equal(proposal.mask[p], 0);
+});
+
+test("Endpoint can repair to an existing ordinary boundary", () => {
+  const width = 40;
+  const height = 40;
+  const boundary = mask(width, height);
+  const probability = new Float32Array(width * height);
+  probability.fill(0.01);
+  drawLine(boundary, width, 20, 8, 20, 15);
+  drawLine(boundary, width, 10, 20, 30, 20);
+  for (let y = 16; y <= 19; y += 1) probability[y * width + 20] = 0.99;
+  const proposal = proposeTopologyRepairs(boundary, width, height, {
+    boundaryProbability: probability,
+    maxSearchDistance: 8,
+    minPathEvidence: 0.8,
+    negativeGuardRadius: 0,
+    protectedFrameMargin: 1,
+  });
+  assert.ok(proposal.acceptedPaths.some(item => item.type === "endpoint-boundary"));
+  for (let y = 16; y <= 19; y += 1) assert.equal(proposal.mask[y * width + 20], 1);
+});
+
+test("Endpoint can repair to a junction", () => {
+  const width = 40;
+  const height = 40;
+  const boundary = mask(width, height);
+  const probability = new Float32Array(width * height);
+  probability.fill(0.01);
+  drawLine(boundary, width, 20, 8, 20, 15);
+  drawLine(boundary, width, 11, 20, 29, 20);
+  drawLine(boundary, width, 20, 20, 20, 30);
+  for (let y = 16; y <= 19; y += 1) probability[y * width + 20] = 0.99;
+  const proposal = proposeTopologyRepairs(boundary, width, height, {
+    boundaryProbability: probability,
+    maxSearchDistance: 8,
+    minPathEvidence: 0.8,
+    maxEndpointAngleDeg: 55,
+    junctionMinAngleDeg: 15,
+    negativeGuardRadius: 0,
+    protectedFrameMargin: 1,
+  });
+  assert.ok(proposal.graph.junctionCount >= 1);
+  assert.ok(proposal.acceptedPaths.some(item => item.type === "endpoint-junction"));
+});
+
+test("Complete T/Y-style junctions do not create unsupported repair paths", () => {
+  const width = 40;
+  const height = 40;
+  const boundary = mask(width, height);
+  const probability = new Float32Array(width * height);
+  probability.fill(0.01);
+  drawLine(boundary, width, 20, 7, 20, 30);
+  drawLine(boundary, width, 9, 20, 31, 20);
+  for (let p = 0; p < boundary.length; p += 1) {
+    if (boundary[p]) probability[p] = 0.98;
+  }
+  const proposal = proposeTopologyRepairs(boundary, width, height, {
+    boundaryProbability: probability,
+    maxSearchDistance: 10,
+    minPathEvidence: 0.85,
+    negativeGuardRadius: 0,
+    protectedFrameMargin: 1,
+  });
+  assert.equal(proposal.acceptedRepairCount, 0);
+});
+
+test("Topology guard applies prioritized Recall/Leakage/Precision before topology gain", () => {
+  const before = {
+    positiveRecall: 0.82,
+    macroNegativeLeakage: 0.04,
+    roiPrecision: 0.37,
+    roiF1: 0.50,
+    topology: {
+      weightedClosureScore: 0.45,
+      meanRequiredRadiusCapped: 2.2,
+      openAfterMaxRadius: 6,
+      baseClosureRate: 0,
+    },
+  };
+  const improved = {
+    positiveRecall: 0.821,
+    macroNegativeLeakage: 0.0405,
+    roiPrecision: 0.369,
+    roiF1: 0.501,
+    topology: {
+      weightedClosureScore: 0.49,
+      meanRequiredRadiusCapped: 2.0,
+      openAfterMaxRadius: 4,
+      baseClosureRate: 0.05,
+    },
+  };
+  assert.equal(evaluateTopologyRepairGuard(before, improved).accepted, true);
+
+  const recallRegression = structuredClone(improved);
+  recallRegression.positiveRecall = 0.80;
+  const result = evaluateTopologyRepairGuard(before, recallRegression);
+  assert.equal(result.accepted, false);
+  assert.equal(result.stage, "recall");
+});
