@@ -1001,7 +1001,8 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     ablation: [],
   };
 
-  const totalPhases = 1 + maxRounds * 6 + 1;
+  const coordinateCount = current.scoreMode === "classifier" ? 1 : current.scoreMode === "evidence" ? 6 : 5;
+  const totalPhases = 1 + maxRounds * (coordinateCount + 1) + 1;
   let completedPhases = 0;
   const phaseProgress = localRatio => {
     onProgress(Math.min(0.98, (completedPhases + localRatio) / totalPhases));
