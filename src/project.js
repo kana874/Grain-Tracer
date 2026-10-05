@@ -1,7 +1,7 @@
 export const PROJECT_FORMAT = "graintracer-project";
-export const PROJECT_VERSION = 2;
-export const APP_VERSION = "0.4.0-alpha";
-export const ALGORITHM_VERSION = "boundary-v13-precision-guide-v2";
+export const PROJECT_VERSION = 3;
+export const APP_VERSION = "0.4.1-alpha";
+export const ALGORITHM_VERSION = "boundary-v14-dendrite-suppression-classifier";
 
 const ROI_ROLES = new Set(["training", "validation", "test"]);
 const IMAGE_ROLES = new Set(["development", "validation", "test"]);
@@ -41,6 +41,9 @@ export function migrateProject(project) {
     baselineSnapshots: Array.isArray(project.baselineSnapshots)
       ? project.baselineSnapshots.map(item => ({ ...item }))
       : [],
+    classifier: project.classifier && typeof project.classifier === "object"
+      ? { ...project.classifier }
+      : null,
     fullEvaluationRois: rois,
   };
 }
@@ -109,6 +112,7 @@ export function createProjectSnapshot(input) {
     history,
     imageEvaluationRole,
     baselineSnapshots,
+    classifier,
   } = input;
   return {
     format: PROJECT_FORMAT,
@@ -119,6 +123,7 @@ export function createProjectSnapshot(input) {
     source,
     preview: { width: preview.width, height: preview.height, scale: preview.scale },
     settings,
+    classifier: classifier ?? null,
     reference: {
       mask: packBinaryMask(referenceMask),
       centerline: packBinaryMask(referenceCenterline),
