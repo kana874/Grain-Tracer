@@ -2989,6 +2989,11 @@ async function exportDiagnostics(mode = "zip") {
       state.preview.width,
       state.preview.height,
     );
+    const dendritePenaltyImage = featureMapImageData(
+      features.dendriteLinePenalty,
+      state.preview.width,
+      state.preview.height,
+    );
     const base = (state.file?.name ?? "graintracer").replace(/\.bmp$/i, "");
 
     setStatus("診断データを作成中...", 82);
@@ -3017,6 +3022,11 @@ async function exportDiagnostics(mode = "zip") {
         name: "dendrite.png",
         individualName: `${base}.graintracer-dendrite.png`,
         blob: await imageDataToBlob(dendriteImage, "image/png"),
+      },
+      {
+        name: "dendrite-line-penalty.png",
+        individualName: `${base}.graintracer-dendrite-line-penalty.png`,
+        blob: await imageDataToBlob(dendritePenaltyImage, "image/png"),
       },
       {
         name: "reference.png",
