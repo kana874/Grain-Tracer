@@ -15,9 +15,16 @@ test("Batch1/Batch2 P1 controls exist exactly once in index.html", async () => {
     "trainClassifierButton",
     "resetClassifierButton",
     "classifierStatus",
+    "hysteresisEnabled",
+    "hysteresisHighThreshold",
+    "hysteresisLowThreshold",
+    "hysteresisMaxDistance",
+    "hysteresisMaxDirection",
+    "hysteresisNmsOrder",
+    "hysteresisStatus",
   ]) {
     const matches = html.match(new RegExp(`id=["']${id}["']`, "g")) ?? [];
     assert.equal(matches.length, 1, id);
   }
-  assert.match(html, /v0\.4\.1-alpha/);
+  assert.match(html, /v0\.4\.3-alpha/);
 });

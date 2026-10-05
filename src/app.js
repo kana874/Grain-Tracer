@@ -169,6 +169,13 @@ const els = {
   trainClassifierButton: $("trainClassifierButton"),
   resetClassifierButton: $("resetClassifierButton"),
   classifierStatus: $("classifierStatus"),
+  hysteresisEnabled: $("hysteresisEnabled"),
+  hysteresisHighThreshold: $("hysteresisHighThreshold"),
+  hysteresisLowThreshold: $("hysteresisLowThreshold"),
+  hysteresisMaxDistance: $("hysteresisMaxDistance"),
+  hysteresisMaxDirection: $("hysteresisMaxDirection"),
+  hysteresisNmsOrder: $("hysteresisNmsOrder"),
+  hysteresisStatus: $("hysteresisStatus"),
   minComponent: $("minComponent"),
   centerlineNms: $("centerlineNms"),
   overlayOpacity: $("overlayOpacity"),
@@ -284,6 +291,7 @@ const state = {
   overlayPeekHidden: false,
   lastMetrics: null,
   lastTopology: null,
+  lastHysteresis: null,
   gapProposal: null,
   gapBaseMask: null,
   gapApplied: null,
@@ -534,6 +542,26 @@ function currentFeatureOptions() {
   };
 }
 
+function currentHysteresisOptions() {
+  const high = Number(els.hysteresisHighThreshold?.value ?? 45) / 100;
+  const low = Math.min(high, Number(els.hysteresisLowThreshold?.value ?? 30) / 100);
+  return {
+    enabled: Boolean(els.hysteresisEnabled?.checked),
+    highThreshold: high,
+    lowThreshold: low,
+    maxTrackingDistance: Number(els.hysteresisMaxDistance?.value ?? 12),
+    maxScoreDelta: 0.18,
+    minColorEvidence: 0.04,
+    minRidgeEvidence: 0.05,
+    maxDirectionDeltaDeg: Number(els.hysteresisMaxDirection?.value ?? 35),
+    maxTangentMismatchDeg: 50,
+    maxCurvatureDeg: 55,
+    nmsOrder: els.hysteresisNmsOrder?.value === "after-tracking"
+      ? "after-tracking"
+      : "before-tracking",
+  };
+}
+
 function normalizedReferenceWidth() {
   const raw = Math.max(1, Math.min(15, Math.round(Number(els.referenceBrush.value) || 5)));
   return raw % 2 === 0 ? Math.max(1, raw - 1) : raw;
@@ -662,7 +690,9 @@ function currentBoundaryOptions() {
       : extraction.scoreMode,
     classifierModel: classifierAccepted ? state.classifier.model : null,
     localCalibration: state.localCalibration,
+    negativeMask: state.negativeMask,
     exclusionMask: state.exclusionMask,
+    hysteresis: currentHysteresisOptions(),
     edgeFrameGuard: 1,
   };
 }
@@ -699,6 +729,22 @@ function updateClassifierStatus() {
     const reasons = state.classifier.guard?.reasons?.join(", ") || "Guard未評価";
     els.classifierStatus.textContent = `Classifier: 未採用 / ${sampleText} / ${reasons}`;
   }
+}
+
+function updateHysteresisStatus(diagnostics = state.lastHysteresis) {
+  if (!els.hysteresisStatus) return;
+  const settings = currentHysteresisOptions();
+  if (!settings.enabled) {
+    els.hysteresisStatus.textContent = "Hysteresis: OFF（単一閾値）";
+    return;
+  }
+  if (!diagnostics) {
+    els.hysteresisStatus.textContent =
+      `Hysteresis: 待機 / High ${Math.round(settings.highThreshold * 100)}% / Low ${Math.round(settings.lowThreshold * 100)}%`;
+    return;
+  }
+  els.hysteresisStatus.textContent =
+    `Hysteresis(add): Base ${diagnostics.baseBoundaryPixels ?? "-"} / Seed ${diagnostics.strongSeedCount ?? diagnostics.strongCount ?? 0} / Weak追加 ${diagnostics.acceptedWeakPixels ?? diagnostics.acceptedWeakCount ?? 0} / Final ${diagnostics.finalBoundaryPixels ?? "-"} / Base削除 ${diagnostics.basePixelsRemovedByP2 ?? 0} / ${diagnostics.nmsOrder ?? settings.nmsOrder}`;
 }
 
 function explicitTrainingEvaluationRois() {
@@ -785,9 +831,8 @@ async function trainBoundaryClassifier() {
     const extraction = currentExtractionOptions();
     const baselineMode = extraction.scoreMode === "evidence" ? "evidence" : "legacy";
     const common = {
-      ...extraction,
-      localCalibration: state.localCalibration,
-      exclusionMask: state.exclusionMask,
+      ...currentBoundaryOptions(),
+      hysteresis: { enabled: false },
       edgeFrameGuard: 1,
       onProgress: () => {},
     };
@@ -860,6 +905,7 @@ function currentSettings() {
     extraction: currentExtractionOptions(),
     local: currentFeatureOptions(),
     comparison: currentComparisonOptions(),
+    hysteresis: currentHysteresisOptions(),
     referenceBrush: normalizedReferenceWidth(),
     referenceOpacity: Number(els.referenceOpacity.value),
     overlayOpacity: Number(els.overlayOpacity.value),
@@ -885,6 +931,7 @@ function applySettings(settings = {}) {
   const extraction = settings.extraction ?? {};
   const local = settings.local ?? {};
   const comparison = settings.comparison ?? {};
+  const hysteresis = settings.hysteresis ?? {};
   if (extraction.sensitivity != null) setRangeValue(els.sensitivity, extraction.sensitivity);
   if (extraction.darkWeight != null) setRangeValue(els.darkWeight, extraction.darkWeight);
   if (extraction.ridgeWeight != null) setRangeValue(els.ridgeWeight, extraction.ridgeWeight);
@@ -898,6 +945,24 @@ function applySettings(settings = {}) {
   }
   if (extraction.minComponent != null) setRangeValue(els.minComponent, extraction.minComponent);
   els.centerlineNms.checked = extraction.centerlineNms == null ? true : Boolean(extraction.centerlineNms);
+  if (els.hysteresisEnabled) els.hysteresisEnabled.checked = Boolean(hysteresis.enabled);
+  if (hysteresis.highThreshold != null && els.hysteresisHighThreshold) {
+    setRangeValue(els.hysteresisHighThreshold, Number(hysteresis.highThreshold) * 100);
+  }
+  if (hysteresis.lowThreshold != null && els.hysteresisLowThreshold) {
+    setRangeValue(els.hysteresisLowThreshold, Number(hysteresis.lowThreshold) * 100);
+  }
+  if (hysteresis.maxTrackingDistance != null && els.hysteresisMaxDistance) {
+    setRangeValue(els.hysteresisMaxDistance, hysteresis.maxTrackingDistance);
+  }
+  if (hysteresis.maxDirectionDeltaDeg != null && els.hysteresisMaxDirection) {
+    setRangeValue(els.hysteresisMaxDirection, hysteresis.maxDirectionDeltaDeg);
+  }
+  if (els.hysteresisNmsOrder) {
+    els.hysteresisNmsOrder.value = hysteresis.nmsOrder === "after-tracking"
+      ? "after-tracking"
+      : "before-tracking";
+  }
   if (local.enabled != null) els.localEnabled.checked = Boolean(local.enabled);
   if (local.localEnabled != null) els.localEnabled.checked = Boolean(local.localEnabled);
   if (local.strength != null) setRangeValue(els.localStrength, local.strength <= 1 ? local.strength * 100 : local.strength);
@@ -2753,6 +2818,8 @@ async function restoreProject(project, source = "プロジェクト") {
   applySettings(project.settings ?? {});
   updateLocalCalibrationStatus();
   updateClassifierStatus();
+  state.lastHysteresis = null;
+  updateHysteresisStatus();
   renderReferenceCanvas();
   // Prefer the persisted manual Negative mask on restore. Rebuilding it from
   // the centerline here could erase legacy/project data when the centerline is
@@ -2942,6 +3009,7 @@ async function exportDiagnostics(mode = "zip") {
       imageEvaluationRole: state.imageEvaluationRole,
       baselineSnapshots: state.baselineSnapshots,
       classifier: state.classifier,
+      hysteresis: state.lastHysteresis,
     });
 
     const comparison = renderComparisonOverlay(
@@ -3143,6 +3211,8 @@ async function loadBmp(file) {
   state.baselineSnapshots = [];
   state.classifier = null;
   updateClassifierStatus();
+  state.lastHysteresis = null;
+  updateHysteresisStatus();
   state.precisionGuide = createDefaultPrecisionGuideState();
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -3291,6 +3361,10 @@ async function analyzePreview({ manageBusy = true } = {}) {
     resetGapBridgeState(true);
     state.analysisMask = await buildBoundaryMask(features, {
       ...currentBoundaryOptions(),
+      onHysteresisDiagnostics: diagnostics => {
+        state.lastHysteresis = diagnostics;
+        updateHysteresisStatus(diagnostics);
+      },
       onProgress: ratio => setStatus(`粒界候補を解析中... ${Math.round(ratio * 100)}%`, 72 + ratio * 27),
     });
     recordPerformance("boundaryAnalysisMs", analysisStartedAt);
@@ -3406,6 +3480,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
       exclusionMask: state.exclusionMask,
       fullEvaluationRois: useCompleteRoi ? tuningRois : null,
       current: currentBoundaryOptions(),
+      hysteresis: currentHysteresisOptions(),
       topologyDiagnostics: {
         seeds: state.closedNegativeSeeds,
         options: closureDiagnosticOptions(),
@@ -3425,11 +3500,20 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
     state.localCalibration = null;
     updateLocalCalibrationStatus();
     resetGapBridgeState(true);
-    state.analysisMask = result.mask;
+    state.lastHysteresis = null;
+    state.analysisMask = await buildBoundaryMask(features, {
+      ...currentBoundaryOptions(),
+      localCalibration: null,
+      onHysteresisDiagnostics: diagnostics => {
+        state.lastHysteresis = diagnostics;
+        updateHysteresisStatus(diagnostics);
+      },
+      onProgress: () => {},
+    });
     invalidateTopology();
 
     const comparison = renderComparisonOverlay(
-      result.mask,
+      state.analysisMask,
       state.referenceCenterline,
       state.preview.width,
       state.preview.height,
@@ -3443,7 +3527,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
     updateMetrics(comparison.metrics);
     const validationMetrics = !useCompleteRoi && split.validationPixels >= 40
       ? computeRegionalMetrics(
-        result.mask,
+        state.analysisMask,
         split.validationMask,
         state.preview.width,
         state.preview.height,
@@ -3463,7 +3547,7 @@ async function autoTune({ manageBusy = true, recordHistory = true } = {}) {
       : null;
     const roiMetrics = useCompleteRoi
       ? computeFullEvaluationRoiMetrics(
-        result.mask,
+        state.analysisMask,
         state.referenceCenterline,
         state.preview.width,
         state.preview.height,
@@ -3562,10 +3646,14 @@ async function localTune({ manageBusy = true, recordHistory = true, scheduleSave
     updateLocalCalibrationStatus();
 
     resetGapBridgeState(true);
+    state.lastHysteresis = null;
     state.analysisMask = await buildBoundaryMask(features, {
-      ...extraction,
+      ...currentBoundaryOptions(),
       localCalibration: calibration,
-      exclusionMask: state.exclusionMask,
+      onHysteresisDiagnostics: diagnostics => {
+        state.lastHysteresis = diagnostics;
+        updateHysteresisStatus(diagnostics);
+      },
       onProgress: ratio => setStatus(`局所補正で再抽出中... ${Math.round(ratio * 100)}%`, 62 + ratio * 36),
     });
     invalidateTopology();
@@ -4665,6 +4753,25 @@ els.scoreMode?.addEventListener("change", () => {
 });
 els.trainClassifierButton?.addEventListener("click", trainBoundaryClassifier);
 els.resetClassifierButton?.addEventListener("click", resetBoundaryClassifier);
+const hysteresisSettingChanged = () => {
+  state.lastHysteresis = null;
+  updateHysteresisStatus();
+  extractionSettingChanged();
+};
+els.hysteresisEnabled?.addEventListener("change", hysteresisSettingChanged);
+if (els.hysteresisHighThreshold) {
+  bindRange(els.hysteresisHighThreshold, $("hysteresisHighThresholdValue"), hysteresisSettingChanged);
+}
+if (els.hysteresisLowThreshold) {
+  bindRange(els.hysteresisLowThreshold, $("hysteresisLowThresholdValue"), hysteresisSettingChanged);
+}
+if (els.hysteresisMaxDistance) {
+  bindRange(els.hysteresisMaxDistance, $("hysteresisMaxDistanceValue"), hysteresisSettingChanged);
+}
+if (els.hysteresisMaxDirection) {
+  bindRange(els.hysteresisMaxDirection, $("hysteresisMaxDirectionValue"), hysteresisSettingChanged);
+}
+els.hysteresisNmsOrder?.addEventListener("change", hysteresisSettingChanged);
 bindRange(els.minComponent, $("minComponentValue"), extractionSettingChanged);
 els.centerlineNms.addEventListener("change", extractionSettingChanged);
 bindRange(els.overlayOpacity, $("overlayOpacityValue"), scheduleAutosave);
@@ -4892,6 +4999,7 @@ els.projectStatus.textContent = `v${APP_VERSION} / ${ALGORITHM_VERSION}`;
 updateAnnotationStatus();
 updateLocalCalibrationStatus();
 updateClassifierStatus();
+updateHysteresisStatus();
 updateTopologyStatus();
 applyAnnotationAssistView();
 updateControls();

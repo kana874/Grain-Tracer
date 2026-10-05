@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.4.1-alpha</div>
+    <div class="version">v0.4.3-alpha</div>
   </header>
 
   <main class="layout">
@@ -149,6 +149,24 @@
         <p class="help">ONでは連続角度のRidge法線方向に補間した局所最大だけを残し、太線・二重線を1本化します。画像端のRidge方向が未定義な範囲は従来候補を保持します。</p>
 
         <div class="subpanel">
+          <strong class="subpanel-title">Weak Boundary Tracking（Batch 2 / P2）</strong>
+          <label class="check-row"><input id="hysteresisEnabled" type="checkbox"> Hysteresis Trackingを有効</label>
+          <label class="control-row"><span>High Threshold</span><output id="hysteresisHighThresholdValue">45</output><input id="hysteresisHighThreshold" type="range" min="20" max="80" step="1" value="45"></label>
+          <label class="control-row"><span>Low Threshold</span><output id="hysteresisLowThresholdValue">30</output><input id="hysteresisLowThreshold" type="range" min="10" max="70" step="1" value="30"></label>
+          <label class="control-row"><span>最大追跡距離</span><output id="hysteresisMaxDistanceValue">12</output><input id="hysteresisMaxDistance" type="range" min="2" max="30" step="1" value="12"></label>
+          <label class="control-row"><span>最大方向差</span><output id="hysteresisMaxDirectionValue">35</output><input id="hysteresisMaxDirection" type="range" min="10" max="70" step="5" value="35"></label>
+          <label class="select-row">
+            <span>NMS順序</span>
+            <select id="hysteresisNmsOrder">
+              <option value="before-tracking">NMS → Weak追跡（推奨）</option>
+              <option value="after-tracking">Weak追跡 → NMS（比較用）</option>
+            </select>
+          </label>
+          <p id="hysteresisStatus" class="help metric-detail">Hysteresis: OFF（単一閾値）</p>
+          <p class="help">P1の粒界マスクを保持したまま、P1上のStrong境界を起点としてWeak画素だけを追加回復します。Ridge方向・接線方向・Score連続性・Color evidence・最大距離・曲率でGuardし、NegativeとExclusionには侵入しません。P2がP1粒界を削除することはありません。既存Project互換のため初期値はOFFです.</p>
+        </div>
+
+        <div class="subpanel">
           <label class="check-row"><input id="localEnabled" type="checkbox" checked> 局所適応を有効</label>
           <label class="control-row"><span>局所補正強度</span><output id="localStrengthValue">70</output><input id="localStrength" type="range" min="0" max="100" value="70"></label>
           <label class="control-row"><span>局所窓サイズ</span><output id="localWindowValue">320</output><input id="localWindow" type="range" min="96" max="640" step="32" value="320"></label>
@@ -183,7 +201,7 @@
         </div>
 
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.4.1</strong>
+          <strong class="subpanel-title">自動最適化 v0.4.3</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
           <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。お手本線が無い初回は8×8グリッドから3つのROI候補を固定seedで提示し、2回目以降は必要な場合だけ未評価領域を追加提案します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
@@ -260,7 +278,7 @@
           <p class="help">Recall @1/2/3/4 px、Negative Leakage、ROI Precision/Recall/F1、Alignment、Closure、Open@3、Boundary/Unknown画素数をProjectへ保存します。</p>
         </div>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
-        <p class="help">ZIP出力: manifest.json / diagnostic.json v16 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">ZIP出力: manifest.json / diagnostic.json v18 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
           <summary>個別ファイル出力</summary>
           <button id="exportDiagnosticsIndividualButton" class="full" type="button" disabled>診断ファイルを個別に書き出す</button>
@@ -282,6 +300,9 @@
           <li class="done">Dendrite Suppression v2（粒内線Penalty / Negative Evidence）</li>
           <li class="done">Browser Logistic Classifier + Validation Guard</li>
           <li class="done">Auto Tune Recall Guard（大幅Recall低下を防止）</li>
+          <li class="done">Hysteresis Boundary Tracking（Strong-seeded Weak追跡）</li>
+          <li class="done">Hysteresis Hard Guard（Negative / Exclusion / 方向 / 曲率 / 距離）</li>
+          <li class="done">NMS前後切替・Synthetic比較</li>
           <li class="done">局所適応正規化</li>
           <li class="done">中心線ベース評価</li>
           <li class="done">評価履歴の保存</li>
