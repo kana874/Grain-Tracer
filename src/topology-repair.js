@@ -1215,6 +1215,186 @@ function countByType(items) {
   return result;
 }
 
+function endpointIdsForCandidate(candidate) {
+  const ids = [candidate.sourceNodeId];
+  if (candidate.type === "endpoint-endpoint" && candidate.targetNodeId != null) {
+    ids.push(candidate.targetNodeId);
+  }
+  return ids;
+}
+
+function targetKeyForCandidate(candidate) {
+  return candidate.targetNodeId != null
+    ? `node:${candidate.targetNodeId}`
+    : `pixel:${candidate.targetP}`;
+}
+
+function bundleCompatibility(candidates, baseMask) {
+  const endpointIds = new Set();
+  const targetKeys = new Set();
+  const additions = new Set();
+  const pixels = [];
+  for (const candidate of candidates) {
+    for (const id of endpointIdsForCandidate(candidate)) {
+      if (endpointIds.has(id)) return { compatible: false, reason: "endpoint-conflict" };
+      endpointIds.add(id);
+    }
+    const targetKey = targetKeyForCandidate(candidate);
+    if (targetKeys.has(targetKey)) return { compatible: false, reason: "target-conflict" };
+    targetKeys.add(targetKey);
+    for (const p of candidate.interiorPixels ?? []) {
+      if (baseMask[p]) return { compatible: false, reason: "boundary-crossing" };
+      if (additions.has(p)) return { compatible: false, reason: "path-overlap" };
+      additions.add(p);
+      pixels.push(p);
+    }
+  }
+  return { compatible: true, endpointIds, targetKeys, additions, pixels };
+}
+
+function bundlePool(candidates, maxCandidates) {
+  const sorted = [...candidates].sort((a, b) =>
+    (b.topologyContribution?.progressScore ?? 0) - (a.topologyContribution?.progressScore ?? 0)
+    || b.score - a.score
+    || (b.pathEvidence ?? 0) - (a.pathEvidence ?? 0)
+    || a.distance - b.distance);
+  const selected = [];
+  const used = new Set();
+  for (const type of ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction"]) {
+    const index = sorted.findIndex((candidate, i) => !used.has(i) && candidate.type === type);
+    if (index >= 0) {
+      selected.push(sorted[index]);
+      used.add(index);
+    }
+  }
+  for (let i = 0; i < sorted.length && selected.length < maxCandidates; i += 1) {
+    if (used.has(i)) continue;
+    selected.push(sorted[i]);
+  }
+  return selected.slice(0, maxCandidates);
+}
+
+function enumerateBundles(items, maxSize, callback) {
+  const chosen = [];
+  const visit = start => {
+    if (chosen.length) callback([...chosen]);
+    if (chosen.length >= maxSize) return;
+    for (let i = start; i < items.length; i += 1) {
+      chosen.push(items[i]);
+      visit(i + 1);
+      chosen.pop();
+    }
+  };
+  visit(0);
+}
+
+function bundleRank(contribution, candidates, additions) {
+  const exact = Math.max(0, contribution?.exactGain ?? 0);
+  const open = Math.max(0, contribution?.openGain ?? 0);
+  const radius = Math.max(0, contribution?.radiusGain ?? 0);
+  const weighted = Math.max(0, contribution?.weightedGain ?? 0);
+  const progress = Math.max(0, contribution?.progressScore ?? 0);
+  const meanEvidence = candidates.reduce((sum, item) => sum + (item.pathEvidence ?? 0), 0)
+    / Math.max(1, candidates.length);
+  return exact * 120
+    + open * 90
+    + radius * 35
+    + weighted * 50
+    + progress * 6
+    + meanEvidence
+    - candidates.length * 0.12
+    - additions.size * 0.004;
+}
+
+function evaluateRepairBundle(mask, width, height, target, candidates, options, maxSplitIncrease) {
+  const compatibility = bundleCompatibility(candidates, mask);
+  if (!compatibility.compatible) return { accepted: false, reason: compatibility.reason };
+  const allPathPixels = candidates.flatMap(candidate => candidate.pixels ?? []);
+  const localBefore = localBackgroundComponents(mask, width, height, allPathPixels, 2);
+  const localAfter = localBackgroundComponents(
+    mask,
+    width,
+    height,
+    allPathPixels,
+    2,
+    compatibility.additions,
+  );
+  const localSplitIncrease = Math.max(0, localAfter - localBefore);
+  if (localSplitIncrease > maxSplitIncrease) {
+    return { accepted: false, reason: "local-split", localSplitIncrease };
+  }
+
+  const before = localClosureSignature(mask, width, height, target, options);
+  const after = localClosureSignature(mask, width, height, target, options, compatibility.additions);
+  const contribution = targetImprovement(before, after);
+  contribution.before = before;
+  contribution.after = after;
+  if (!contribution.improved) {
+    return {
+      accepted: false,
+      reason: "topology-no-bundle-gain",
+      contribution,
+      localSplitIncrease,
+    };
+  }
+
+  return {
+    accepted: true,
+    compatibility,
+    contribution,
+    localSplitIncrease,
+    rank: bundleRank(contribution, candidates, compatibility.additions),
+  };
+}
+
+function findBestRepairBundle(mask, width, height, target, candidates, options, maxSplitIncrease) {
+  const maxPool = Math.max(2, Math.min(10, Math.round(options.maxBundleCandidatesPerTarget ?? 6)));
+  const maxSize = Math.max(1, Math.min(4, Math.round(options.maxBundleSize ?? 3)));
+  const pool = bundlePool(candidates, maxPool);
+  let tested = 0;
+  let compatible = 0;
+  let improving = 0;
+  let best = null;
+
+  enumerateBundles(pool, maxSize, bundle => {
+    tested += 1;
+    const result = evaluateRepairBundle(mask, width, height, target, bundle, options, maxSplitIncrease);
+    if (result.reason !== "endpoint-conflict"
+        && result.reason !== "target-conflict"
+        && result.reason !== "boundary-crossing"
+        && result.reason !== "path-overlap") {
+      compatible += 1;
+    }
+    if (!result.accepted) return;
+    improving += 1;
+    const candidate = {
+      targetId: target.id,
+      targetPriority: target.priority,
+      candidates: bundle,
+      ...result,
+    };
+    if (!best
+        || candidate.rank > best.rank + 1e-9
+        || (Math.abs(candidate.rank - best.rank) <= 1e-9
+          && candidate.candidates.length < best.candidates.length)) {
+      best = candidate;
+    }
+  });
+
+  return {
+    best,
+    stats: {
+      targetId: target.id,
+      poolSize: pool.length,
+      tested,
+      compatible,
+      improving,
+      selectedBundleSize: best?.candidates.length ?? 0,
+      selectedRank: best?.rank ?? null,
+    },
+  };
+}
+
 export function proposeTopologyRepairs(prediction, width, height, options = {}) {
   if (!prediction || prediction.length !== width * height) {
     throw new Error("Topology Repair v4用の境界マスクが不正です。");
@@ -1246,6 +1426,8 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     localSplit: 0,
     topologyNoGain: 0,
     topologyNoIncrementalGain: 0,
+    topologyNoBundleGain: 0,
+    bundleConflict: 0,
     endpointConflict: 0,
     targetConflict: 0,
     overlap: 0,
@@ -1335,18 +1517,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
       topologyContribution = targetImprovement(topologyTarget.before, afterTarget);
       topologyContribution.before = topologyTarget.before;
       topologyContribution.after = afterTarget;
-      if (!topologyContribution.improved) {
-        rejected.topologyNoGain += 1;
-        reviewCandidates.push({
-          ...candidate,
-          disposition: "rejected-topology-no-gain",
-          rejectionReason: "topology-no-gain",
-          topologyContribution,
-          pathEvidence: path.pathEvidence,
-          pathCoordinates: pathCoordinates(path, width),
-        });
-        continue;
-      }
+      if (!topologyContribution.improved) rejected.topologyNoGain += 1;
     }
 
     const distanceScore = 1 - Math.min(1, candidate.distance / Math.max(1, Number(options.maxSearchDistance ?? 10)));
@@ -1376,88 +1547,158 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   const mask = prediction.slice();
   const repairMask = new Uint8Array(prediction.length);
   const acceptedPaths = [];
+  const acceptedBundles = [];
   const usedEndpoints = new Set();
   const usedTargets = new Set();
-  const targetCurrent = new Map();
-  for (const target of topologyContext?.targets ?? []) targetCurrent.set(target.id, target.before);
+  const bundleSearch = [];
   let addedPixels = 0;
 
-  for (const candidate of viable) {
-    const endpointIds = [candidate.sourceNodeId];
-    if (candidate.type === "endpoint-endpoint" && candidate.targetNodeId != null) {
-      endpointIds.push(candidate.targetNodeId);
+  const acceptCandidateSet = (candidates, bundleMeta = null) => {
+    const compatibility = bundleCompatibility(candidates, mask);
+    if (!compatibility.compatible) {
+      rejected.bundleConflict += 1;
+      return false;
     }
-    if (endpointIds.some(id => usedEndpoints.has(id))) {
+    if ([...compatibility.endpointIds].some(id => usedEndpoints.has(id))) {
       rejected.endpointConflict += 1;
-      reviewCandidates.push({ ...candidate, disposition: "rejected-endpoint-conflict", rejectionReason: "endpoint-conflict" });
-      continue;
+      return false;
     }
-    const targetKey = candidate.targetNodeId != null
-      ? `node:${candidate.targetNodeId}`
-      : `pixel:${candidate.targetP}`;
-    if (usedTargets.has(targetKey)) {
+    if ([...compatibility.targetKeys].some(key => usedTargets.has(key))) {
       rejected.targetConflict += 1;
-      reviewCandidates.push({ ...candidate, disposition: "rejected-target-conflict", rejectionReason: "target-conflict" });
-      continue;
+      return false;
     }
-    if (candidate.interiorPixels.some(p => mask[p])) {
-      rejected.overlap += 1;
-      reviewCandidates.push({ ...candidate, disposition: "rejected-boundary-crossing", rejectionReason: "boundary-crossing" });
-      continue;
-    }
-    if (acceptedPaths.length >= maxAcceptedRepairs) {
-      rejected.limit += 1;
-      reviewCandidates.push({ ...candidate, disposition: "rejected-limit", rejectionReason: "limit" });
-      continue;
+    if (acceptedPaths.length + candidates.length > maxAcceptedRepairs) {
+      rejected.limit += candidates.length;
+      return false;
     }
 
-    let incrementalContribution = candidate.topologyContribution;
-    const topologyTarget = candidate.topologyTargetId
-      ? topologyContext?.targetById.get(candidate.topologyTargetId) ?? null
-      : null;
-    if (topologyTarget) {
-      const additions = new Set(candidate.interiorPixels);
-      const beforeTarget = targetCurrent.get(topologyTarget.id)
-        ?? localClosureSignature(mask, width, height, topologyTarget, options);
-      const afterTarget = localClosureSignature(mask, width, height, topologyTarget, options, additions);
-      incrementalContribution = targetImprovement(beforeTarget, afterTarget);
-      incrementalContribution.before = beforeTarget;
-      incrementalContribution.after = afterTarget;
-      if (!incrementalContribution.improved) {
-        rejected.topologyNoIncrementalGain += 1;
-        reviewCandidates.push({
-          ...candidate,
-          disposition: "rejected-topology-no-incremental-gain",
-          rejectionReason: "topology-no-incremental-gain",
-          topologyContribution: incrementalContribution,
-        });
+    let applied = 0;
+    for (const candidate of candidates) {
+      let pathAdded = 0;
+      for (const p of candidate.interiorPixels ?? []) {
+        if (!mask[p]) {
+          mask[p] = 1;
+          repairMask[p] = 1;
+          pathAdded += 1;
+          applied += 1;
+        }
+      }
+      const accepted = {
+        ...candidate,
+        topologyContribution: bundleMeta?.contribution ?? candidate.topologyContribution ?? null,
+        individualTopologyContribution: candidate.topologyContribution ?? null,
+        bundleId: bundleMeta?.id ?? null,
+        bundleSize: candidates.length,
+        bundleRank: bundleMeta?.rank ?? null,
+        addedPixels: pathAdded,
+        disposition: bundleMeta ? "accepted-topology-v4-bundle" : "accepted-topology-v4",
+      };
+      acceptedPaths.push(accepted);
+      reviewCandidates.push(accepted);
+    }
+    if (!applied) return false;
+    for (const id of compatibility.endpointIds) usedEndpoints.add(id);
+    for (const key of compatibility.targetKeys) usedTargets.add(key);
+    addedPixels += applied;
+    return true;
+  };
+
+  if (topologyContext?.targets?.length) {
+    const byTarget = new Map();
+    for (const candidate of viable) {
+      if (!candidate.topologyTargetId) continue;
+      const items = byTarget.get(candidate.topologyTargetId);
+      if (items) items.push(candidate);
+      else byTarget.set(candidate.topologyTargetId, [candidate]);
+    }
+
+    const proposedBundles = [];
+    for (const [targetId, candidates] of byTarget) {
+      const target = topologyContext.targetById.get(targetId);
+      if (!target) continue;
+      const result = findBestRepairBundle(
+        prediction,
+        width,
+        height,
+        target,
+        candidates,
+        options,
+        maxSplitIncrease,
+      );
+      bundleSearch.push(result.stats);
+      if (result.best) proposedBundles.push(result.best);
+      else rejected.topologyNoBundleGain += 1;
+    }
+
+    proposedBundles.sort((a, b) =>
+      (b.targetPriority ?? 0) - (a.targetPriority ?? 0)
+      || b.rank - a.rank
+      || a.candidates.length - b.candidates.length);
+
+    let bundleSequence = 0;
+    for (const proposed of proposedBundles) {
+      const target = topologyContext.targetById.get(proposed.targetId);
+      if (!target) continue;
+
+      const compatibility = bundleCompatibility(proposed.candidates, mask);
+      if (!compatibility.compatible) {
+        rejected.bundleConflict += 1;
         continue;
       }
-    }
-
-    let pathAdded = 0;
-    for (const p of candidate.interiorPixels) {
-      if (!mask[p]) {
-        mask[p] = 1;
-        repairMask[p] = 1;
-        pathAdded += 1;
+      if ([...compatibility.endpointIds].some(id => usedEndpoints.has(id))) {
+        rejected.endpointConflict += 1;
+        continue;
       }
+      if ([...compatibility.targetKeys].some(key => usedTargets.has(key))) {
+        rejected.targetConflict += 1;
+        continue;
+      }
+
+      const reevaluated = evaluateRepairBundle(
+        mask,
+        width,
+        height,
+        target,
+        proposed.candidates,
+        options,
+        maxSplitIncrease,
+      );
+      if (!reevaluated.accepted) {
+        if (reevaluated.reason === "local-split") rejected.localSplit += 1;
+        else if (reevaluated.reason === "topology-no-bundle-gain") rejected.topologyNoIncrementalGain += 1;
+        else rejected.bundleConflict += 1;
+        continue;
+      }
+
+      const bundleId = `bundle-${++bundleSequence}`;
+      const beforeCount = acceptedPaths.length;
+      const accepted = acceptCandidateSet(proposed.candidates, {
+        id: bundleId,
+        rank: reevaluated.rank,
+        contribution: reevaluated.contribution,
+      });
+      if (!accepted) continue;
+
+      const bundlePaths = acceptedPaths.slice(beforeCount);
+      acceptedBundles.push({
+        id: bundleId,
+        targetId: proposed.targetId,
+        size: bundlePaths.length,
+        types: countByType(bundlePaths),
+        addedPixels: bundlePaths.reduce((sum, item) => sum + (item.addedPixels ?? 0), 0),
+        rank: reevaluated.rank,
+        localSplitIncrease: reevaluated.localSplitIncrease,
+        contribution: reevaluated.contribution,
+      });
     }
-    if (!pathAdded) continue;
-    endpointIds.forEach(id => usedEndpoints.add(id));
-    usedTargets.add(targetKey);
-    addedPixels += pathAdded;
-    if (topologyTarget && incrementalContribution?.after) {
-      targetCurrent.set(topologyTarget.id, incrementalContribution.after);
+  } else {
+    for (const candidate of viable) {
+      if (candidate.interiorPixels.some(p => mask[p])) {
+        rejected.overlap += 1;
+        continue;
+      }
+      acceptCandidateSet([candidate]);
     }
-    const accepted = {
-      ...candidate,
-      topologyContribution: incrementalContribution,
-      addedPixels: pathAdded,
-      disposition: "accepted-topology-v4",
-    };
-    acceptedPaths.push(accepted);
-    reviewCandidates.push(accepted);
   }
 
   const baseBoundaryPixels = graph.boundaryPixels;
@@ -1468,7 +1709,10 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   }
 
   const acceptedCountsByType = countByType(acceptedPaths);
-  const topologyContributingCount = acceptedPaths.reduce(
+  const topologyContributingCount = acceptedBundles.length
+    ? acceptedBundles.reduce((sum, bundle) => sum + (bundle.contribution?.improved ? 1 : 0), 0)
+    : acceptedPaths.reduce((sum, item) => sum + (item.topologyContribution?.improved ? 1 : 0), 0);
+  const individuallyImprovingCandidateCount = viable.reduce(
     (sum, item) => sum + (item.topologyContribution?.improved ? 1 : 0),
     0,
   );
@@ -1476,7 +1720,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.1-topology-first-spatial-index-balanced-target-repair",
+    revision: "4.2-target-bundle-repair",
     mask,
     repairMask,
     graph,
@@ -1491,6 +1735,9 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     candidateCountsByType,
     acceptedCountsByType,
     topologyContributingCount,
+    individuallyImprovingCandidateCount,
+    acceptedBundles,
+    bundleSearch,
     topologyTargets: topologyContext?.summary ?? null,
     reviewCandidates,
     rejected,
@@ -1512,6 +1759,8 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
       requireTopologyTarget: Boolean(topologyContext?.targets?.length && options.requireTopologyTarget !== false),
       topologyTargetMargin: topologyContext?.summary?.targetMargin ?? null,
       topologyProbeMaxRadius: Math.max(0, Math.min(4, Math.round(options.topologyProbeMaxRadius ?? 3))),
+      maxBundleCandidatesPerTarget: Math.max(2, Math.min(10, Math.round(options.maxBundleCandidatesPerTarget ?? 6))),
+      maxBundleSize: Math.max(1, Math.min(4, Math.round(options.maxBundleSize ?? 3))),
     },
   };
 }
