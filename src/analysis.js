@@ -738,6 +738,17 @@ function evaluateRawConfiguration(features, helpers, config) {
 
 }
 
+function tuneRecallValue(candidate) {
+  if (!candidate) return 0;
+  return candidate.objectiveMode === "complete-roi-f1"
+    ? (candidate.roiRecall ?? 0)
+    : (candidate.positiveRecall ?? 0);
+}
+
+function passesTuneRecallGuard(candidate, recallFloor) {
+  return !Number.isFinite(recallFloor) || tuneRecallValue(candidate) + 1e-9 >= recallFloor;
+}
+
 function betterTuneScore(candidate, best) {
   if (!best) return true;
   const epsilon = 1e-9;
@@ -875,7 +886,7 @@ async function optimizeMinComponent(features, referenceCenterline, config, optio
       ...objective,
       parameters: { ...config, minComponent },
     };
-    if (betterTuneScore(candidate, best)) {
+    if (passesTuneRecallGuard(candidate, options.tuneRecallFloor) && betterTuneScore(candidate, best)) {
       best = candidate;
       bestMask = mask;
     }
@@ -996,28 +1007,46 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     onProgress(Math.min(0.98, (completedPhases + localRatio) / totalPhases));
   };
 
-  let globalBest = await optimizeMinComponent(
+  const startingProcessed = evaluateProcessedConfiguration(
     features,
     referenceCenterline,
     current,
     options,
     helpers,
+  );
+  const maxRecallDrop = Math.max(0, Number(options.maxRecallDrop ?? 0.02));
+  const tuneRecallFloor = Math.max(0, tuneRecallValue(startingProcessed) - maxRecallDrop);
+  const guardedOptions = { ...options, tuneRecallFloor };
+
+  let globalBest = await optimizeMinComponent(
+    features,
+    referenceCenterline,
+    current,
+    guardedOptions,
+    helpers,
     ratio => phaseProgress(ratio),
   );
+  if (!globalBest) globalBest = startingProcessed;
   completedPhases += 1;
   const topologyDiagnosticInput = options.topologyDiagnostics ?? null;
   const baselineTopology = topologyDiagnosticInput
     ? computeClosureSnapshot(
-      globalBest.mask,
+      startingProcessed.mask,
       features.width,
       features.height,
       topologyDiagnosticInput.seeds ?? [],
       topologyDiagnosticInput.options ?? {},
     )
     : null;
+  search.recallGuard = {
+    maxRecallDrop,
+    baselineRecall: tuneRecallValue(startingProcessed),
+    recallFloor: tuneRecallFloor,
+    metric: startingProcessed.objectiveMode === "complete-roi-f1" ? "roiRecall" : "positiveRecall",
+  };
   search.baseline = {
-    parameters: { ...globalBest.parameters },
-    objective: compactObjective(globalBest),
+    parameters: { ...startingProcessed.parameters },
+    objective: compactObjective(startingProcessed),
     topology: compactClosureSnapshot(baselineTopology),
   };
   onProgress(completedPhases / totalPhases);
@@ -1069,10 +1098,11 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
           features,
           referenceCenterline,
           proposedConfig,
-          options,
+          guardedOptions,
           helpers,
         );
-        if (betterTuneScore(processedCandidate, processedWorking)) {
+        if (passesTuneRecallGuard(processedCandidate, tuneRecallFloor)
+          && betterTuneScore(processedCandidate, processedWorking)) {
           working = proposedConfig;
           processedWorking = processedCandidate;
           acceptedByProcessed = true;
@@ -1098,7 +1128,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
       features,
       referenceCenterline,
       working,
-      options,
+      guardedOptions,
       helpers,
       ratio => phaseProgress(ratio),
     );
@@ -1108,7 +1138,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
       objective: compactObjective(processed),
     };
 
-    if (betterTuneScore(processed, globalBest)) {
+    if (passesTuneRecallGuard(processed, tuneRecallFloor) && betterTuneScore(processed, globalBest)) {
       globalBest = processed;
       working = { ...processed.parameters };
       processedWorking = processed;
@@ -1137,7 +1167,7 @@ export async function autoTuneBoundary(features, referenceCenterline, options = 
     const config = { ...globalBest.parameters };
     if (feature) config[feature] = 0;
     const objective = feature
-      ? evaluateProcessedConfiguration(features, referenceCenterline, config, options, helpers)
+      ? evaluateProcessedConfiguration(features, referenceCenterline, config, guardedOptions, helpers)
       : globalBest;
     search.ablation.push({
       label,
