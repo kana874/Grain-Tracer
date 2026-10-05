@@ -3,6 +3,7 @@ const DIRS8 = Object.freeze([
   [-1, 0],             [1, 0],
   [-1, 1],  [0, 1],   [1, 1],
 ]);
+const DIRS4 = Object.freeze([[-1, 0], [1, 0], [0, -1], [0, 1]]);
 
 function clamp01(value) {
   const n = Number(value);
@@ -62,8 +63,7 @@ function estimateEndpointOutward(mask, width, height, p, depth = 4) {
   let prev = -1;
   let current = p;
   for (let step = 0; step < depth; step += 1) {
-    const next = boundaryNeighbors(mask, width, height, current)
-      .filter(np => np !== prev);
+    const next = boundaryNeighbors(mask, width, height, current).filter(np => np !== prev);
     if (!next.length) break;
     const chosen = next[0];
     chain.push(chosen);
@@ -77,12 +77,9 @@ function estimateEndpointOutward(mask, width, height, p, depth = 4) {
 }
 
 function meanEvidenceForPixels(pixels, options = {}) {
-  if (!pixels?.length) return {
-    boundaryProbability: null,
-    ridge: null,
-    color: null,
-    dendritePenalty: null,
-  };
+  if (!pixels?.length) {
+    return { boundaryProbability: null, ridge: null, color: null, dendritePenalty: null };
+  }
   let probability = 0;
   let probabilityCount = 0;
   let ridge = 0;
@@ -91,7 +88,6 @@ function meanEvidenceForPixels(pixels, options = {}) {
   let colorCount = 0;
   let dendritePenalty = 0;
   let dendriteCount = 0;
-
   for (const p of pixels) {
     const direct = evidenceValue(options.boundaryProbability, p);
     const r = evidenceValue(options.ridge, p);
@@ -101,25 +97,13 @@ function meanEvidenceForPixels(pixels, options = {}) {
       probability += direct;
       probabilityCount += 1;
     } else if (r != null || c != null) {
-      const rr = r ?? 0;
-      const cc = c ?? 0;
-      probability += rr * 0.65 + cc * 0.35;
+      probability += (r ?? 0) * 0.65 + (c ?? 0) * 0.35;
       probabilityCount += 1;
     }
-    if (r != null) {
-      ridge += r;
-      ridgeCount += 1;
-    }
-    if (c != null) {
-      color += c;
-      colorCount += 1;
-    }
-    if (d != null) {
-      dendritePenalty += d;
-      dendriteCount += 1;
-    }
+    if (r != null) { ridge += r; ridgeCount += 1; }
+    if (c != null) { color += c; colorCount += 1; }
+    if (d != null) { dendritePenalty += d; dendriteCount += 1; }
   }
-
   return {
     boundaryProbability: probabilityCount ? probability / probabilityCount : null,
     ridge: ridgeCount ? ridge / ridgeCount : null,
@@ -183,7 +167,6 @@ export function buildSkeletonGraph(mask, width, height, options = {}) {
   const visitedJunction = new Uint8Array(mask.length);
   const junctionQueue = new Int32Array(mask.length);
 
-  // Adjacent junction pixels are one logical graph node.
   for (let start = 0; start < mask.length; start += 1) {
     if (!mask[start] || degree[start] < 3 || visitedJunction[start]) continue;
     let head = 0;
@@ -223,7 +206,6 @@ export function buildSkeletonGraph(mask, width, height, options = {}) {
     for (const p of pixels) pixelToNode[p] = node.id;
   }
 
-  // Endpoints remain one pixel / one node.
   for (let p = 0; p < mask.length; p += 1) {
     if (!mask[p] || degree[p] !== 1 || pixelToNode[p] >= 0) continue;
     const pt = pointFromIndex(p, width);
@@ -264,15 +246,11 @@ export function buildSkeletonGraph(mask, width, height, options = {}) {
           pixels.push(current);
           walkedSegments.add(segmentKey(prev, current));
           if (endNodeId >= 0) break;
-
           const nextCandidates = boundaryNeighbors(mask, width, height, current)
             .filter(np => np !== prev);
           if (!nextCandidates.length) break;
           let next = nextCandidates[0];
           if (nextCandidates.length > 1) {
-            // In a valid skeleton, branch pixels should have been clustered as
-            // junction nodes. Prefer a node candidate if diagonal topology made
-            // an extra adjacency appear.
             next = nextCandidates.find(np => pixelToNode[np] >= 0) ?? next;
           }
           prev = current;
@@ -406,33 +384,472 @@ function junctionAcceptsDirection(node, vx, vy, minAngleDeg) {
   return minimum >= minAngleDeg;
 }
 
-function candidateGeometry(graph, mask, width, height, options) {
+function buildComponentLabels(mask, width, height) {
+  const labels = new Int32Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  const components = [];
+  let label = 0;
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || labels[start]) continue;
+    label += 1;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = start;
+    labels[start] = label;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    let pixels = 0;
+    let firstPixel = start;
+    while (head < tail) {
+      const p = queue[head++];
+      const x = p % width;
+      const y = Math.floor(p / width);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      pixels += 1;
+      for (const [dx, dy] of DIRS4) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(width, height, nx, ny)) continue;
+        const np = indexOf(width, nx, ny);
+        if (!mask[np] || labels[np]) continue;
+        labels[np] = label;
+        queue[tail++] = np;
+      }
+    }
+    components.push({
+      id: label,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      pixels,
+      firstPixel,
+      seedP: firstPixel,
+      seedCount: 0,
+      borderAssisted: false,
+    });
+  }
+  return { labels, components };
+}
+
+function maskAt(mask, p, additions) {
+  return Boolean(mask[p] || additions?.has(p));
+}
+
+function isDilatedWall(mask, width, height, x, y, radius, additions) {
+  if (radius <= 0) return maskAt(mask, indexOf(width, x, y), additions);
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    const ny = y + dy;
+    if (ny < 0 || ny >= height) continue;
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      const nx = x + dx;
+      if (nx < 0 || nx >= width) continue;
+      if (maskAt(mask, indexOf(width, nx, ny), additions)) return true;
+    }
+  }
+  return false;
+}
+
+function localClosureProbe(mask, width, height, target, radius, padding, additions = null) {
+  const minX = Math.max(0, target.minX - padding);
+  const maxX = Math.min(width - 1, target.maxX + padding);
+  const minY = Math.max(0, target.minY - padding);
+  const maxY = Math.min(height - 1, target.maxY + padding);
+  const boxWidth = maxX - minX + 1;
+  const boxHeight = maxY - minY + 1;
+  const visited = new Uint8Array(boxWidth * boxHeight);
+  const queue = new Int32Array(boxWidth * boxHeight);
+
+  const seed = pointFromIndex(target.seedP, width);
+  let sx = seed.x;
+  let sy = seed.y;
+  if (!inBounds(width, height, sx, sy)
+      || isDilatedWall(mask, width, height, sx, sy, radius, additions)) {
+    let found = false;
+    const searchRadius = Math.max(4, radius + 2);
+    for (let dy = -searchRadius; dy <= searchRadius && !found; dy += 1) {
+      for (let dx = -searchRadius; dx <= searchRadius && !found; dx += 1) {
+        const nx = seed.x + dx;
+        const ny = seed.y + dy;
+        if (nx < target.minX || nx > target.maxX || ny < target.minY || ny > target.maxY) continue;
+        if (!inBounds(width, height, nx, ny)) continue;
+        if (!isDilatedWall(mask, width, height, nx, ny, radius, additions)) {
+          sx = nx;
+          sy = ny;
+          found = true;
+        }
+      }
+    }
+    if (!found) {
+      return { closed: true, reachableArea: 0, borderContacts: 0, blockedSeed: true };
+    }
+  }
+
+  const startLocal = (sy - minY) * boxWidth + (sx - minX);
+  let head = 0;
+  let tail = 0;
+  queue[tail++] = startLocal;
+  visited[startLocal] = 1;
+  let reachableArea = 0;
+  let borderContacts = 0;
+
+  while (head < tail) {
+    const local = queue[head++];
+    const bx = local % boxWidth;
+    const by = Math.floor(local / boxWidth);
+    const gx = minX + bx;
+    const gy = minY + by;
+    reachableArea += 1;
+    if (bx === 0 || by === 0 || bx === boxWidth - 1 || by === boxHeight - 1) {
+      borderContacts += 1;
+    }
+    for (const [dx, dy] of DIRS4) {
+      const nx = gx + dx;
+      const ny = gy + dy;
+      if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+      const nl = (ny - minY) * boxWidth + (nx - minX);
+      if (visited[nl]) continue;
+      if (isDilatedWall(mask, width, height, nx, ny, radius, additions)) continue;
+      visited[nl] = 1;
+      queue[tail++] = nl;
+    }
+  }
+
+  return {
+    closed: borderContacts === 0,
+    reachableArea,
+    borderContacts,
+    blockedSeed: false,
+  };
+}
+
+function localClosureSignature(mask, width, height, target, options = {}, additions = null) {
+  const maxRadius = Math.max(0, Math.min(4, Math.round(options.topologyProbeMaxRadius ?? 3)));
+  const padding = Math.max(
+    maxRadius + 3,
+    Math.round(options.topologyLocalPadding ?? (Number(options.maxSearchDistance ?? 10) + maxRadius + 5)),
+  );
+  const probes = [];
+  let requiredRadius = maxRadius + 1;
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    const probe = localClosureProbe(mask, width, height, target, radius, padding, additions);
+    probes.push({ radius, ...probe });
+    if (requiredRadius === maxRadius + 1 && probe.closed) requiredRadius = radius;
+  }
+  const weightedClosureScore = probes.reduce((sum, probe) => sum + (probe.closed ? 1 : 0), 0)
+    / Math.max(1, probes.length);
+  const maxProbe = probes[probes.length - 1];
+  return {
+    requiredRadius,
+    weightedClosureScore,
+    exactClosed: Boolean(probes[0]?.closed),
+    openAfterMaxRadius: maxProbe?.closed ? 0 : 1,
+    maxRadius,
+    maxRadiusBorderContacts: maxProbe?.borderContacts ?? 0,
+    maxRadiusReachableArea: maxProbe?.reachableArea ?? 0,
+    probes,
+  };
+}
+
+function targetImprovement(before, after) {
+  if (!before || !after) {
+    return {
+      improved: false,
+      exactGain: 0,
+      weightedGain: 0,
+      radiusGain: 0,
+      openGain: 0,
+      borderContactGain: 0,
+      reachableAreaGain: 0,
+      progressScore: 0,
+    };
+  }
+  const exactGain = Number(after.exactClosed) - Number(before.exactClosed);
+  const weightedGain = (after.weightedClosureScore ?? 0) - (before.weightedClosureScore ?? 0);
+  const radiusGain = (before.requiredRadius ?? 99) - (after.requiredRadius ?? 99);
+  const openGain = (before.openAfterMaxRadius ?? 0) - (after.openAfterMaxRadius ?? 0);
+  const borderContactGain =
+    (before.maxRadiusBorderContacts ?? 0) - (after.maxRadiusBorderContacts ?? 0);
+  const reachableAreaGain =
+    (before.maxRadiusReachableArea ?? 0) - (after.maxRadiusReachableArea ?? 0);
+  const areaBase = Math.max(1, before.maxRadiusReachableArea ?? 0);
+  const partialProgress =
+    borderContactGain > 0
+    && reachableAreaGain > Math.max(3, areaBase * 0.005);
+  const improved = exactGain > 0 || weightedGain > 1e-9 || radiusGain > 0 || openGain > 0 || partialProgress;
+  const progressScore =
+      exactGain * 8
+    + weightedGain * 6
+    + Math.max(0, radiusGain) * 2
+    + Math.max(0, openGain) * 4
+    + Math.max(0, borderContactGain) * 0.08
+    + Math.max(0, reachableAreaGain / areaBase) * 0.6;
+  return {
+    improved,
+    exactGain,
+    weightedGain,
+    radiusGain,
+    openGain,
+    borderContactGain,
+    reachableAreaGain,
+    progressScore,
+  };
+}
+
+function buildTopologyTargetContext(prediction, width, height, options = {}) {
+  const closed = options.closedNegativeMask;
+  if (!closed || closed.length !== prediction.length) return null;
+
+  const { labels, components } = buildComponentLabels(closed, width, height);
+  if (!components.length) return null;
+
+  const componentById = new Map(components.map(component => [component.id, component]));
+  const seeds = Array.isArray(options.closedNegativeSeeds) ? options.closedNegativeSeeds : [];
+  if (seeds.length) {
+    for (const seed of seeds) {
+      const x = Math.round(Number(seed?.x));
+      const y = Math.round(Number(seed?.y));
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !inBounds(width, height, x, y)) continue;
+      const p = indexOf(width, x, y);
+      const id = labels[p];
+      if (!id) continue;
+      const component = componentById.get(id);
+      if (!component) continue;
+      component.seedP = p;
+      component.seedCount += 1;
+      if (seed?.borderAssisted) component.borderAssisted = true;
+    }
+  }
+
+  if (options.borderAssistedMask?.length === prediction.length) {
+    for (let p = 0; p < options.borderAssistedMask.length; p += 1) {
+      if (!options.borderAssistedMask[p]) continue;
+      const id = labels[p];
+      if (id) {
+        const component = componentById.get(id);
+        if (component) component.borderAssisted = true;
+      }
+    }
+  }
+
+  const useSeededOnly = seeds.length > 0;
+  const includeBorderAssisted = Boolean(options.includeBorderAssistedTargets);
+  const targets = [];
+  for (const component of components) {
+    if (useSeededOnly && component.seedCount === 0) continue;
+    if (component.borderAssisted && !includeBorderAssisted) continue;
+    const before = localClosureSignature(prediction, width, height, component, options);
+    if (before.exactClosed) continue;
+    targets.push({
+      ...component,
+      before,
+      priority: Math.max(1, Math.min(5, before.requiredRadius + (before.openAfterMaxRadius ? 1 : 0))),
+    });
+  }
+
+  if (!targets.length) {
+    return {
+      labels,
+      targetMap: new Int32Array(prediction.length),
+      priorityMap: new Uint8Array(prediction.length),
+      targets: [],
+      targetById: new Map(),
+      summary: {
+        componentCount: components.length,
+        seededComponentCount: components.filter(item => item.seedCount > 0).length,
+        activeTargetCount: 0,
+        excludedBorderAssistedCount: components.filter(item => item.borderAssisted && !includeBorderAssisted).length,
+        byRequiredRadius: {},
+      },
+    };
+  }
+
+  const targetById = new Map(targets.map(target => [target.id, target]));
+  const targetMap = new Int32Array(prediction.length);
+  const priorityMap = new Uint8Array(prediction.length);
+  const margin = Math.max(
+    2,
+    Math.min(32, Math.round(options.topologyTargetMargin ?? (Number(options.maxSearchDistance ?? 10) + 3))),
+  );
+
+  for (let p = 0; p < closed.length; p += 1) {
+    const id = labels[p];
+    if (!id || !targetById.has(id)) continue;
+    const x = p % width;
+    const y = Math.floor(p / width);
+    let boundary = false;
+    for (const [dx, dy] of DIRS4) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(width, height, nx, ny) || labels[indexOf(width, nx, ny)] !== id) {
+        boundary = true;
+        break;
+      }
+    }
+    if (!boundary) continue;
+    const target = targetById.get(id);
+    for (let dy = -margin; dy <= margin; dy += 1) {
+      const ny = y + dy;
+      if (ny < 0 || ny >= height) continue;
+      for (let dx = -margin; dx <= margin; dx += 1) {
+        const nx = x + dx;
+        if (nx < 0 || nx >= width) continue;
+        const np = indexOf(width, nx, ny);
+        if (target.priority > priorityMap[np]) {
+          priorityMap[np] = target.priority;
+          targetMap[np] = id;
+        }
+      }
+    }
+  }
+
+  const byRequiredRadius = {};
+  for (const target of targets) {
+    const key = target.before.requiredRadius > target.before.maxRadius
+      ? `>${target.before.maxRadius}`
+      : String(target.before.requiredRadius);
+    byRequiredRadius[key] = (byRequiredRadius[key] ?? 0) + 1;
+  }
+
+  return {
+    labels,
+    targetMap,
+    priorityMap,
+    targets,
+    targetById,
+    summary: {
+      componentCount: components.length,
+      seededComponentCount: components.filter(item => item.seedCount > 0).length,
+      activeTargetCount: targets.length,
+      excludedBorderAssistedCount: components.filter(item => item.borderAssisted && !includeBorderAssisted).length,
+      targetMargin: margin,
+      byRequiredRadius,
+    },
+  };
+}
+
+function makeSpatialIndex(nodes, cellSize) {
+  const buckets = new Map();
+  for (const node of nodes) {
+    const cx = Math.floor(node.x / cellSize);
+    const cy = Math.floor(node.y / cellSize);
+    const key = `${cx},${cy}`;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(node);
+    else buckets.set(key, [node]);
+  }
+  return {
+    query(x, y) {
+      const cx = Math.floor(x / cellSize);
+      const cy = Math.floor(y / cellSize);
+      const result = [];
+      for (let oy = -1; oy <= 1; oy += 1) {
+        for (let ox = -1; ox <= 1; ox += 1) {
+          const bucket = buckets.get(`${cx + ox},${cy + oy}`);
+          if (bucket) result.push(...bucket);
+        }
+      }
+      return result;
+    },
+  };
+}
+
+function candidateTypePriority(type) {
+  if (type === "endpoint-junction") return 3;
+  if (type === "endpoint-boundary") return 2;
+  return 1;
+}
+
+function selectBalancedCandidates(byType, maxCandidates) {
+  const types = ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction"];
+  const quota = Math.max(1, Math.floor(maxCandidates / types.length));
+  const selected = [];
+  const leftovers = [];
+
+  for (const type of types) {
+    const items = byType[type] ?? [];
+    selected.push(...items.slice(0, quota));
+    leftovers.push(...items.slice(quota));
+  }
+
+  leftovers.sort((a, b) =>
+    (b.topologyPriority ?? 0) - (a.topologyPriority ?? 0)
+    || candidateTypePriority(b.type) - candidateTypePriority(a.type)
+    || (b.facing ?? 0) - (a.facing ?? 0)
+    || a.distance - b.distance);
+  selected.push(...leftovers.slice(0, Math.max(0, maxCandidates - selected.length)));
+  return selected.slice(0, maxCandidates);
+}
+
+function candidateGeometry(graph, mask, width, height, options, topologyContext = null) {
   const maxDistance = Math.max(2, Number(options.maxSearchDistance ?? 10));
   const maxEndpointAngleDeg = Math.max(5, Math.min(85, Number(options.maxEndpointAngleDeg ?? 50)));
   const junctionMinAngleDeg = Math.max(0, Math.min(90, Number(options.junctionMinAngleDeg ?? 20)));
   const minFacing = Math.cos(maxEndpointAngleDeg * Math.PI / 180);
   const maxBoundaryTargets = Math.max(1, Math.min(8, Math.round(options.maxBoundaryTargetsPerEndpoint ?? 3)));
+  const maxCandidates = Math.max(3, Math.min(1500, Math.round(options.maxCandidates ?? 360)));
+  const requireTopologyTarget = topologyContext?.targets?.length
+    ? options.requireTopologyTarget !== false
+    : false;
   const endpoints = graph.nodes.filter(node => node.type === "endpoint");
   const junctions = graph.nodes.filter(node => node.type === "junction");
-  const candidates = [];
+  const cellSize = Math.max(3, Math.ceil(maxDistance + 1));
+  const endpointIndex = makeSpatialIndex(endpoints, cellSize);
+  const junctionIndex = makeSpatialIndex(junctions, cellSize);
+  const byType = {
+    "endpoint-endpoint": [],
+    "endpoint-boundary": [],
+    "endpoint-junction": [],
+  };
   const dedupe = new Set();
 
+  const topologyMeta = p => {
+    if (!topologyContext) return { id: 0, priority: 0, target: null };
+    const id = topologyContext.targetMap[p] ?? 0;
+    return {
+      id,
+      priority: topologyContext.priorityMap[p] ?? 0,
+      target: id ? topologyContext.targetById.get(id) ?? null : null,
+    };
+  };
+
   const addCandidate = candidate => {
+    const sourceMeta = topologyMeta(candidate.sourceP);
+    const targetMeta = topologyMeta(candidate.targetP);
+    if (requireTopologyTarget) {
+      if (!sourceMeta.id || !targetMeta.id || sourceMeta.id !== targetMeta.id) return;
+    }
+    const topologyTargetId = sourceMeta.id || targetMeta.id || 0;
+    const topologyTarget = topologyTargetId
+      ? topologyContext?.targetById.get(topologyTargetId) ?? null
+      : null;
     const targetKey = candidate.targetNodeId != null
       ? `n${candidate.targetNodeId}`
       : `p${candidate.targetP}`;
     const key = `${candidate.sourceNodeId}->${targetKey}`;
     if (dedupe.has(key)) return;
     dedupe.add(key);
-    candidates.push(candidate);
+    const enriched = {
+      ...candidate,
+      topologyTargetId: topologyTargetId || null,
+      topologyPriority: topologyTarget?.priority ?? Math.max(sourceMeta.priority, targetMeta.priority),
+      topologyRequiredRadiusBefore: topologyTarget?.before?.requiredRadius ?? null,
+    };
+    byType[candidate.type].push(enriched);
   };
 
-  for (let i = 0; i < endpoints.length; i += 1) {
-    const source = endpoints[i];
+  for (const source of endpoints) {
+    const sourceMeta = topologyMeta(source.p);
+    if (requireTopologyTarget && !sourceMeta.id) continue;
     const out = source.outward ?? estimateEndpointOutward(mask, width, height, source.p);
 
-    for (let j = i + 1; j < endpoints.length; j += 1) {
-      const target = endpoints[j];
+    for (const target of endpointIndex.query(source.x, source.y)) {
+      if (target.id <= source.id) continue;
       const dx = target.x - source.x;
       const dy = target.y - source.y;
       const distance = Math.hypot(dx, dy);
@@ -459,7 +876,7 @@ function candidateGeometry(graph, mask, width, height, options) {
       });
     }
 
-    for (const target of junctions) {
+    for (const target of junctionIndex.query(source.x, source.y)) {
       const dx = target.x - source.x;
       const dy = target.y - source.y;
       const distance = Math.hypot(dx, dy);
@@ -523,19 +940,25 @@ function candidateGeometry(graph, mask, width, height, options) {
     }
   }
 
-  candidates.sort((a, b) => {
-    const priority = type => type === "endpoint-endpoint" ? 0 : type === "endpoint-junction" ? 1 : 2;
-    return priority(a.type) - priority(b.type)
-      || b.facing - a.facing
-      || a.distance - b.distance;
-  });
-  return candidates.slice(0, Math.max(1, Math.min(1000, Math.round(options.maxCandidates ?? 240))));
+  for (const items of Object.values(byType)) {
+    items.sort((a, b) =>
+      (b.topologyPriority ?? 0) - (a.topologyPriority ?? 0)
+      || (b.facing ?? 0) - (a.facing ?? 0)
+      || a.distance - b.distance);
+  }
+
+  const selected = selectBalancedCandidates(byType, maxCandidates);
+  selected.candidateCountsByType = Object.fromEntries(
+    Object.entries(byType).map(([type, items]) => [type, {
+      generated: items.length,
+      selected: selected.reduce((sum, item) => sum + (item.type === type ? 1 : 0), 0),
+    }]),
+  );
+  return selected;
 }
 
 class MinHeap {
-  constructor() {
-    this.items = [];
-  }
+  constructor() { this.items = []; }
   push(item) {
     const items = this.items;
     items.push(item);
@@ -568,9 +991,7 @@ class MinHeap {
     items[i] = last;
     return root;
   }
-  get length() {
-    return this.items.length;
-  }
+  get length() { return this.items.length; }
 }
 
 function pathPixelEvidence(p, options) {
@@ -590,12 +1011,11 @@ function pathPixelEvidence(p, options) {
   };
 }
 
-function reconstructPath(parent, finalKey, width) {
+function reconstructPath(parent, finalKey) {
   const pixels = [];
   let key = finalKey;
   while (key != null) {
-    const p = Math.floor(key / 9);
-    pixels.push(p);
+    pixels.push(Math.floor(key / 9));
     key = parent.get(key) ?? null;
   }
   pixels.reverse();
@@ -637,10 +1057,10 @@ function findEvidencePath(mask, width, height, candidate, guard, options) {
     if (current.p === targetP && current.key !== startKey) {
       if (candidate.type === "endpoint-endpoint" && current.dir < 8 && candidate.targetOutward) {
         const [dx, dy] = DIRS8[current.dir];
-        const targetArrivalMismatch = angleDeg(dx, dy, -candidate.targetOutward.x, -candidate.targetOutward.y);
-        if (targetArrivalMismatch > maxEndpointAngleDeg) continue;
+        const mismatch = angleDeg(dx, dy, -candidate.targetOutward.x, -candidate.targetOutward.y);
+        if (mismatch > maxEndpointAngleDeg) continue;
       }
-      const pixels = reconstructPath(parent, current.key, width);
+      const pixels = reconstructPath(parent, current.key);
       const interior = pixels.slice(1, -1);
       let maxTurn = 0;
       let turnSum = 0;
@@ -706,19 +1126,17 @@ function findEvidencePath(mask, width, height, candidate, guard, options) {
       const evidenceCost = (1 - ev.boundaryProbability) * evidenceWeight;
       const curvatureCost = (turn / 180) * curvatureWeight;
       const dendriteCost = ev.dendritePenalty * dendriteWeight;
-      const sourceDirectionMismatch = firstMove && candidate.sourceOutward
+      const directionMismatch = firstMove && candidate.sourceOutward
         ? angleDeg(dx, dy, candidate.sourceOutward.x, candidate.sourceOutward.y) / 180
         : 0;
       const nextCost = current.cost + stepDistance + evidenceCost + curvatureCost
-        + dendriteCost + sourceDirectionMismatch * directionWeight;
+        + dendriteCost + directionMismatch * directionWeight;
       const nextKey = np * 9 + dir;
       if (nextCost >= (best.get(nextKey) ?? Infinity)) continue;
       best.set(nextKey, nextCost);
       parent.set(nextKey, current.key);
       pathLength.set(nextKey, currentLength + 1);
-      const tx = candidate.x2 - nx;
-      const ty = candidate.y2 - ny;
-      const heuristic = Math.hypot(tx, ty) * 0.25;
+      const heuristic = Math.hypot(candidate.x2 - nx, candidate.y2 - ny) * 0.25;
       heap.push({ key: nextKey, p: np, dir, cost: nextCost, priority: nextCost + heuristic });
     }
   }
@@ -726,7 +1144,7 @@ function findEvidencePath(mask, width, height, candidate, guard, options) {
   return null;
 }
 
-function localBackgroundComponents(mask, width, height, pixels, padding = 2) {
+function localBackgroundComponents(mask, width, height, pixels, padding = 2, additions = null) {
   if (!pixels?.length) return 0;
   let minX = width - 1;
   let maxX = 0;
@@ -753,10 +1171,8 @@ function localBackgroundComponents(mask, width, height, pixels, padding = 2) {
   for (let by = 0; by < boxHeight; by += 1) {
     for (let bx = 0; bx < boxWidth; bx += 1) {
       const local = by * boxWidth + bx;
-      const gx = minX + bx;
-      const gy = minY + by;
-      const gp = indexOf(width, gx, gy);
-      if (mask[gp] || visited[local]) continue;
+      const gp = indexOf(width, minX + bx, minY + by);
+      if (maskAt(mask, gp, additions) || visited[local]) continue;
       components += 1;
       let head = 0;
       let tail = 0;
@@ -766,14 +1182,14 @@ function localBackgroundComponents(mask, width, height, pixels, padding = 2) {
         const q = queue[head++];
         const qx = q % boxWidth;
         const qy = Math.floor(q / boxWidth);
-        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        for (const [dx, dy] of DIRS4) {
           const nx = qx + dx;
           const ny = qy + dy;
           if (nx < 0 || ny < 0 || nx >= boxWidth || ny >= boxHeight) continue;
           const nl = ny * boxWidth + nx;
           if (visited[nl]) continue;
           const ngp = indexOf(width, minX + nx, minY + ny);
-          if (mask[ngp]) continue;
+          if (maskAt(mask, ngp, additions)) continue;
           visited[nl] = 1;
           queue[tail++] = nl;
         }
@@ -787,12 +1203,25 @@ function pathCoordinates(path, width) {
   return (path?.pixels ?? []).map(p => pointFromIndex(p, width));
 }
 
+function countByType(items) {
+  const result = {
+    "endpoint-endpoint": 0,
+    "endpoint-boundary": 0,
+    "endpoint-junction": 0,
+  };
+  for (const item of items ?? []) {
+    if (item?.type in result) result[item.type] += 1;
+  }
+  return result;
+}
+
 export function proposeTopologyRepairs(prediction, width, height, options = {}) {
   if (!prediction || prediction.length !== width * height) {
     throw new Error("Topology Repair v4用の境界マスクが不正です。");
   }
 
   const graph = buildSkeletonGraph(prediction, width, height, options);
+  const topologyContext = buildTopologyTargetContext(prediction, width, height, options);
   const negativeGuardRadius = Math.max(0, Math.min(4, Math.round(options.negativeGuardRadius ?? 1)));
   const guard = {
     negative: buildGuardMask(options.negativeMask, width, height, negativeGuardRadius),
@@ -802,7 +1231,8 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   const minPathEvidence = clamp01(options.minPathEvidence ?? 0.32);
   const maxAcceptedRepairs = Math.max(1, Math.min(1000, Math.round(options.maxAcceptedRepairs ?? 240)));
   const maxSplitIncrease = Math.max(0, Math.min(4, Math.round(options.maxLocalSplitIncrease ?? 1)));
-  const sourceCandidates = candidateGeometry(graph, prediction, width, height, options);
+  const sourceCandidates = candidateGeometry(graph, prediction, width, height, options, topologyContext);
+  const candidateCountsByType = sourceCandidates.candidateCountsByType ?? {};
   const viable = [];
   const reviewCandidates = [];
   const rejected = {
@@ -814,6 +1244,8 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     protectedFrame: 0,
     boundaryCrossing: 0,
     localSplit: 0,
+    topologyNoGain: 0,
+    topologyNoIncrementalGain: 0,
     endpointConflict: 0,
     targetConflict: 0,
     overlap: 0,
@@ -870,10 +1302,9 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
       continue;
     }
 
-    const testMask = prediction.slice();
-    for (const p of path.interiorPixels) testMask[p] = 1;
+    const additions = new Set(path.interiorPixels);
     const localBefore = localBackgroundComponents(prediction, width, height, path.pixels, 2);
-    const localAfter = localBackgroundComponents(testMask, width, height, path.pixels, 2);
+    const localAfter = localBackgroundComponents(prediction, width, height, path.pixels, 2, additions);
     const localSplitIncrease = Math.max(0, localAfter - localBefore);
     if (localSplitIncrease > maxSplitIncrease) {
       rejected.localSplit += 1;
@@ -888,27 +1319,67 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
       continue;
     }
 
+    let topologyContribution = null;
+    const topologyTarget = candidate.topologyTargetId
+      ? topologyContext?.targetById.get(candidate.topologyTargetId) ?? null
+      : null;
+    if (topologyTarget) {
+      const afterTarget = localClosureSignature(
+        prediction,
+        width,
+        height,
+        topologyTarget,
+        options,
+        additions,
+      );
+      topologyContribution = targetImprovement(topologyTarget.before, afterTarget);
+      topologyContribution.before = topologyTarget.before;
+      topologyContribution.after = afterTarget;
+      if (!topologyContribution.improved) {
+        rejected.topologyNoGain += 1;
+        reviewCandidates.push({
+          ...candidate,
+          disposition: "rejected-topology-no-gain",
+          rejectionReason: "topology-no-gain",
+          topologyContribution,
+          pathEvidence: path.pathEvidence,
+          pathCoordinates: pathCoordinates(path, width),
+        });
+        continue;
+      }
+    }
+
     const distanceScore = 1 - Math.min(1, candidate.distance / Math.max(1, Number(options.maxSearchDistance ?? 10)));
     const normalizedCost = path.cost / Math.max(1, path.lengthPx);
-    const score = (path.pathEvidence ?? 0.5) * 0.55
-      + clamp01(candidate.facing ?? 0) * 0.20
-      + distanceScore * 0.15
-      + clamp01(1 - normalizedCost / 4) * 0.10;
+    const topologyScore = Math.min(1, Math.max(0, topologyContribution?.progressScore ?? 0) / 4);
+    const score = (path.pathEvidence ?? 0.5) * 0.42
+      + clamp01(candidate.facing ?? 0) * 0.16
+      + distanceScore * 0.10
+      + clamp01(1 - normalizedCost / 4) * 0.07
+      + topologyScore * 0.25;
     viable.push({
       ...candidate,
       ...path,
       score,
       localSplitIncrease,
+      topologyContribution,
       pathCoordinates: pathCoordinates(path, width),
     });
   }
 
-  viable.sort((a, b) => b.score - a.score || a.distance - b.distance);
+  viable.sort((a, b) =>
+    (b.topologyPriority ?? 0) - (a.topologyPriority ?? 0)
+    || (b.topologyContribution?.progressScore ?? 0) - (a.topologyContribution?.progressScore ?? 0)
+    || b.score - a.score
+    || a.distance - b.distance);
+
   const mask = prediction.slice();
   const repairMask = new Uint8Array(prediction.length);
   const acceptedPaths = [];
   const usedEndpoints = new Set();
   const usedTargets = new Set();
+  const targetCurrent = new Map();
+  for (const target of topologyContext?.targets ?? []) targetCurrent.set(target.id, target.before);
   let addedPixels = 0;
 
   for (const candidate of viable) {
@@ -940,6 +1411,30 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
       continue;
     }
 
+    let incrementalContribution = candidate.topologyContribution;
+    const topologyTarget = candidate.topologyTargetId
+      ? topologyContext?.targetById.get(candidate.topologyTargetId) ?? null
+      : null;
+    if (topologyTarget) {
+      const additions = new Set(candidate.interiorPixels);
+      const beforeTarget = targetCurrent.get(topologyTarget.id)
+        ?? localClosureSignature(mask, width, height, topologyTarget, options);
+      const afterTarget = localClosureSignature(mask, width, height, topologyTarget, options, additions);
+      incrementalContribution = targetImprovement(beforeTarget, afterTarget);
+      incrementalContribution.before = beforeTarget;
+      incrementalContribution.after = afterTarget;
+      if (!incrementalContribution.improved) {
+        rejected.topologyNoIncrementalGain += 1;
+        reviewCandidates.push({
+          ...candidate,
+          disposition: "rejected-topology-no-incremental-gain",
+          rejectionReason: "topology-no-incremental-gain",
+          topologyContribution: incrementalContribution,
+        });
+        continue;
+      }
+    }
+
     let pathAdded = 0;
     for (const p of candidate.interiorPixels) {
       if (!mask[p]) {
@@ -952,8 +1447,12 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     endpointIds.forEach(id => usedEndpoints.add(id));
     usedTargets.add(targetKey);
     addedPixels += pathAdded;
+    if (topologyTarget && incrementalContribution?.after) {
+      targetCurrent.set(topologyTarget.id, incrementalContribution.after);
+    }
     const accepted = {
       ...candidate,
+      topologyContribution: incrementalContribution,
       addedPixels: pathAdded,
       disposition: "accepted-topology-v4",
     };
@@ -968,10 +1467,16 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     if (prediction[p] && !mask[p]) basePixelsRemovedByRepair += 1;
   }
 
+  const acceptedCountsByType = countByType(acceptedPaths);
+  const topologyContributingCount = acceptedPaths.reduce(
+    (sum, item) => sum + (item.topologyContribution?.improved ? 1 : 0),
+    0,
+  );
+
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.0-skeleton-graph-evidence-path-repair",
+    revision: "4.1-topology-first-spatial-index-balanced-target-repair",
     mask,
     repairMask,
     graph,
@@ -983,6 +1488,10 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     addedPixels,
     sourceCandidateCount: sourceCandidates.length,
     consideredCandidateCount: viable.length,
+    candidateCountsByType,
+    acceptedCountsByType,
+    topologyContributingCount,
+    topologyTargets: topologyContext?.summary ?? null,
     reviewCandidates,
     rejected,
     baseBoundaryPixels,
@@ -999,6 +1508,10 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
       protectedFrameMargin: guard.protectedFrameMargin,
       maxLocalSplitIncrease: maxSplitIncrease,
       maxAcceptedRepairs,
+      maxCandidates: Math.max(3, Math.min(1500, Math.round(options.maxCandidates ?? 360))),
+      requireTopologyTarget: Boolean(topologyContext?.targets?.length && options.requireTopologyTarget !== false),
+      topologyTargetMargin: topologyContext?.summary?.targetMargin ?? null,
+      topologyProbeMaxRadius: Math.max(0, Math.min(4, Math.round(options.topologyProbeMaxRadius ?? 3))),
     },
   };
 }
