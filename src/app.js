@@ -1680,7 +1680,7 @@ async function applyGapBridges() {
         after: state.gapApplied.topologyAfter,
         delta: state.gapApplied.topologyDelta,
       })
-      + "（「Gap適用を戻す」で抽出直後へ復帰）";
+      + "（「Gap / Repair適用を戻す」で抽出直後へ復帰）";
   updateControls();
   setStatus(
     label + "を適用しました: " + proposal.acceptedBridgeCount.toLocaleString()
@@ -1711,7 +1711,7 @@ function revertGapBridges() {
     updateMetrics();
   }
   updateControls();
-  setStatus("Gap適用前の粒界マスクへ戻しました。", 100);
+  setStatus("Gap / Repair適用前の粒界マスクへ戻しました。", 100);
 }
 
 async function runTopologyDiagnostics() {
@@ -4387,8 +4387,8 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
     baseline = evaluateOptimizationMask(state.analysisMask);
     const baselineSnapshot = captureOptimizationState(baseline);
     els.autoOptimizeStatus.textContent =
-      "自動最適化中: Global Auto Tune → Local Calibration → Topology Guarded Gap の順に評価します。";
-    setStatus("自動最適化 1/4: Global Auto Tune...", 5);
+      "自動最適化中: Global Auto Tune → Local Calibration → Safe/Extended Gap → Topology Repair v4 の順に評価します。";
+    setStatus("自動最適化 1/5: Global Auto Tune...", 5);
 
     const globalRun = await autoTune({ manageBusy: false, recordHistory: false });
     if (!globalRun) throw new Error("Global Auto Tuneに失敗しました。");
@@ -4418,7 +4418,7 @@ async function runOneClickOptimization({ skipPrecisionGate = false } = {}) {
       selectedSnapshot = baselineSnapshot;
     }
 
-    setStatus("自動最適化 2/4: Local Calibration...", 42);
+    setStatus("自動最適化 2/5: Local Calibration...", 40);
     const localBaseEvaluation = selectedEvaluation;
     const localRun = await localTune({
       manageBusy: false,
