@@ -1280,7 +1280,7 @@ function topologyOptions() {
 }
 
 function gapDispositionColor(disposition) {
-  if (disposition === "accepted-topology-v4") return "#4fc3f7";
+  if (disposition === "accepted-topology-v4" || disposition === "accepted-topology-v4-bundle") return "#4fc3f7";
   if (disposition === "accepted-safe" || disposition === "safe-range") return "#35d07f";
   if (disposition === "accepted-extended") return "#f2c94c";
   if (disposition === "rejected-negative" || disposition === "rejected-exclusion") return "#ff5d5d";
