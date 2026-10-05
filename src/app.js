@@ -4707,8 +4707,7 @@ const gapSettingChanged = () => {
     }
     els.gapStatus.textContent = "Gap Bridge: 設定変更のため適用を自動解除しました";
   }
-  updateClassifierStatus();
-updateControls();
+  updateControls();
   scheduleAutosave();
 };
 bindRange(els.gapMaxDistance, $("gapMaxDistanceValue"), gapSettingChanged);
@@ -4882,6 +4881,7 @@ renderHistory();
 els.projectStatus.textContent = `v${APP_VERSION} / ${ALGORITHM_VERSION}`;
 updateAnnotationStatus();
 updateLocalCalibrationStatus();
+updateClassifierStatus();
 updateTopologyStatus();
 applyAnnotationAssistView();
 updateControls();
