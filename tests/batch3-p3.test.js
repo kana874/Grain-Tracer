@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  candidateGeometry,
+  selectBalancedCandidates,
   buildSkeletonGraph,
   compactSkeletonGraph,
   evaluateTopologyRepairGuard,
@@ -140,7 +142,7 @@ test("Topology-first mode targets labelled closure regions and keeps only contri
     fixture.height,
     topologyTargetOptions(fixture),
   );
-  assert.match(proposal.revision, /^4\.4-/);
+  assert.match(proposal.revision, /^4\.5-/);
   assert.equal(proposal.topologyTargets.activeTargetCount, 1);
   assert.ok(proposal.acceptedRepairCount >= 1);
   assert.equal(proposal.topologyContributingCount, proposal.acceptedRepairCount);
@@ -427,4 +429,33 @@ test("Topology guard applies prioritized Recall/Leakage/Precision before topolog
   const result = evaluateTopologyRepairGuard(before, recallRegression);
   assert.equal(result.accepted, false);
   assert.equal(result.stage, "recall");
+});
+
+
+test("Candidate budget covers targets before taking more candidates for one target", () => {
+  const items = Array.from({ length: 20 }, (_, i) => ({ type: "endpoint-endpoint", topologyTargetId: i < 18 ? 1 : i - 16, distance: i + 1 }));
+  const selected = selectBalancedCandidates({ "endpoint-endpoint": items }, 9);
+  assert.deepEqual(new Set(selected.slice(0, 3).map(item => item.topologyTargetId)), new Set([1, 2, 3]));
+  assert.equal(selected.length, 9);
+});
+
+
+test("Overlapping target membership preserves a shared repair despite different priority winners", () => {
+  const width = 20, height = 20;
+  const boundary = mask(width, height);
+  const a = 10 * width + 7, b = 10 * width + 11;
+  const graph = { nodes: [
+    { id: 0, type: "endpoint", p: a, x: 7, y: 10, outward: { x: 1, y: 0 } },
+    { id: 1, type: "endpoint", p: b, x: 11, y: 10, outward: { x: -1, y: 0 } },
+  ], pixelToNode: new Int32Array(width * height).fill(-1), degree: new Uint8Array(width * height) };
+  const targetMap = new Int32Array(width * height);
+  targetMap[a] = 1; targetMap[b] = 2;
+  const context = { targets: [1, 2], targetMap, priorityMap: new Uint8Array(width * height),
+    targetMemberships: new Map([[a, new Set([1, 2])], [b, new Set([2])]]),
+    targetById: new Map([[1, { priority: 4 }], [2, { priority: 3 }]]) };
+  const candidates = candidateGeometry(graph, boundary, width, height, {}, context);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].topologyTargetId, 2);
+  context.targetMemberships.set(b, new Set([3]));
+  assert.equal(candidateGeometry(graph, boundary, width, height, {}, context).length, 0);
 });

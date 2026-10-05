@@ -589,6 +589,7 @@ function buildTopologyTargetContext(prediction, width, height, options = {}) {
   const targetById = new Map(targets.map(target => [target.id, target]));
   const targetMap = new Int32Array(prediction.length);
   const priorityMap = new Uint8Array(prediction.length);
+  const targetMemberships = new Map();
   const margin = Math.max(
     2,
     Math.min(32, Math.round(options.topologyTargetMargin ?? (Number(options.maxSearchDistance ?? 10) + 3))),
@@ -617,6 +618,9 @@ function buildTopologyTargetContext(prediction, width, height, options = {}) {
         const nx = x + dx;
         if (nx < 0 || nx >= width) continue;
         const np = indexOf(width, nx, ny);
+        let memberships = targetMemberships.get(np);
+        if (!memberships) targetMemberships.set(np, memberships = new Set());
+        memberships.add(id);
         if (target.priority > priorityMap[np]) {
           priorityMap[np] = target.priority;
           targetMap[np] = id;
@@ -637,6 +641,7 @@ function buildTopologyTargetContext(prediction, width, height, options = {}) {
     labels,
     targetMap,
     priorityMap,
+    targetMemberships,
     targets,
     targetById,
     summary: {
@@ -682,14 +687,24 @@ function candidateTypePriority(type) {
   return 1;
 }
 
-function selectBalancedCandidates(byType, maxCandidates) {
+export function selectBalancedCandidates(byType, maxCandidates) {
   const types = ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction"];
   const quota = Math.max(1, Math.floor(maxCandidates / types.length));
   const selected = [];
   const leftovers = [];
 
   for (const type of types) {
-    const items = byType[type] ?? [];
+    const groups = new Map();
+    for (const item of byType[type] ?? []) {
+      const id = item.topologyTargetId ?? 0;
+      if (!groups.has(id)) groups.set(id, []);
+      groups.get(id).push(item);
+    }
+    const items = [];
+    const queues = [...groups.values()];
+    for (let rank = 0; queues.some(queue => rank < queue.length); rank += 1) {
+      for (const queue of queues) if (queue[rank]) items.push(queue[rank]);
+    }
     selected.push(...items.slice(0, quota));
     leftovers.push(...items.slice(quota));
   }
@@ -703,7 +718,7 @@ function selectBalancedCandidates(byType, maxCandidates) {
   return selected.slice(0, maxCandidates);
 }
 
-function candidateGeometry(graph, mask, width, height, options, topologyContext = null) {
+export function candidateGeometry(graph, mask, width, height, options, topologyContext = null) {
   const maxDistance = Math.max(2, Number(options.maxSearchDistance ?? 10));
   const maxEndpointAngleDeg = Math.max(5, Math.min(85, Number(options.maxEndpointAngleDeg ?? 50)));
   const junctionMinAngleDeg = Math.max(0, Math.min(90, Number(options.junctionMinAngleDeg ?? 20)));
@@ -738,18 +753,20 @@ function candidateGeometry(graph, mask, width, height, options, topologyContext 
   const addCandidate = candidate => {
     const sourceMeta = topologyMeta(candidate.sourceP);
     const targetMeta = topologyMeta(candidate.targetP);
-    if (requireTopologyTarget) {
-      if (!sourceMeta.id || !targetMeta.id || sourceMeta.id !== targetMeta.id) return;
-    }
-    const topologyTargetId = sourceMeta.id || targetMeta.id || 0;
+    const sourceIds = topologyContext?.targetMemberships?.get(candidate.sourceP) ?? new Set(sourceMeta.id ? [sourceMeta.id] : []);
+    const targetIds = topologyContext?.targetMemberships?.get(candidate.targetP) ?? new Set(targetMeta.id ? [targetMeta.id] : []);
+    const commonIds = [...sourceIds].filter(id => targetIds.has(id));
+    if (requireTopologyTarget && !commonIds.length) return;
+    const assignments = commonIds.length ? commonIds : [sourceMeta.id || targetMeta.id || 0];
+    for (const topologyTargetId of assignments) {
     const topologyTarget = topologyTargetId
       ? topologyContext?.targetById.get(topologyTargetId) ?? null
       : null;
     const targetKey = candidate.targetNodeId != null
       ? `n${candidate.targetNodeId}`
       : `p${candidate.targetP}`;
-    const key = `${candidate.sourceNodeId}->${targetKey}`;
-    if (dedupe.has(key)) return;
+    const key = `${candidate.sourceNodeId}->${targetKey}@${topologyTargetId}`;
+    if (dedupe.has(key)) continue;
     dedupe.add(key);
     const enriched = {
       ...candidate,
@@ -758,6 +775,7 @@ function candidateGeometry(graph, mask, width, height, options, topologyContext 
       topologyRequiredRadiusBefore: topologyTarget?.before?.requiredRadius ?? null,
     };
     byType[candidate.type].push(enriched);
+    }
   };
 
   for (const source of endpoints) {
@@ -1654,7 +1672,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.4-cached-full-image-closure",
+    revision: "4.5-overlapping-target-candidates",
     mask,
     repairMask,
     graph,

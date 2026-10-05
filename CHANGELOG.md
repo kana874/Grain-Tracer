@@ -1,3 +1,10 @@
+## Repair revision 4.5
+
+- Preserve all overlapping topology target memberships when assigning repair candidates.
+- Distribute each candidate type budget across targets before taking additional candidates for a target.
+- Retain full-image closure evaluation and all evidence, exclusion, negative and final accuracy guards.
+- Real-image acceptance remains to be checked against diagnostic (9) with identical settings and annotations.
+
 ## Topology Repair v4.4 — cached full-image closure
 
 - Reuse eroded annotation cores and full-image background indexes across repair candidates.
