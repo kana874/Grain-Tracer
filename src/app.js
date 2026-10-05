@@ -344,7 +344,7 @@ function hasReference() {
 }
 
 function hasNegativeReference() {
-  return state.negativeCount > 0 || state.closedNegativeSeeds.length > 0;
+  return state.negativeCount > 0 || state.combinedNegativeCount > 0 || state.closedNegativeSeeds.length > 0;
 }
 
 function hasExclusions() {
@@ -2512,8 +2512,8 @@ async function restoreProject(project, source = "プロジェクト") {
   const masks = restoreReferenceMasks(project);
   state.referenceMask = masks.referenceMask;
   state.referenceCenterline = masks.referenceCenterline;
+  state.manualNegativeMask = masks.manualNegativeMask ?? masks.negativeMask;
   state.negativeMask = masks.negativeMask;
-  state.manualNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
   state.negativeCenterline = masks.negativeCenterline;
   state.closedNegativeSeeds = masks.closedNegativeSeeds ?? [];
   state.closedNegativeMask = new Uint8Array(state.preview.width * state.preview.height);
@@ -2545,7 +2545,10 @@ async function restoreProject(project, source = "プロジェクト") {
   applySettings(project.settings ?? {});
   updateLocalCalibrationStatus();
   renderReferenceCanvas();
-  renderNegativeCanvas();
+  // Prefer the persisted manual Negative mask on restore. Rebuilding it from
+  // the centerline here could erase legacy/project data when the centerline is
+  // absent or sparse. Closed Fill regions are still regenerated from seeds.
+  renderNegativeCanvas(true, !masks.hasStoredManualNegativeMask);
   rebuildExclusionLayer();
   rebuildFullRoiLayer();
   renderHistory();
