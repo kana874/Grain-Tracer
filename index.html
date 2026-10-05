@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.4.2-alpha</div>
+    <div class="version">v0.4.3-alpha</div>
   </header>
 
   <main class="layout">
@@ -163,7 +163,7 @@
             </select>
           </label>
           <p id="hysteresisStatus" class="help metric-detail">Hysteresis: OFF（単一閾値）</p>
-          <p class="help">Strong境界からのみWeak画素を追跡し、Ridge方向・接線方向・Score連続性・Color evidence・最大距離・曲率でGuardします。NegativeとExclusionには侵入しません。既存Project互換のため初期値はOFFです。</p>
+          <p class="help">P1の粒界マスクを保持したまま、P1上のStrong境界を起点としてWeak画素だけを追加回復します。Ridge方向・接線方向・Score連続性・Color evidence・最大距離・曲率でGuardし、NegativeとExclusionには侵入しません。P2がP1粒界を削除することはありません。既存Project互換のため初期値はOFFです.</p>
         </div>
 
         <div class="subpanel">
@@ -201,7 +201,7 @@
         </div>
 
         <div class="subpanel optimize-panel">
-          <strong class="subpanel-title">自動最適化 v0.4.2</strong>
+          <strong class="subpanel-title">自動最適化 v0.4.3</strong>
           <button id="autoOptimizeButton" class="primary full optimize-main" type="button" disabled>自動最適化</button>
           <p class="help">Global Auto Tune、局所補正、Topology評価、Safe/Extended Gapの安全判定までを自動で実行します。お手本線が無い初回は8×8グリッドから3つのROI候補を固定seedで提示し、2回目以降は必要な場合だけ未評価領域を追加提案します。</p>
           <p id="autoOptimizeStatus" class="help metric-detail">自動最適化: 未実行</p>
@@ -278,7 +278,7 @@
           <p class="help">Recall @1/2/3/4 px、Negative Leakage、ROI Precision/Recall/F1、Alignment、Closure、Open@3、Boundary/Unknown画素数をProjectへ保存します。</p>
         </div>
         <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
-        <p class="help">ZIP出力: manifest.json / diagnostic.json v17 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
+        <p class="help">ZIP出力: manifest.json / diagnostic.json v18 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
           <summary>個別ファイル出力</summary>
           <button id="exportDiagnosticsIndividualButton" class="full" type="button" disabled>診断ファイルを個別に書き出す</button>
