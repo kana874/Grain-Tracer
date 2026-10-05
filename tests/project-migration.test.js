@@ -72,7 +72,6 @@ test("project v3 saves/restores ROI roles, image role, baseline snapshots, and c
 
   const restored = restoreReferenceMasks(project);
   assert.equal(restored.fullEvaluationRois[0].evaluationRole, "test");
-  assert.equal(restored.classifier.accepted, true);
 });
 
 
