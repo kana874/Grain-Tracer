@@ -1,7 +1,7 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 3;
-export const APP_VERSION = "0.4.2-alpha";
-export const ALGORITHM_VERSION = "boundary-v15-hysteresis-tracking";
+export const APP_VERSION = "0.4.3-alpha";
+export const ALGORITHM_VERSION = "boundary-v16-additive-hysteresis";
 
 const ROI_ROLES = new Set(["training", "validation", "test"]);
 const IMAGE_ROLES = new Set(["development", "validation", "test"]);
