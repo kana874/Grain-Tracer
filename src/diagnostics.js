@@ -432,7 +432,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v17",
+    schema: "graintracer-diagnostic-v18",
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,
@@ -463,7 +463,7 @@ export function buildDiagnosticReport(input) {
         highThreshold: settings.hysteresis?.highThreshold ?? null,
         lowThreshold: settings.hysteresis?.lowThreshold ?? null,
         nmsOrder: settings.hysteresis?.nmsOrder ?? null,
-        trackingPolicy: "strong-seeded / ridge-direction / tangent / score / color / negative-exclusion-hard-reject",
+        trackingPolicy: "additive-recovery-over-preserved-p1-base / base-strong-seeds / ridge-direction / tangent / score / color / negative-exclusion-hard-reject",
       },
       neighborSupportMinimum: 2,
       edgeAwareFeatureRenormalization: true,
