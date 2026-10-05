@@ -202,6 +202,26 @@ test("Bundle repair can close a target when no single candidate improves topolog
     maxBundleSize: 3,
   });
 
+  console.log("BUNDLE_DEBUG", JSON.stringify({
+    sourceCandidateCount: proposal.sourceCandidateCount,
+    consideredCandidateCount: proposal.consideredCandidateCount,
+    candidateCountsByType: proposal.candidateCountsByType,
+    individuallyImprovingCandidateCount: proposal.individuallyImprovingCandidateCount,
+    acceptedBundles: proposal.acceptedBundles,
+    bundleSearch: proposal.bundleSearch,
+    rejected: proposal.rejected,
+    topologyTargets: proposal.topologyTargets,
+    review: proposal.reviewCandidates?.filter(item => item.topologyTargetId).map(item => ({
+      type: item.type,
+      disposition: item.disposition,
+      reason: item.rejectionReason,
+      pathEvidence: item.pathEvidence,
+      target: item.topologyTargetId,
+      individualImproved: item.topologyContribution?.improved,
+      exactGain: item.topologyContribution?.exactGain,
+      radiusGain: item.topologyContribution?.radiusGain,
+    })).slice(0, 30),
+  }));
   assert.equal(proposal.topologyTargets.activeTargetCount, 1);
   assert.equal(proposal.individuallyImprovingCandidateCount, 0);
   assert.ok(proposal.acceptedBundles.length >= 1);
