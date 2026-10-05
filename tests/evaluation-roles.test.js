@@ -61,7 +61,7 @@ test("guard exclusion removes Test but keeps Validation labels", () => {
 
 test("Test images cannot be tuned", () => {
   assert.equal(canTuneImage("development"), true);
-  assert.equal(canTuneImage("validation"), true);
+  assert.equal(canTuneImage("validation"), false);
   assert.equal(canTuneImage("test"), false);
   assert.equal(canTuneImage(null), true);
 });
