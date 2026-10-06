@@ -1,3 +1,10 @@
+## v0.5.1-alpha / Repair revision 4.8
+
+- Generate boundary-to-boundary candidates across escape-route cross sections, including raster breaks without degree-one graph endpoints. Restrict to shared labelled target scope and existing search distance.
+- New paths pass the existing evidence, curvature, negative, exclusion, frame, local split, closure and final accuracy guards.
+- Add per-target generated/selected candidate counts, cross-section candidate counts and rejection reasons to diagnostics.
+- Update displayed, project and diagnostic app version to 0.5.1-alpha; 70 automated tests pass. Real-image efficacy remains to be checked against diagnostic (15).
+
 ## Repair revision 4.7
 
 - Prefer distinct gap representatives before overlapping alternative paths in bundle pools.

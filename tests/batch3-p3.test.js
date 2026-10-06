@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  escapeBoundaryCandidates,
   bundlePool,
   findBestRepairBundle,
   candidateGeometry,
@@ -144,7 +145,7 @@ test("Topology-first mode targets labelled closure regions and keeps only contri
     fixture.height,
     topologyTargetOptions(fixture),
   );
-  assert.match(proposal.revision, /^4\.7-/);
+  assert.match(proposal.revision, /^4\.8-/);
   assert.equal(proposal.topologyTargets.activeTargetCount, 1);
   assert.ok(proposal.acceptedRepairCount >= 1);
   assert.equal(proposal.topologyContributingCount, proposal.acceptedRepairCount);
@@ -507,4 +508,17 @@ test("Unresolved four-gap grain expands beyond three paths within evaluation bud
   assert.equal(limited.stats.tested, 4);
   assert.equal(limited.stats.budgetExhausted, true);
   for (const p of points) assert.equal(f.boundary[p], 0);
+});
+
+
+test("Escape cross sections generate guarded-scope boundary candidates without endpoint nodes", () => {
+  const width = 20, height = 20, boundary = mask(width, height);
+  for (let y = 4; y <= 14; y++) { set(boundary, width, 7, y); set(boundary, width, 11, y); }
+  const route = [10 * width + 9];
+  const memberships = new Map(Array.from({ length: width * height }, (_, p) => [p, new Set([1])]));
+  const candidates = escapeBoundaryCandidates(boundary, width, height, route, 1, memberships, 6);
+  assert.ok(candidates.some(c => c.sourceP === 207 && c.targetP === 211));
+  assert.ok(candidates.every(c => c.type === 'boundary-boundary' && c.distance <= 6));
+  assert.equal(escapeBoundaryCandidates(boundary, width, height, route, 2, memberships, 6).length, 0);
+  assert.equal(escapeBoundaryCandidates(boundary, width, height, route, 1, memberships, 3).length, 0);
 });

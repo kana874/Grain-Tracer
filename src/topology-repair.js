@@ -688,8 +688,8 @@ function candidateTypePriority(type) {
 }
 
 export function selectBalancedCandidates(byType, maxCandidates) {
-  const types = ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction"];
-  const quota = Math.max(1, Math.floor(maxCandidates / types.length));
+  const types = ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction", "boundary-boundary"].filter(type => byType[type]?.length);
+  const quota = Math.max(1, Math.floor(maxCandidates / Math.max(1, types.length)));
   const selected = [];
   const leftovers = [];
 
@@ -719,6 +719,40 @@ export function selectBalancedCandidates(byType, maxCandidates) {
   return selected.slice(0, maxCandidates);
 }
 
+// Opposing boundary pixels across a real escape route can expose breaks
+// whose raster graph has no degree-one endpoint (thick or branched lines).
+export function escapeBoundaryCandidates(mask, width, height, route, targetId, memberships, maxDistance = 10, limit = 24) {
+  const result = [], seen = new Set();
+  for (const p of route) {
+    const x = p % width, y = Math.floor(p / width);
+    if (!memberships?.get(p)?.has(targetId)) continue;
+    for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [1, -1]]) {
+      const hit = sign => {
+        for (let step = 1; step <= maxDistance; step++) {
+          const nx = x + dx * step * sign, ny = y + dy * step * sign;
+          if (!inBounds(width, height, nx, ny)) return null;
+          const q = indexOf(width, nx, ny);
+          if (mask[q]) return { p: q, x: nx, y: ny };
+        }
+        return null;
+      };
+      const a = hit(-1), b = hit(1);
+      if (!a || !b || !memberships.get(a.p)?.has(targetId) || !memberships.get(b.p)?.has(targetId)) continue;
+      const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      if (distance <= 1.1 || distance > maxDistance) continue;
+      const key = [a.p, b.p].sort((a, b) => a - b).join(':');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({ type: 'boundary-boundary', sourceNodeId: -a.p - 1, targetNodeId: null,
+        sourceP: a.p, targetP: b.p, x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        distance, facing: 1, sourceOutward: normalized(b.x - a.x, b.y - a.y), targetOutward: null,
+        forcedTopologyTargetId: targetId, origin: 'escape-cross-section' });
+    }
+  }
+  result.sort((a, b) => a.distance - b.distance);
+  return result.slice(0, limit);
+}
+
 export function candidateGeometry(graph, mask, width, height, options, topologyContext = null) {
   const maxDistance = Math.max(2, Number(options.maxSearchDistance ?? 10));
   const maxEndpointAngleDeg = Math.max(5, Math.min(85, Number(options.maxEndpointAngleDeg ?? 50)));
@@ -738,6 +772,7 @@ export function candidateGeometry(graph, mask, width, height, options, topologyC
     "endpoint-endpoint": [],
     "endpoint-boundary": [],
     "endpoint-junction": [],
+    "boundary-boundary": [],
   };
   const dedupe = new Set();
   const leakRoutes = new Map();
@@ -778,7 +813,9 @@ export function candidateGeometry(graph, mask, width, height, options, topologyC
     const targetIds = topologyContext?.targetMemberships?.get(candidate.targetP) ?? new Set(targetMeta.id ? [targetMeta.id] : []);
     const commonIds = [...sourceIds].filter(id => targetIds.has(id));
     if (requireTopologyTarget && !commonIds.length) return;
-    const assignments = commonIds.length ? commonIds : [sourceMeta.id || targetMeta.id || 0];
+    const assignments = candidate.forcedTopologyTargetId
+      ? commonIds.filter(id => id === candidate.forcedTopologyTargetId)
+      : commonIds.length ? commonIds : [sourceMeta.id || targetMeta.id || 0];
     for (const topologyTargetId of assignments) {
     const topologyTarget = topologyTargetId
       ? topologyContext?.targetById.get(topologyTargetId) ?? null
@@ -897,6 +934,18 @@ export function candidateGeometry(graph, mask, width, height, options, topologyC
     }
   }
 
+  for (const target of topologyContext?.targets ?? []) {
+    const route = leakRoutes.get(target.id);
+    for (const candidate of escapeBoundaryCandidates(mask, width, height,
+      [...(route?.pixels ?? [])], target.id, topologyContext.targetMemberships, maxDistance)) {
+      const sourceNode = graph.nodes[graph.pixelToNode[candidate.sourceP]];
+      const targetNode = graph.nodes[graph.pixelToNode[candidate.targetP]];
+      if (sourceNode?.type === 'endpoint') candidate.sourceNodeId = sourceNode.id;
+      if (targetNode?.type === 'endpoint') candidate.targetNodeId = targetNode.id;
+      addCandidate(candidate);
+    }
+  }
+
   for (const items of Object.values(byType)) {
     items.sort((a, b) =>
       (b.leakRouteScore ?? 0) - (a.leakRouteScore ?? 0)
@@ -914,6 +963,11 @@ export function candidateGeometry(graph, mask, width, height, options, topologyC
   selected.leakGuidance = { targetCount: leakRoutes.size,
     targetsWithEscapePath: [...leakRoutes.values()].filter(route => route.pixels.size).length,
     selectedOnEscapePath: selected.filter(item => item.leakRouteScore > 0).length };
+  selected.generatedCountsPerTarget = Object.values(byType).flat().reduce((counts, item) => {
+    const id = item.topologyTargetId;
+    if (id) counts[id] = (counts[id] ?? 0) + 1;
+    return counts;
+  }, {});
   selected.candidateCountsByType = Object.fromEntries(
     Object.entries(byType).map(([type, items]) => [type, {
       generated: items.length,
@@ -1174,6 +1228,7 @@ function countByType(items) {
     "endpoint-endpoint": 0,
     "endpoint-boundary": 0,
     "endpoint-junction": 0,
+    "boundary-boundary": 0,
   };
   for (const item of items ?? []) {
     if (item?.type in result) result[item.type] += 1;
@@ -1183,7 +1238,7 @@ function countByType(items) {
 
 function endpointIdsForCandidate(candidate) {
   const ids = [candidate.sourceNodeId];
-  if (candidate.type === "endpoint-endpoint" && candidate.targetNodeId != null) {
+  if (["endpoint-endpoint", "boundary-boundary"].includes(candidate.type) && candidate.targetNodeId != null) {
     ids.push(candidate.targetNodeId);
   }
   return ids;
@@ -1238,7 +1293,7 @@ export function bundlePool(candidates, maxCandidates) {
   const ordered = [...representatives, ...alternatives];
   const selected = [];
   const used = new Set();
-  for (const type of ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction"]) {
+  for (const type of ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction", "boundary-boundary"]) {
     const index = representatives.findIndex((candidate, i) => !used.has(i) && candidate.type === type);
     if (index >= 0) {
       selected.push(ordered[index]);
@@ -1750,7 +1805,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.7-diverse-bounded-bundle-search",
+    revision: "4.8-escape-boundary-generation",
     mask,
     repairMask,
     graph,
@@ -1774,6 +1829,11 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
     targetDiagnostics: (topologyContext?.targets ?? []).map(target => ({
       targetId: target.id, seedP: target.seedP, coreRegionCount: target.before.coreRegionCount,
       requiredRadiusBefore: target.before.requiredRadius,
+      generatedCandidates: sourceCandidates.generatedCountsPerTarget?.[target.id] ?? 0,
+      selectedCandidates: sourceCandidates.filter(item => item.topologyTargetId === target.id).length,
+      escapeBoundaryCandidates: sourceCandidates.filter(item => item.topologyTargetId === target.id && item.origin === 'escape-cross-section').length,
+      rejectionReasons: reviewCandidates.filter(item => item.topologyTargetId === target.id && item.rejectionReason)
+        .reduce((counts, item) => { counts[item.rejectionReason] = (counts[item.rejectionReason] ?? 0) + 1; return counts; }, {}),
       viableCandidates: viable.filter(item => item.topologyTargetId === target.id).length,
       individuallyImprovingCandidates: viable.filter(item => item.topologyTargetId === target.id && item.topologyContribution?.improved).length,
       bundleSearch: bundleSearch.find(item => item.targetId === target.id) ?? null,

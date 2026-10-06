@@ -1,7 +1,7 @@
 {
   "name": "grain-tracer",
   "private": true,
-  "version": "0.5.0-alpha",
+  "version": "0.5.1-alpha",
   "type": "module",
   "scripts": {
     "test": "node --check src/app.js && node --check src/diagnostics.js && node --check src/topology-repair.js && node --test"

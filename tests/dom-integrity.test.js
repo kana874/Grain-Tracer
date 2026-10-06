@@ -32,5 +32,5 @@ test("Batch1-3 controls exist exactly once in index.html", async () => {
     const matches = html.match(new RegExp(`id=["']${id}["']`, "g")) ?? [];
     assert.equal(matches.length, 1, id);
   }
-  assert.match(html, /v0\.5\.0-alpha/);
+  assert.match(html, /v0\.5\.1-alpha/);
 });
