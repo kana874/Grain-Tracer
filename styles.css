@@ -110,3 +110,9 @@ button.roi-tool.active { border-color: #62beff; background: rgba(66, 170, 255, .
 .check-list li.done { color: #cbe7e3; }
 .check-list li.done::marker { color: var(--accent); }
 @media (max-width: 1260px) { .layout { grid-template-columns: 220px minmax(420px, 1fr) 315px; } }
+.truth-dialog { width: 95vw; max-width: 1500px; height: 92vh; color: #eee; background: #18212c; }
+.truth-dialog::backdrop { background: #000b; }
+.truth-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+.truth-controls input[type=number] { width: 90px; }
+.truth-scroll { height: 65%; overflow: auto; background: #080c12; }
+.truth-scroll canvas { display: block; touch-action: none; image-rendering: pixelated; }

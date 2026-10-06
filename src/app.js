@@ -1,3 +1,4 @@
+import { setupGroundTruth } from './ground-truth-ui.js';
 import { segmentSeededRegions } from './region-segmentation.js';
 import { BmpError, parseBmpHeader, decodeBmpPreview } from "./bmp.js";
 import {
@@ -5410,3 +5411,4 @@ updateHysteresisStatus();
 updateTopologyStatus();
 applyAnnotationAssistView();
 updateControls();
+setupGroundTruth(() => ({file:state.file, header:state.header, fingerprint:state.sourceFingerprint}));

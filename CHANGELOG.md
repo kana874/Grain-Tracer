@@ -1,3 +1,9 @@
+# v0.6.0-alpha
+
+- 元解像度の正解データ作成モード、4ラベル編集、閉領域確認、Undo/Redo。
+- 範囲ごとの自動保存、JSON再編集、正解マスク・粒IDを含むZIP出力。
+- 同じ元画像の学習区分を統一。未確認画素は学習対象外。
+
 ## v0.5.2-alpha / Experimental seeded region segmentation
 
 - Add marker-controlled minimax watershed using grain-interior seeds, connected annotated interiors and ridge/color/dendrite evidence.
