@@ -1,3 +1,4 @@
+import { segmentSeededRegions } from './region-segmentation.js';
 import { BmpError, parseBmpHeader, decodeBmpPreview } from "./bmp.js";
 import {
   autoTuneBoundary,
@@ -422,6 +423,8 @@ function updateControls() {
   const hasAnalysis = Boolean(state.analysisMask);
   const hasRef = hasReference();
   const disabled = state.busy;
+  $("regionSegmentationButton").disabled = disabled || !hasAnalysis;
+  $("regionSegmentationResetButton").disabled = disabled || !hasAnalysis;
   const tuneAllowed = canTuneImage(state.imageEvaluationRole);
   els.fileInput.disabled = disabled;
   els.borderAssistedFill.disabled = disabled || !hasPreview;
@@ -1505,6 +1508,43 @@ async function previewGapBridges(mode = "safe") {
   } finally {
     setBusy(false);
   }
+}
+
+async function previewRegionSegmentation() {
+  if (!state.preview || !state.analysisMask || state.busy) return;
+  ensureClosedNegativeFresh();
+  setBusy(true);
+  const status = $('regionSegmentationStatus');
+  try {
+    await ensureFeatures();
+    const startedAt = nowMs();
+    const result = await segmentSeededRegions(state.preview.width, state.preview.height, {
+      ...topologyRepairOptions(), seeds: state.closedNegativeSeeds,
+      onProgress: progress => setStatus('粒内種点から領域分割中...', Math.round(progress * 80)),
+    });
+    const union = state.analysisMask.slice();
+    let additions = 0;
+    for (let p = 0; p < union.length; p++) if (result.mask[p] && !union[p]) { union[p] = 1; additions++; }
+    const before = hasReference() ? compactOptimizationEvaluation(evaluateOptimizationMask(state.analysisMask)) : null;
+    const standalone = hasReference() ? compactOptimizationEvaluation(evaluateOptimizationMask(result.mask)) : null;
+    const after = hasReference() ? compactOptimizationEvaluation(evaluateOptimizationMask(union)) : null;
+    const guard = before && after ? evaluateTopologyRepairGuard(before, after) : null;
+    state.regionSegmentation = { sourceFingerprint: state.sourceFingerprint, mask: result.mask,
+      report: { ...result.summary, generatedAt: new Date().toISOString(), appVersion: APP_VERSION,
+        elapsedMs: nowMs() - startedAt, mode: 'experimental-preview', addedPixelsInUnion: additions,
+        settingsAtRun: currentSettings(), seedsAtRun: state.closedNegativeSeeds.map(seed => ({ ...seed })),
+        before, standalone, additive: after, additiveGuard: guard,
+        note: 'Preview only. Unseeded grains and over/under-segmentation require verification.' } };
+    els.overlayCanvas.getContext('2d').putImageData(renderBoundaryOverlay(result.mask,
+      state.preview.width, state.preview.height, { opacity: Number(els.overlayOpacity.value) }), 0, 0);
+    state.comparisonMode = true;
+    const f1 = standalone?.roiF1;
+    status.textContent = `領域分割: ${result.summary.seedCount}粒の種点 / 境界 ${result.summary.supportedBoundaryPixels}px / ROI F1 ${f1 == null ? '-' : (f1 * 100).toFixed(2) + '%'} / 既存結果へ追加する場合 ${guard?.accepted ? 'チェック通過' : '未採用'}。推定境界を表示中。`;
+    setStatus('領域分割プレビュー完了。診断ZIPに比較結果を記録します。', 100);
+  } catch (error) {
+    status.textContent = '領域分割: ' + error.message;
+    setStatus(status.textContent, 0);
+  } finally { setBusy(false); }
 }
 
 async function previewTopologyRepairs() {
@@ -3265,6 +3305,8 @@ async function exportDiagnostics(mode = "zip") {
       history: state.history,
       performance: performanceSnapshot(),
       topology,
+      regionSegmentation: state.regionSegmentation?.sourceFingerprint === state.sourceFingerprint
+        ? state.regionSegmentation.report : null,
       topologyRepair: state.lastTopologyRepair,
       gapBridge: state.gapApplied,
       algorithmVersion: ALGORITHM_VERSION,
@@ -3328,7 +3370,12 @@ async function exportDiagnostics(mode = "zip") {
     const base = (state.file?.name ?? "graintracer").replace(/\.bmp$/i, "");
 
     setStatus("診断データを作成中...", 82);
+    const regionArtifact = state.regionSegmentation?.sourceFingerprint === state.sourceFingerprint
+      ? { name: 'region-segmentation.png', individualName: `${base}.graintracer-region-segmentation.png`,
+          blob: await imageDataToBlob(renderBoundaryOverlay(state.regionSegmentation.mask, state.preview.width,
+            state.preview.height, { opacity: 100 }), 'image/png') } : null;
     const artifacts = [
+      ...(regionArtifact ? [regionArtifact] : []),
       {
         name: "diagnostic.json",
         individualName: `${base}.graintracer-diagnostic.json`,
@@ -5059,6 +5106,8 @@ els.showNormalButton.addEventListener("click", showNormalView);
 els.topologyButton.addEventListener("click", runTopologyDiagnostics);
 els.gapPreviewButton.addEventListener("click", previewSafeGapBridges);
 els.extendedGapPreviewButton.addEventListener("click", previewExtendedGapBridges);
+$('regionSegmentationButton')?.addEventListener('click', previewRegionSegmentation);
+$('regionSegmentationResetButton')?.addEventListener('click', renderNormalOverlay);
 els.topologyRepairPreviewButton?.addEventListener("click", previewTopologyRepairs);
 els.gapApplyButton.addEventListener("click", applyGapBridges);
 els.gapRevertButton.addEventListener("click", revertGapBridges);

@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.5.1-alpha</div>
+    <div class="version">v0.5.2-alpha</div>
   </header>
 
   <main class="layout">
@@ -252,6 +252,9 @@
             <label class="control-row"><span>最大曲率変化</span><output id="topologyRepairMaxCurvatureValue">65</output><input id="topologyRepairMaxCurvature" type="range" min="30" max="100" step="5" value="65"></label>
             <button id="topologyRepairPreviewButton" class="full" type="button" disabled>Topology Repair v4候補を表示</button>
             <p class="help">Final Boundary CenterlineをSkeleton Graph化し、Endpoint→Endpoint / Existing Boundary / JunctionをA*型の画像Evidence経路で修復します。Topology Targetごとに安全候補をまとめ、単独では閉じない場合も最大3本のRepair BundleとしてClosure改善を評価します。Negative・Exclusion・画像外周保護はHard Rejectです。自動適用時はRecall → Negative Leakage → ROI Precision → Closureの順にGuardし、元の粒界画素は削除しません。</p>
+            <button id="regionSegmentationButton" class="full" type="button">種点から領域分割を試す</button>
+            <button id="regionSegmentationResetButton" class="full" type="button">通常の抽出表示に戻す</button>
+            <p id="regionSegmentationStatus" class="help metric-detail">試験機能：粒内種点から境界を推定します。未指定の粒は結合される場合があります。比較結果は診断ZIPへ記録します。</p>
             <p id="topologyRepairStatus" class="help metric-detail">Topology Repair v4: 未プレビュー</p>
           </div>
         </details>

@@ -553,6 +553,7 @@ export function buildDiagnosticReport(input) {
 
   return {
     schema: "graintracer-diagnostic-v19",
+    regionSegmentation: input.regionSegmentation ?? null,
     generatedAt: new Date().toISOString(),
     appVersion,
     algorithmVersion,

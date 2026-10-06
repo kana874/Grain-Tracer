@@ -1,6 +1,6 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 4;
-export const APP_VERSION = "0.5.1-alpha";
+export const APP_VERSION = "0.5.2-alpha";
 export const ALGORITHM_VERSION = "boundary-v17-topology-repair-v4";
 
 const ROI_ROLES = new Set(["training", "validation", "test"]);

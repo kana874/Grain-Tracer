@@ -1,3 +1,11 @@
+## v0.5.2-alpha / Experimental seeded region segmentation
+
+- Add marker-controlled minimax watershed using grain-interior seeds, connected annotated interiors and ridge/color/dendrite evidence.
+- Add a separate inferred-boundary preview and a return-to-normal button. Existing extraction remains the baseline for comparison.
+- Protect output against Negative, Exclusion and frame pixels. Unseeded grains may merge; region labels are inferred and require verification.
+- Export inferred boundary PNG plus standalone/additive accuracy, closure guard results, runtime, run settings and seeds in diagnostics.
+- Update app display and project/diagnostic version to 0.5.2-alpha. 73 automated tests pass; dramatic real-image improvement is not yet established.
+
 ## v0.5.1-alpha / Repair revision 4.8
 
 - Generate boundary-to-boundary candidates across escape-route cross sections, including raster breaks without degree-one graph endpoints. Restrict to shared labelled target scope and existing search distance.
