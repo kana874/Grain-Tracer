@@ -498,6 +498,10 @@ export function buildDiagnosticReport(input) {
     bundleSearch: (topologyRepair.bundleSearch ?? []).slice(0, 120).map(item => ({
       targetId: item.targetId ?? null,
       poolSize: item.poolSize ?? 0,
+      expanded: item.expanded ?? false,
+      evaluationBudget: item.evaluationBudget ?? null,
+      budgetExhausted: item.budgetExhausted ?? false,
+      reusedAdditionSets: item.reusedAdditionSets ?? 0,
       tested: item.tested ?? 0,
       compatible: item.compatible ?? 0,
       improving: item.improving ?? 0,

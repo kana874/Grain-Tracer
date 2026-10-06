@@ -1,3 +1,10 @@
+## Repair revision 4.7
+
+- Prefer distinct gap representatives before overlapping alternative paths in bundle pools.
+- Expand only targets with no accepted initial bundle to up to 10 candidates and 4 paths, bounded by 200 compatible closure evaluations per target.
+- Enumerate small bundles first and reuse identical addition sets. Export expansion and budget diagnostics.
+- Verified four-gap closure, bounded search and preservation of the input mask; 69 automated tests pass. Real-image gains and runtime remain to be checked with diagnostic (13) conditions.
+
 ## Repair revision 4.6
 
 - Prioritize candidates intersecting an open core-to-image-edge route at the last open closure radius. Shared reverse floods are cached per mask and radius. Guidance never changes acceptance guards.

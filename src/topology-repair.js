@@ -1218,40 +1218,51 @@ function bundleCompatibility(candidates, baseMask) {
   return { compatible: true, endpointIds, targetKeys, additions, pixels };
 }
 
-function bundlePool(candidates, maxCandidates) {
+export function bundlePool(candidates, maxCandidates) {
   const sorted = [...candidates].sort((a, b) =>
     (b.topologyContribution?.progressScore ?? 0) - (a.topologyContribution?.progressScore ?? 0)
     || b.score - a.score
     || (b.pathEvidence ?? 0) - (a.pathEvidence ?? 0)
     || a.distance - b.distance);
+  // Keep alternative routes for a gap after representatives for other gaps.
+  const representatives = [], alternatives = [];
+  for (const candidate of sorted) {
+    const pixels = new Set(candidate.interiorPixels ?? []);
+    const similar = representatives.some(other => {
+      const otherPixels = other.interiorPixels ?? [];
+      const overlap = otherPixels.filter(p => pixels.has(p)).length;
+      return overlap > 0 && overlap / Math.max(1, Math.min(pixels.size, otherPixels.length)) >= 0.6;
+    });
+    (similar ? alternatives : representatives).push(candidate);
+  }
+  const ordered = [...representatives, ...alternatives];
   const selected = [];
   const used = new Set();
   for (const type of ["endpoint-endpoint", "endpoint-boundary", "endpoint-junction"]) {
-    const index = sorted.findIndex((candidate, i) => !used.has(i) && candidate.type === type);
+    const index = representatives.findIndex((candidate, i) => !used.has(i) && candidate.type === type);
     if (index >= 0) {
-      selected.push(sorted[index]);
+      selected.push(ordered[index]);
       used.add(index);
     }
   }
-  for (let i = 0; i < sorted.length && selected.length < maxCandidates; i += 1) {
+  for (let i = 0; i < ordered.length && selected.length < maxCandidates; i += 1) {
     if (used.has(i)) continue;
-    selected.push(sorted[i]);
+    selected.push(ordered[i]);
   }
   return selected.slice(0, maxCandidates);
 }
 
 function enumerateBundles(items, maxSize, callback) {
   const chosen = [];
-  const visit = start => {
-    if (chosen.length) callback([...chosen]);
-    if (chosen.length >= maxSize) return;
-    for (let i = start; i < items.length; i += 1) {
-      chosen.push(items[i]);
-      visit(i + 1);
-      chosen.pop();
+  let stopped = false;
+  const visit = (start, size) => {
+    if (stopped) return;
+    if (chosen.length === size) { stopped = callback([...chosen]) === false; return; }
+    for (let i = start; i <= items.length - (size - chosen.length) && !stopped; i++) {
+      chosen.push(items[i]); visit(i + 1, size); chosen.pop();
     }
   };
-  visit(0);
+  for (let size = 1; size <= Math.min(maxSize, items.length) && !stopped; size++) visit(0, size);
 }
 
 function bundleRank(contribution, candidates, additions) {
@@ -1312,17 +1323,27 @@ function evaluateRepairBundle(mask, width, height, target, candidates, options, 
   };
 }
 
-function findBestRepairBundle(mask, width, height, target, candidates, options, maxSplitIncrease) {
+export function findBestRepairBundle(mask, width, height, target, candidates, options, maxSplitIncrease) {
   const maxPool = Math.max(2, Math.min(10, Math.round(options.maxBundleCandidatesPerTarget ?? 6)));
   const maxSize = Math.max(1, Math.min(4, Math.round(options.maxBundleSize ?? 3)));
-  const pool = bundlePool(candidates, maxPool);
+  let pool = bundlePool(candidates, maxPool);
+  const uniqueAdditionSets = new Set();
+  const budget = Math.max(1, Math.min(400, Math.round(options.maxBundleEvaluationsPerTarget ?? 200)));
+  let expanded = false;
+  let reused = 0;
   let tested = 0;
   let compatible = 0;
   let improving = 0;
   let best = null;
   let bestAttempt = null;
 
-  enumerateBundles(pool, maxSize, bundle => {
+  const evaluate = bundle => {
+    if (tested >= budget) return false;
+    const compatibility = bundleCompatibility(bundle, mask);
+    if (!compatibility.compatible) return;
+    const key = [...compatibility.additions].sort((a, b) => a - b).join(',');
+    if (uniqueAdditionSets.has(key)) { reused++; return; }
+    uniqueAdditionSets.add(key);
     tested += 1;
     const result = evaluateRepairBundle(mask, width, height, target, bundle, options, maxSplitIncrease);
     if (result.reason !== "endpoint-conflict"
@@ -1359,13 +1380,28 @@ function findBestRepairBundle(mask, width, height, target, candidates, options, 
           && candidate.candidates.length < best.candidates.length)) {
       best = candidate;
     }
-  });
+  };
+  enumerateBundles(pool, maxSize, evaluate);
+  if (!best && tested < budget) {
+    const expandedPool = bundlePool(candidates, Math.min(10, Math.max(maxPool, 10)));
+    const expandedSize = Math.min(4, maxSize + 1);
+    if (expandedPool.length > pool.length || Math.min(expandedSize, pool.length) > Math.min(maxSize, pool.length)) {
+      expanded = true;
+      pool = expandedPool;
+      enumerateBundles(pool, expandedSize, evaluate);
+    }
+  }
 
   return {
     best,
     stats: {
       targetId: target.id,
       poolSize: pool.length,
+      inputCandidateCount: candidates.length,
+      expanded,
+      evaluationBudget: budget,
+      budgetExhausted: tested >= budget,
+      reusedAdditionSets: reused,
       tested,
       compatible,
       improving,
@@ -1714,7 +1750,7 @@ export function proposeTopologyRepairs(prediction, width, height, options = {}) 
   return {
     mode: "topology-v4",
     version: 4,
-    revision: "4.6-escape-guided-adaptive-search",
+    revision: "4.7-diverse-bounded-bundle-search",
     mask,
     repairMask,
     graph,

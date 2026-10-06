@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  bundlePool,
+  findBestRepairBundle,
   candidateGeometry,
   selectBalancedCandidates,
   buildSkeletonGraph,
@@ -142,7 +144,7 @@ test("Topology-first mode targets labelled closure regions and keeps only contri
     fixture.height,
     topologyTargetOptions(fixture),
   );
-  assert.match(proposal.revision, /^4\.6-/);
+  assert.match(proposal.revision, /^4\.7-/);
   assert.equal(proposal.topologyTargets.activeTargetCount, 1);
   assert.ok(proposal.acceptedRepairCount >= 1);
   assert.equal(proposal.topologyContributingCount, proposal.acceptedRepairCount);
@@ -474,4 +476,35 @@ test("Escape-guided search keeps the adaptive budget bounded and preserves base 
     assert.equal(proposal.basePixelsRemovedByRepair, 0);
     assert.ok(proposal.acceptedRepairCount > 0);
   }
+});
+
+
+test("Bundle pool covers distinct gaps before similar routes", () => {
+  const candidates = [
+    { type: "endpoint-endpoint", score: 1, interiorPixels: [10, 11] },
+    { type: "endpoint-boundary", score: 0.9, interiorPixels: [10, 11, 12] },
+    { type: "endpoint-endpoint", score: 0.8, interiorPixels: [30, 31] },
+  ];
+  const pool = bundlePool(candidates, 2);
+  assert.deepEqual(pool.map(p => p.interiorPixels), [[10, 11], [30, 31]]);
+});
+
+test("Unresolved four-gap grain expands beyond three paths within evaluation budget", () => {
+  const f = squareGapFixture(1);
+  const points = [20 + 8 * 40, 20 + 31 * 40, 8 + 20 * 40, 31 + 20 * 40];
+  for (const p of points) f.boundary[p] = 0;
+  const candidates = points.map((p, i) => ({ type: "endpoint-endpoint", sourceNodeId: i * 2,
+    targetNodeId: i * 2 + 1, interiorPixels: [p], score: 0.9, pathEvidence: 0.98, localSplitIncrease: 1 }));
+  const options = topologyTargetOptions(f);
+  const target = { id: 1, priority: 2, seedP: 20 * 40 + 20 };
+  const result = findBestRepairBundle(f.boundary, 40, 40, target, candidates, options, 1);
+  assert.equal(result.stats.expanded, true);
+  assert.equal(result.best.candidates.length, 4);
+  assert.equal(result.best.contribution.exactGain, 1);
+  assert.ok(result.stats.tested <= 200);
+  const limited = findBestRepairBundle(f.boundary, 40, 40, target, candidates, { ...options, maxBundleEvaluationsPerTarget: 4 }, 1);
+  assert.equal(limited.best, null);
+  assert.equal(limited.stats.tested, 4);
+  assert.equal(limited.stats.budgetExhausted, true);
+  for (const p of points) assert.equal(f.boundary[p], 0);
 });
