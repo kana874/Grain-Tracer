@@ -26,7 +26,7 @@ export function setupGroundTruth(getSource) {
  const say=t=>el('message').textContent=t;
  const viewer=el('viewer');
  const editView=setupImageViewport(viewer,el('editorStage'),{getSize:()=>({width:canvas.width,height:canvas.height}),enabled:()=>Boolean(mask)&&!opening&&!initializing,canZoom:()=>!stroke,leftPan:()=>el('tool').value==='pan',onChange:v=>{el('zoomLabel').textContent=`${Math.round(v.scale*100)}%`;el('zoom').value=[1,2,4,8].includes(v.scale)?String(v.scale):'custom';}});
- const previewView=setupImageViewport(el('overview'),el('previewStage'),{getSize:()=>({width:source.preview.width,height:source.preview.height}),enabled:()=>Boolean(source)&&!opening&&!initializing,canZoom:()=>!drag,onChange:v=>el('previewZoom').textContent=`${Math.round(v.scale*100)}%`});
+ const previewView=setupImageViewport(el('overview'),el('previewStage'),{getSize:()=>({width:source.preview.width,height:source.preview.height}),enabled:()=>Boolean(source)&&!opening&&!initializing,canZoom:()=>!drag,onChange:v=>{el('previewZoom').textContent=`${Math.round(v.scale*100)}%`;el('selection').style.borderWidth=2/v.scale+'px';el('selection').style.boxShadow=`0 0 0 ${1/v.scale}px #000, inset 0 0 0 ${1/v.scale}px #000`;}});
  const key=()=>`ground-truth:${source.fingerprint}`;
  function setSelection(r){
   selection=r;
