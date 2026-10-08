@@ -40,8 +40,9 @@ export function fillInterior(mask,width,height,p) {
   for(const q of queue)mask[q]=2;
   return queue.length;
 }
+export const MAX_CROP_PIXELS = 33554432;
 export async function decodeBmpCrop(file,h,r) {
-  if(![r.x,r.y,r.width,r.height].every(Number.isInteger)||r.x<0||r.y<0||r.width<1||r.height<1||r.x+r.width>h.width||r.y+r.height>h.height||r.width*r.height>4194304)throw new Error('範囲は画像内・最大2048×2048相当で指定してください。');
+  if(![r.x,r.y,r.width,r.height].every(Number.isInteger)||r.x<0||r.y<0||r.width<1||r.height<1||r.x+r.width>h.width||r.y+r.height>h.height||r.width*r.height>MAX_CROP_PIXELS)throw new Error('範囲は画像内・最大33,554,432画素で指定してください。より小さい範囲サイズを選んでください。');
   const rgba=new Uint8ClampedArray(r.width*r.height*4);
   for(let y=0;y<r.height;y++) {
     const fy=h.topDown?r.y+y:h.height-1-r.y-y;

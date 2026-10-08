@@ -5411,4 +5411,4 @@ updateHysteresisStatus();
 updateTopologyStatus();
 applyAnnotationAssistView();
 updateControls();
-setupGroundTruth(() => ({file:state.file, header:state.header, fingerprint:state.sourceFingerprint}));
+setupGroundTruth(() => ({file:state.file, header:state.header, fingerprint:state.sourceFingerprint, preview:state.preview}));

@@ -114,5 +114,26 @@ button.roi-tool.active { border-color: #62beff; background: rgba(66, 170, 255, .
 .truth-dialog::backdrop { background: #000b; }
 .truth-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
 .truth-controls input[type=number] { width: 90px; }
-.truth-scroll { height: 65%; overflow: auto; background: #080c12; }
+.truth-scroll { flex: 1; min-height: 240px; overflow: auto; background: #080c12; }
 .truth-scroll canvas { display: block; touch-action: none; image-rendering: pixelated; }
+
+.truth-dialog h2 { margin: 0 0 12px; font-size: 22px; }
+.truth-dialog h2 small { font-size: 14px; color: var(--muted); }
+.truth-workspace { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 18px; height: calc(100% - 45px); }
+.truth-selector { overflow-y: auto; padding-right: 4px; font-size: 14px; }
+.truth-selector h3 { margin: 0 0 12px; }
+.truth-selector > label { display: grid; gap: 6px; margin: 12px 0; }
+.truth-selector p { font-size: 14px; line-height: 1.5; }
+.truth-overview { position: relative; width: 100%; background: #080c12; touch-action: none; cursor: crosshair; outline-offset: 3px; }
+.truth-overview:focus-visible { outline: 2px solid #62beff; }
+.truth-overview canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
+.truth-selection { position: absolute; box-sizing: border-box; border: 2px solid #ffe000; box-shadow: 0 0 0 1px #000, inset 0 0 0 1px #000; background: #ffe00015; cursor: move; }
+.truth-editor { display: flex; flex-direction: column; min-width: 0; min-height: 0; font-size: 14px; }
+.truth-editor > p { margin: 8px 0; }
+.truth-dialog input[readonly] { opacity: .8; }
+@media (max-width: 800px) {
+ .truth-workspace { display: flex; flex-direction: column; height: auto; }
+ .truth-selector { overflow: visible; }
+ .truth-overview { max-width: 360px; }
+ .truth-editor .truth-scroll { flex: none; height: 55vh; }
+}
