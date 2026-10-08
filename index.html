@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=0.6.2-alpha">
 </head>
 <body>
   <header class="app-header">
@@ -361,6 +361,7 @@
     </aside>
   </main>
 
-  <script type="module" src="./src/app.js"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.6.2-alpha","./src/project.js":"./src/project.js?v=0.6.2-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.6.2-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.6.2-alpha"></script>
 </body>
 </html>
