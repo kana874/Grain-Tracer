@@ -1,4 +1,5 @@
 import { buildLuminance, computeMultiScaleDarkRidge } from "./ridge.js";
+import { reflectPadRgba, cropPaddedFeatures } from "./edge-padding.js";
 import { computeDirectionalColorDifference } from "./color.js";
 import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./local-adaptive.js";
 import { compareBoundaryMasks, computeFullEvaluationRoiMetrics, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
@@ -27,6 +28,13 @@ function normalizeWeights(darkWeightRaw, ridgeWeightRaw, colorWeightRaw, dendrit
 }
 
 export async function computeBoundaryFeatures(imageData, options = {}) {
+  if (options.edgePadding !== false) {
+    // The reflection is feature-only; output coordinates are unchanged.
+    const pad = 24;
+    const padded = reflectPadRgba(imageData, pad);
+    const computed = await computeBoundaryFeatures(padded, { ...options, edgePadding: false });
+    return cropPaddedFeatures(computed, imageData.width, imageData.height, pad);
+  }
   const onProgress = options.onProgress ?? (() => {});
   const localEnabled = options.localEnabled ?? true;
   const localStrength = localEnabled ? (options.localStrength ?? 0.7) : 0;
@@ -151,7 +159,7 @@ export function buildBoundaryCandidates(features, options = {}) {
     dendrite: 14,
     dendriteLinePenalty: 14,
   };
-  const frameGuard = Math.max(0, Math.round(options.edgeFrameGuard ?? 1));
+  const frameGuard = Math.max(0, Math.round(options.edgeFrameGuard ?? 0));
 
   const available = (margin, x, y) =>
     x >= margin && y >= margin
@@ -362,7 +370,19 @@ function neighborSupport(mask, width, height) {
           count += mask[ny * width + nx] ? 1 : 0;
         }
       }
-      if (count >= 2) out[p] = 1;
+      if (count >= 2) {
+        out[p] = 1;
+      } else if (count === 1 && (x === 0 || y === 0 || x === width - 1 || y === height - 1)) {
+        // Permit a line arriving at the true edge if it continues two pixels inward.
+        // Isolated frame specks remain rejected.
+        const sx = x === 0 ? 1 : x === width - 1 ? -1 : 0;
+        const sy = y === 0 ? 1 : y === height - 1 ? -1 : 0;
+        if (sx || sy) {
+          const x1 = x + sx, y1 = y + sy, x2 = x + sx * 2, y2 = y + sy * 2;
+          if (x2 >= 0 && x2 < width && y2 >= 0 && y2 < height &&
+              mask[y1 * width + x1] && mask[y2 * width + x2]) out[p] = 1;
+        }
+      }
     }
   }
   return out;
@@ -822,7 +842,7 @@ function evaluateRawConfiguration(features, helpers, config) {
   if ((config.scoreMode ?? "legacy") !== "legacy") {
     const candidates = buildBoundaryCandidates(features, {
       ...config,
-      edgeFrameGuard: 1,
+      edgeFrameGuard: config.edgeFrameGuard ?? 0,
     });
     return scorePredictionFunction(features, helpers, p => Boolean(candidates.mask[p]));
   }
@@ -845,7 +865,9 @@ function evaluateRawConfiguration(features, helpers, config) {
   const scoreIsPrediction = p => {
     const x = p % features.width;
     const y = Math.floor(p / features.width);
-    if (x < 1 || y < 1 || x >= features.width - 1 || y >= features.height - 1) return false;
+    if (x < (config.edgeFrameGuard ?? 0) || y < (config.edgeFrameGuard ?? 0)
+      || x >= features.width - (config.edgeFrameGuard ?? 0)
+      || y >= features.height - (config.edgeFrameGuard ?? 0)) return false;
 
     if (x >= maxMargin && y >= maxMargin
       && x < features.width - maxMargin
@@ -1006,7 +1028,7 @@ function scoreProcessedMask(mask, referenceCenterline, features, options, helper
 async function optimizeMinComponent(features, referenceCenterline, config, options, helpers, progress) {
   const candidates = buildBoundaryCandidates(features, {
     ...config,
-    edgeFrameGuard: options.edgeFrameGuard ?? 1,
+    edgeFrameGuard: options.edgeFrameGuard ?? 0,
   });
   const processingOptions = {
     ...options,
@@ -1060,7 +1082,7 @@ async function optimizeMinComponent(features, referenceCenterline, config, optio
 function evaluateProcessedConfiguration(features, referenceCenterline, config, options, helpers) {
   const candidates = buildBoundaryCandidates(features, {
     ...config,
-    edgeFrameGuard: options.edgeFrameGuard ?? 1,
+    edgeFrameGuard: options.edgeFrameGuard ?? 0,
   });
   const processed = buildProcessedBoundaryFromCandidates(
     features,
