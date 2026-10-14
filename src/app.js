@@ -343,6 +343,7 @@ const state = {
   pendingBackupReset: null,
   learningRevision: 0,
   autosaveSuppressed: false,
+  autosaveInFlight: null,
   transformFrame: null,
   performance: {
     featureComputeMs: null,
@@ -3354,7 +3355,10 @@ async function performAutosave() {
 
     const writeStartedAt = nowMs();
     if(state.autosaveSuppressed || revision!==state.learningRevision) return;
-    await saveAutosave(state.sourceFingerprint, project);
+    const write=saveAutosave(state.sourceFingerprint,project);
+    state.autosaveInFlight=write;
+    try { await write; }
+    finally { if(state.autosaveInFlight===write)state.autosaveInFlight=null; }
     state.performance.autosaveWriteMs = Math.max(0, nowMs() - writeStartedAt);
     els.projectStatus.textContent = `自動保存済み ${new Date().toLocaleTimeString("ja-JP")} / ${state.performance.autosaveSerializeMs.toFixed(0)}+${state.performance.autosaveWriteMs.toFixed(0)} ms`;
   } catch (error) {
@@ -3612,6 +3616,9 @@ async function backupAndStartFresh(){
     cancelScheduledAutosave();
     setBusy(true);
     try{
+      // Wait for an already-running IndexedDB write before deleting the old
+      // project; otherwise that write could resurrect the obsolete session.
+      if(state.autosaveInFlight)await state.autosaveInFlight.catch(()=>{});
       // Delete only the autosave associated with this exact BMP fingerprint.
       // Never delete other projects, global browser storage or backup files.
       await deleteAutosave(fingerprint);
