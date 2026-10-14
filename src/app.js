@@ -2369,7 +2369,8 @@ function updateValidationUsageSuggestion(){
   });
   state.validationSuggestedRect=rect;
   $("validationUsageToggle").checked=true;
-  $("validationRoiUseRecommendationButton").disabled=!rect||Boolean(state.validationDraft);
+  $("validationRoiUseRecommendationButton").disabled=!rect||
+    state.validationDraft?.phase==="editing";
   renderValidationUsageView();
   if(!rect){
     const message="保存済み履歴と重ならない96px以上の候補がありません。別の画像か学習に使用していない場所を検討してください。";
@@ -2385,10 +2386,11 @@ function updateValidationUsageSuggestion(){
   return rect;
 }
 function createSuggestedValidationRoi(){
-  const rect=state.validationSuggestedRect;
-  if(!rect||!state.preview||state.busy)return false;
+  if(!state.validationSuggestedRect||!state.preview||state.busy)return false;
   if(!state.validationDraft && !startValidationRoiWizard())return false;
   if(state.validationDraft?.phase!=="selecting")return false;
+  const rect=state.validationSuggestedRect;
+  if(!rect)return false;
   const validated=validationRoiConflicts(rect,state.fullEvaluationRois,state.localAbReviews,-1,state.feedbackReviews);
   if(!validated.ok||state.exclusionRects.some(e=>roiOverlapPixels(e,rect)>0)){
     $("validationRoiCreateStatus").textContent=validated.ok?
