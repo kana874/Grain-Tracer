@@ -1,3 +1,11 @@
+# v0.9.2-alpha — See previously used learning ROIs and recommend untouched Validation space
+
+- Color-coded saved A/B selections, manual feedback positions, existing evaluation ROIs and exclusions on the main micrograph and a full-image thumbnail map.
+- Validation creation automatically shows the usage map and recommends a nonoverlapping region; users can click one button to start editing the suggested green rectangle or manually drag another untouched region.
+- Preference/feedback/ROI overlaps and excluded regions are avoided. Recommender prefers 256px but falls back to 192/128/96px and refuses to invent free space when none is available.
+- All indications reflect *recorded* history; missing old training metadata cannot be reconstructed and absence of colored rectangles does not prove absolute non-use.
+- Tests cover geometry, source fingerprint isolation, suggestions, exhausted images and UI connections. Project format v4 and extraction algorithm v18 unchanged.
+
 # v0.9.1-alpha — Dedicated Validation ROI editor and compact A/B Step ③
 
 - Added explicit Validation creation wizard. Draw new ROI → import candidate lines as editable draft → manually correct all boundaries → affirm complete → verified independent Validation ROI.
