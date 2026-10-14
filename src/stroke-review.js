@@ -27,25 +27,28 @@ export function rasterizeGuidedStroke(points, mask, width, height, options={}) {
     }
     return best;
   }
-  let last=null;
-  for(let i=0;i<points.length&&output.length<maxPixels;i++){
+  let last=null,previous=-1,missingSamples=0,broken=false;
+  for(let i=0;i<points.length&&output.length<maxPixels&&!broken;i++){
     const point=points[i];
-    if(!point||!Number.isFinite(point.x)||!Number.isFinite(point.y)){last=null;continue;}
-    if(!last){const p=nearest(point.x,point.y);if(p>=0)add(p%width,Math.floor(p/width));last=point;continue;}
-    const dx=point.x-last.x,dy=point.y-last.y;
-    const samples=Math.max(1,Math.ceil(Math.hypot(dx,dy)*2));
-    let previous=-1;
-    for(let t=0;t<=samples && output.length<maxPixels;t++){
-      const p=nearest(last.x+dx*t/samples,last.y+dy*t/samples);
-      if(p<0){previous=-1;continue;}
-      const x=p%width,y=Math.floor(p/width);
-      // If a mouse stroke jumps across a large empty gap, do not invent a
-      // connecting label. Only actual candidate pixels are added.
-      if(previous>=0){
-        const px=previous%width,py=Math.floor(previous/width);
-        if(Math.max(Math.abs(x-px),Math.abs(y-py))>2)previous=-1;
+    if(!point||!Number.isFinite(point.x)||!Number.isFinite(point.y)){broken=true;break;}
+    const steps=last?Math.max(1,Math.ceil(Math.hypot(point.x-last.x,point.y-last.y)*2)):0;
+    for(let t=0;t<=steps && output.length<maxPixels;t++){
+      // Consecutive pointer events often share an endpoint. Deduplicate it.
+      if(last&&t===0)continue;
+      const px=last?last.x+(point.x-last.x)*t/steps:point.x;
+      const py=last?last.y+(point.y-last.y)*t/steps:point.y;
+      const p=nearest(px,py);
+      if(p<0){
+        if(previous>=0&&++missingSamples>2){broken=true;break;}
+        continue;
       }
-      add(x,y);previous=p;
+      const x=p%width,y=Math.floor(p/width);
+      if(previous>=0){
+        const pxOld=previous%width,pyOld=Math.floor(previous/width);
+        // A new disconnected line must be a fresh, separate user stroke.
+        if(Math.max(Math.abs(x-pxOld),Math.abs(y-pyOld))>2){broken=true;break;}
+      }
+      add(x,y);previous=p;missingSamples=0;
     }
     last=point;
   }
