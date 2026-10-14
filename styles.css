@@ -216,7 +216,7 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
 .header-actions { display:flex; align-items:center; gap:12px; }
 .header-actions #uiModeToggle { padding:7px 12px; white-space:nowrap; }
 .focus-mode .legacy-feature { display:none !important; }
-.focus-mode .toolbar > button:not(#panToolButton):not(#referenceToolButton):not(#negativeToolButton):not(#eraseReferenceToolButton):not(#exclusionToolButton):not(#fullRoiToolButton):not(#undoReferenceButton):not(#redoReferenceButton):not(#fitButton):not(#actualButton) { display:none !important; }
+.focus-mode .toolbar > button:not(#panToolButton):not(#referenceToolButton):not(#eraseReferenceToolButton):not(#closedNegativeFillToolButton):not(#exclusionToolButton):not(#fullRoiToolButton):not(#undoReferenceButton):not(#redoReferenceButton):not(#fitButton):not(#actualButton) { display:none !important; }
 .focus-mode .toolbar .toolbar-separator { display:none; }
 .focus-primary { padding-bottom:10px; }
 .focus-primary h2 { margin:0 0 10px; }
@@ -283,3 +283,7 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
 .validation-swatch.existing {background:rgba(90,169,245,.44);border-color:#79bdff;}
 .validation-swatch.excluded {background:rgba(136,143,156,.5);border-color:#9ca7b9;}
 .validation-swatch.recommended {background:rgba(55,255,147,.19);border:2px dashed #43ff99;}
+
+/* v0.9.4: Fill is a standard annotation; the legacy Negative pen is advanced-only. */
+.focus-mode #negativeToolButton {display:none !important;}
+.focus-mode #closedNegativeFillToolButton {display:inline-flex !important;}
