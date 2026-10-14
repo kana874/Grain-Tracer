@@ -198,19 +198,23 @@ export async function createProjectExport(project,baseName,options={}){
   const fragments=[];
   let total=0,steps=0;
   const maxBytes=options.maxBytes??1024*1024*1024;
+  const compressAboveBytes=options.compressAboveBytes??8*1024*1024;
   for(const part of projectJsonChunks(project)){
-    total+=part.length*3; // upper bound on UTF-8 bytes for JS code units
-    if(total>maxBytes)throw new RangeError('バックアップが1GBを超えています。履歴サイズを調査してください。既存データは維持します。');
+    // Never hold a gigantic uncompressed JSON document in memory just to
+    // decide later that it ought to have been compressed.
+    total+=new TextEncoder().encode(part).byteLength;
+    if(total>compressAboveBytes&&typeof CompressionStream!=='undefined'){
+      const blob=await createProjectArchive(project);
+      return {blob,filename:baseName+'.graintracer.archive.gz',
+        bytes:blob.size,compressed:true};
+    }
+    if(total>maxBytes)throw new RangeError(
+      '非圧縮バックアップの上限を超えています。圧縮に対応したEdge/Chromeをご利用ください。学習状態は維持します。');
     fragments.push(part);
     if((++steps)%64===0)await new Promise(resolve=>setTimeout(resolve,0));
   }
-  let blob=new Blob(fragments,{type:'application/json'});
-  let filename=baseName+'.graintracer.json';
-  if(blob.size>(options.compressAboveBytes??8*1024*1024)&&typeof CompressionStream!=='undefined'){
-    blob=await createProjectArchive(project);
-    filename=baseName+'.graintracer.archive.gz';
-  }
-  return {blob,filename,bytes:blob.size,compressed:filename.endsWith('.gz')};
+  const blob=new Blob(fragments,{type:'application/json'});
+  return {blob,filename:baseName+'.graintracer.json',bytes:blob.size,compressed:false};
 }
 export async function parseProjectFile(file) {
   if(!file)throw new Error('プロジェクトファイルがありません');
