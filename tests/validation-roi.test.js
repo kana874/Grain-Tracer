@@ -54,7 +54,7 @@ test('validation wizard and compact single-row A/B correction toolbar are wired 
   assert.match(ui,/local-ab-review-toolbar/);
   assert.match(ui,/data-k="startValidation"/);
   assert.match(css,/\.local-ab-manual \.local-ab-review-toolbar/);
-  assert.match(html,/v0\\.9\\.3-alpha/);
+  assert.ok(html.includes("v0.9.3-alpha"));
 });
 
 test('validation history map distinguishes A/B, manual review, previous ROIs and exclusions',()=>{
