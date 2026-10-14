@@ -119,6 +119,7 @@ const els = {
   exclusionCanvas: $("exclusionCanvas"),
   negativeCanvas: $("negativeCanvas"),
   referenceCanvas: $("referenceCanvas"),
+  feedbackCanvas: $("feedbackCanvas"),
   emptyState: $("emptyState"),
   panToolButton: $("panToolButton"),
   referenceToolButton: $("referenceToolButton"),
@@ -132,6 +133,7 @@ const els = {
   feedbackMissingButton: $("feedbackMissingButton"),
   feedbackTuneButton: $("feedbackTuneButton"),
   feedbackStatus: $("feedbackStatus"),
+  feedbackSelectionPixels: $("feedbackSelectionPixels"),
   undoReferenceButton: $("undoReferenceButton"),
   redoReferenceButton: $("redoReferenceButton"),
   fitButton: $("fitButton"),
@@ -521,7 +523,7 @@ function resetMetadata() {
 }
 
 function prepareCanvas(width, height) {
-  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.gapCanvas, els.fullRoiCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas]) {
+  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.gapCanvas, els.fullRoiCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas, els.feedbackCanvas]) {
     canvas.width = width;
     canvas.height = height;
     canvas.style.width = `${width}px`;
@@ -3110,6 +3112,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.imageEvaluationRole = normalizeImageEvaluationRole(project.imageEvaluationRole);
   state.feedbackReviews = Array.isArray(project.feedbackReviews) ? project.feedbackReviews.filter(item => item && ["positive", "negative", "missing"].includes(item.kind)).slice(-2000) : [];
   state.feedbackPending = null;
+  clearFeedbackPreview();
   updateFeedbackStatus();
   state.baselineSnapshots = Array.isArray(project.baselineSnapshots)
     ? project.baselineSnapshots.map(item => ({ ...item }))
@@ -3554,6 +3557,7 @@ async function loadBmp(file) {
   state.imageEvaluationRole = null;
   state.feedbackReviews = [];
   state.feedbackPending = null;
+  clearFeedbackPreview();
   updateFeedbackStatus();
   state.baselineSnapshots = [];
   state.classifier = null;
@@ -4700,7 +4704,7 @@ function applyFeedbackIndices(indices, kind, anchor) {
     const p = { x: index % w, y: Math.floor(index / w) };
     paintReferenceCenterlineSegment(primary, w, h, p, p, { erase: false }, mainTracker);
     if (opposite[index]) {
-      paintReferenceCenterlineSegment(opposite, w, h, p, p, { erase: true, eraseRadius: 1 }, otherTracker);
+      paintReferenceCenterlineSegment(opposite, w, h, p, p, { erase: true, eraseRadius: 0 }, otherTracker);
     }
   }
   const mainEntry = finalizeReferenceEdit(primary, mainTracker);
@@ -4734,9 +4738,50 @@ function applyFeedbackIndices(indices, kind, anchor) {
   updateMetrics();
   updateControls();
   scheduleAutosave();
+  clearFeedbackPreview();
   const label = kind === "positive" ? "正解" : kind === "negative" ? "誤検出" : "検出漏れ";
   setStatus(`フィードバック保存: ${label} / ${indices.length}候補画素。次回のAuto Tuneで利用します。Undo可能。`);
   return true;
+}
+
+// Use the same selector for hover and click to ensure WYSIWYG review.
+function feedbackCandidate(point) {
+  if (!state.analysisMask || !state.preview) return null;
+  return selectFeedbackSegment(
+    state.analysisMask, state.preview.width, state.preview.height, point,
+    { searchRadius: 2, maxPixels: Number(els.feedbackSelectionPixels?.value ?? 3),
+      exclusionMask: state.exclusionMask },
+  );
+}
+
+function clearFeedbackPreview() {
+  if (!els.feedbackCanvas) return;
+  const canvas = els.feedbackCanvas;
+  canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function renderFeedbackHover(event) {
+  clearFeedbackPreview();
+  if (!state.preview || state.busy ||
+      !["feedback-positive", "feedback-negative"].includes(state.tool)) return;
+  const point = eventToPreviewPoint(event);
+  if (!point) return;
+  const candidate = feedbackCandidate(point);
+  if (!candidate?.indices?.length) return;
+  const ctx = els.feedbackCanvas.getContext("2d");
+  const width = state.preview.width;
+  // Exact selected pixels, not a widened preview radius or connected graph.
+  ctx.fillStyle = state.tool === "feedback-positive" ? "#48ff8b" : "#ff516d";
+  for (const index of candidate.indices) {
+    ctx.fillRect(index % width, Math.floor(index / width), 1, 1);
+  }
+  // Cursor ring indicates snapping location; only the solid pixels are labelled.
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(0.6, Math.min(2, 1 / Math.max(state.scale, 0.1)));
+  ctx.beginPath();
+  ctx.arc(candidate.anchor.x + 0.5, candidate.anchor.y + 0.5,
+    Math.max(2, Math.min(6, 3 / Math.max(state.scale, 0.5))), 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 function reviewFeedbackClick(event) {
@@ -4771,11 +4816,9 @@ function reviewFeedbackClick(event) {
     setStatus("先に粒界候補を解析してください。");
     return;
   }
-  const candidate = selectFeedbackSegment(state.analysisMask, state.preview.width, state.preview.height, point, {
-    searchRadius: 5, maxDistance: 12, maxPixels: 120, exclusionMask: state.exclusionMask,
-  });
+  const candidate = feedbackCandidate(point);
   if (!candidate) {
-    setStatus("クリックから5px以内に抽出候補がありません。検出漏れは「欠落を指定」で教えてください。");
+    setStatus("クリックから2px以内に抽出候補がありません。さらに拡大するか「欠落を指定」を使用してください。");
     return;
   }
   applyFeedbackIndices(candidate.indices, state.tool === "feedback-positive" ? "positive" : "negative", candidate.anchor);
@@ -4784,6 +4827,7 @@ function reviewFeedbackClick(event) {
 function setTool(tool) {
   state.feedbackPending = null;
   state.tool = tool;
+  clearFeedbackPreview();
   updateFeedbackStatus();
   els.panToolButton.classList.toggle("active", tool === "pan");
   els.referenceToolButton.classList.toggle("active", tool === "reference");
@@ -5466,8 +5510,11 @@ els.viewer.addEventListener("pointermove", event => {
     return;
   }
   if (state.rectInteraction) { continueRectInteraction(event); return; }
-  if (state.drawingReference) { continueReferenceDraw(event); }
+  if (state.drawingReference) { continueReferenceDraw(event); return; }
+  renderFeedbackHover(event);
 });
+els.viewer.addEventListener("pointerleave", clearFeedbackPreview);
+els.feedbackSelectionPixels.addEventListener("change", clearFeedbackPreview);
 
 function endPointer(event) {
   if (state.dragging && event.pointerId === state.dragPointerId) {
