@@ -3548,29 +3548,133 @@ function recordBaselineSnapshot() {
   setStatus("Baseline SnapshotをProjectへ記録しました。", 100);
 }
 
-async function saveProjectManual() {
-  try {
-    const project = buildProject();
-    const base = state.file.name.replace(/\.bmp$/i, "");
-    downloadProject(project, `${base}.graintracer.json`);
-    await saveAutosave(state.sourceFingerprint, project);
-    els.projectStatus.textContent = "プロジェクトを保存しました";
-  } catch (error) {
-    alert(error.message);
+function resetUIForFreshLearning(){
+  // The BMP image is reused; model/annotation history is reset by loadBmp.
+  // Restore parameter controls from index.html defaults, not from old project.
+  for(const control of document.querySelectorAll('.right-panel input[type="range"]')){
+    if(!control.id)continue;
+    setRangeValue(control,control.defaultValue);
   }
+  for(const input of document.querySelectorAll('.right-panel input[type="checkbox"]')){
+    input.checked=input.defaultChecked;
+  }
+  for(const select of document.querySelectorAll('.right-panel select')){
+    const preferred=[...select.options].find(option=>option.defaultSelected)??select.options[0];
+    if(preferred)select.value=preferred.value;
+  }
+  $("validationUsageToggle").checked=false;
 }
-
-async function importProjectFile(file) {
-  if (!file) return;
-  try {
-    const project = JSON.parse(await file.text());
-    await restoreProject(project, "プロジェクトファイル");
-    scheduleAutosave();
-  } catch (error) {
-    alert(`プロジェクト読込エラー: ${error.message}`);
-  } finally {
-    els.projectInput.value = "";
+async function saveProjectManual(){
+  if(!state.file||state.busy)return;
+  setBusy(true);
+  try{
+    const project=buildProject();
+    const base=state.file.name.replace(/\\.bmp$/i,'');
+    const output=await createProjectExport(project,base);
+    downloadProjectBlob(output.blob,output.filename);
+    try{
+      await saveAutosave(state.sourceFingerprint,project);
+      els.projectStatus.textContent="保存開始: "+output.filename+
+        " ("+(output.bytes/1048576).toFixed(1)+"MB) / 自動保存済み";
+    }catch(error){
+      console.warn("Downloaded project, but IndexedDB save failed",error);
+      els.projectStatus.textContent="ファイルのダウンロード開始済み。自動保存は失敗: "+error.message;
+    }
+    setStatus("プロジェクト保存ファイルをダウンロードしました。保存先に存在することを確認してください。");
+  }catch(error){
+    console.error("Project file export failed",error);
+    const message="プロジェクトのファイル出力に失敗: "+error.message+
+      "。学習状態は変更していません。";
+    els.projectStatus.textContent=message;
+    alert(message);
+  }finally{setBusy(false);}
+}
+async function backupAndStartFresh(){
+  if(!state.file||!state.sourceFingerprint||state.busy)return;
+  // Stage 2: a click by the user confirms the browser has finished
+  // downloading the backup. Browsers cannot report a download's disk state.
+  if(state.pendingBackupReset){
+    const pending=state.pendingBackupReset;
+    if(pending.revision!==state.learningRevision||
+      pending.fingerprint!==state.sourceFingerprint){
+      state.pendingBackupReset=null;
+      els.backupNewSessionButton.textContent="現在の学習をバックアップして新規学習を開始";
+      $("backupNewSessionStatus").textContent="バックアップ作成後に変更があったため、保存し直してください。";
+      return;
+    }
+    const confirmed=window.confirm(
+      "バックアップ「"+pending.filename+"」がPCに保存されていることを確認しましたか？\\n"+
+      "確認できていなければキャンセルしてください。\\n\\n"+
+      "続行すると、このBMPの自動保存済み学習を消し、A/B履歴・手動正解・Validation ROI・設定を初期化します。");
+    if(!confirmed)return;
+    const file=state.file,fingerprint=state.sourceFingerprint;
+    state.autosaveSuppressed=true;
+    cancelScheduledAutosave();
+    setBusy(true);
+    try{
+      // Delete only the autosave associated with this exact BMP fingerprint.
+      // Never delete other projects, global browser storage or backup files.
+      await deleteAutosave(fingerprint);
+      resetUIForFreshLearning();
+      await loadBmp(file,{skipAutosave:true});
+      if(!state.preview||state.sourceFingerprint!==fingerprint)
+        throw new Error("新しいプロジェクトの読み込みを確認できませんでした");
+      state.pendingBackupReset=null;
+      state.learningRevision=0;
+      els.backupNewSessionButton.textContent="現在の学習をバックアップして新規学習を開始";
+      $("backupNewSessionStatus").textContent=
+        "新規学習へ移行済み。A/B選好・注釈・評価ROIは0件です。バックアップはPC側に保存されています。";
+      state.autosaveSuppressed=false;
+      if(els.autosaveEnabled.checked)await performAutosave();
+      setStatus("新規学習を開始しました。まず未使用のValidation ROIを作成してください。",100);
+    }catch(error){
+      console.error("Backup/new-learning reset failed",error);
+      const message="新規学習への移行に失敗: "+error.message+
+        "。保存したバックアップと元BMPから復元できます。";
+      $("backupNewSessionStatus").textContent=message;
+      alert(message);
+    }finally{
+      state.autosaveSuppressed=false;
+      setBusy(false);
+    }
+    return;
   }
+  // Stage 1: download a complete snapshot while the current state remains
+  // untouched. Never reset anything before the user confirms the download.
+  setBusy(true);
+  $("backupNewSessionStatus").textContent="現在の学習をバックアップファイルへ書き出し中…";
+  try{
+    const revision=state.learningRevision;
+    const fingerprint=state.sourceFingerprint;
+    const project=buildProject();
+    const output=await createProjectExport(project,backupName(state.file.name,'学習バックアップ'));
+    if(fingerprint!==state.sourceFingerprint||revision!==state.learningRevision)
+      throw new Error("保存中に学習状態が変わりました。操作をやり直してください");
+    downloadProjectBlob(output.blob,output.filename);
+    state.pendingBackupReset={revision,fingerprint,filename:output.filename};
+    els.backupNewSessionButton.textContent="バックアップ保存を確認して初期化";
+    $("backupNewSessionStatus").textContent=
+      output.filename+" ("+(output.bytes/1048576).toFixed(1)+"MB) をダウンロード開始。"+
+      "PCのダウンロードフォルダーで保存を確認してから、もう一度ボタンを押してください。"+
+      "確認前は学習データを一切削除しません。";
+    setStatus("バックアップ出力を開始しました。ファイルの保存を確認後、次の操作へ進んでください。");
+  }catch(error){
+    console.error("Learning backup failed",error);
+    $("backupNewSessionStatus").textContent="バックアップ失敗: "+error.message+
+      "。既存の学習状態はそのままです。";
+    alert("バックアップを作成できませんでした: "+error.message+
+      "。学習状態は削除していません。");
+  }finally{setBusy(false);}
+}
+async function importProjectFile(file){
+  if(!file)return;
+  try{
+    const project=await parseProjectFile(file);
+    await restoreProject(project,"プロジェクトファイル");
+    scheduleAutosave();
+  }catch(error){
+    alert("プロジェクト読込エラー: "+error.message);
+  }finally{els.projectInput.value="";}
 }
 
 async function exportDiagnostics(mode = "zip") {
