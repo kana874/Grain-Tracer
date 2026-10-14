@@ -8,7 +8,7 @@ import { recommendDisagreementRoi } from './active-roi.js';
 // Local A/B operates on the analysis-preview coordinate grid. The same global
 // feature cache and exclusion mask are used for both candidates. A/B votes are
 // preference data, not true-positive ground-truth or F1.
-export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVote, onFeedback, onAdopt }) {
+export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVote, onFeedback, onAdopt, onUndo, onRedo, getHistoryState }) {
   const openButton = document.getElementById('localAbButton');
   const dialog = document.createElement('dialog');
   dialog.className = 'local-ab-dialog';
@@ -45,6 +45,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '<button type="button" data-vote="a">Aが良い</button><button type="button" data-vote="b">Bが良い</button>',
     '<button type="button" data-vote="neither">両方不正解</button><button type="button" data-vote="uncertain">判断不能</button>',
     '</div><div class="local-ab-manual"><strong>③ 選んだ候補を手動評価</strong>',
+    '<div class="local-ab-undo-bar"><button type="button" data-k="undo" title="直前の注釈を戻す (Ctrl+Z)">↶ Undo</button><button type="button" data-k="redo" title="注釈をやり直す (Ctrl+Y / Ctrl+Shift+Z)">↷ Redo</button><span data-k="undoStatus" class="help"></span></div>',
     '<p class="help">A/Bを選択後、該当する画像上でクリックします。「両方不正解」でも手動評価する候補を選べます。</p>',
     '<div><button type="button" data-k="judgeA">Aを修正</button><button type="button" data-k="judgeB">Bを修正</button></div>',
     '<label class="check-row"><input type="checkbox" data-k="strokeMode" checked> ドラッグで線をまとめて評価（1操作でUndo）</label>',
@@ -368,6 +369,25 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     el('reviewStatus').textContent='なぞり候補：'+indices.length+
       'px（ドラッグ終了時に1操作として保存、Undo可能）';
   }
+  function refreshHistoryButtons() {
+    const status=getHistoryState?.() ?? {undo:0,redo:0};
+    el('undo').disabled=!status.undo;
+    el('redo').disabled=!status.redo;
+    el('undoStatus').textContent='Undo '+(status.undo??0)+' / Redo '+(status.redo??0);
+  }
+  function reviewUndoRedo(direction) {
+    if(!validContext() || busy) return;
+    const action=direction==='undo'?onUndo:onRedo;
+    if(typeof action!=='function') return;
+    const ok=action();
+    if(!ok) {refreshHistoryButtons();return;}
+    stroke=null;pending=null;
+    updateCurrentLabels();
+    el('reviewStatus').textContent=direction==='undo'
+      ? '直前の注釈を取り消しました。'
+      : '注釈をやり直しました。';
+    refreshHistoryButtons();
+  }
   function updateCurrentLabels() {
     const updated=getSnapshot();
     if(updated) {
@@ -375,6 +395,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       current.negativeCenterline=updated.negativeCenterline;
     }
     drawCandidates();
+    refreshHistoryButtons();
   }
   function beginStroke(event,side) {
     if(!el('strokeMode').checked||el('tool').value==='missing'||busy||
@@ -487,6 +508,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     el('roiSize').value = '256';
     updateRoiAt(w / 2, h / 2);
     dialog.showModal();
+    refreshHistoryButtons();
     generate();
   }
   function close() {
@@ -509,6 +531,19 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   });
   el('variant').addEventListener('change', () => { a = b = null; clearVote(); report('条件を変更しました。「この条件で比較」を押してください。'); });
   el('generate').addEventListener('click', generate);
+  el('undo').addEventListener('click', () => reviewUndoRedo('undo'));
+  el('redo').addEventListener('click', () => reviewUndoRedo('redo'));
+  dialog.addEventListener('keydown', event => {
+    if(!(event.ctrlKey || event.metaKey) || event.altKey) return;
+    const key=event.key.toLowerCase();
+    const direction=key==='y' || (key==='z' && event.shiftKey) ? 'redo' : key==='z' ? 'undo' : null;
+    if(!direction) return;
+    const tag=event.target?.tagName?.toLowerCase();
+    if(['input','textarea','select'].includes(tag)) return;
+    event.preventDefault();
+    event.stopPropagation(); // avoid applying global Undo/Redo twice
+    reviewUndoRedo(direction);
+  });
   el('nextRoi').addEventListener('click', () => recommendRoi());
   el('applyChampion').addEventListener('click', () => adoptChampion());
   el('adaptive').addEventListener('change', () => {
