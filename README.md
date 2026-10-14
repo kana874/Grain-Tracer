@@ -4,9 +4,13 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**v0.3.9.2-alpha / boundary-v13-precision-guide-v2**
+**validation: v0.6.4-alpha / boundary-v17-topology-repair-v4**（mainは別バージョン）
 
 Current capabilities:
+
+- v0.6.4-alpha: approve/reject a short extracted line with one click; register a missing boundary via two-point hint
+- local reviewed pixels become existing Positive/Negative partial labels, usable by Auto Tune v2; this is not full-ROI truth or automatic neural network training
+- feedback review counts and action log survive project save/restore, with Undo/Redo support (details: [feedback learning v0.6.4](docs/feedback-learning-v0.6.4.md))
 
 - direct loading of very large uncompressed BMP files without expanding the full source image to RGBA
 - low-memory downsampled preview generation
