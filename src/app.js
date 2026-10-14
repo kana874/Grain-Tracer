@@ -4708,7 +4708,7 @@ function updateFeedbackStatus() {
     `評価履歴: 正解 ${counts.positive} / 誤検出 ${counts.negative} / 検出漏れ ${counts.missing}（部分ラベル。完全評価ROIではありません）${pending}`;
 }
 
-function applyFeedbackIndices(indices, kind, anchor) {
+function applyFeedbackIndices(indices, kind, anchor, provenance = {}) {
   if (!state.preview || !indices?.length || state.busy) return false;
   const w = state.preview.width, h = state.preview.height;
   const positive = kind !== "negative";
@@ -4742,6 +4742,10 @@ function applyFeedbackIndices(indices, kind, anchor) {
     x: Math.round(anchor.x),
     y: Math.round(anchor.y),
     pixels: indices.length,
+    source: provenance.source === 'local-ab' ? 'local-ab' : 'quick-review',
+    candidate: provenance.source === 'local-ab' && ['a', 'b'].includes(provenance.candidate) ? provenance.candidate : null,
+    roi: provenance.source === 'local-ab' ? { ...provenance.roi } : null,
+    variant: provenance.source === 'local-ab' ? provenance.variant : null,
     createdAt: new Date().toISOString(),
   };
   const parts = [];
@@ -5623,6 +5627,8 @@ const localAbController = setupLocalAB({
   getSnapshot: () => state.preview && state.sourceFingerprint ? {
     preview: state.preview,
     fingerprint: state.sourceFingerprint,
+    appVersion: APP_VERSION,
+    algorithmVersion: ALGORITHM_VERSION,
     boundaryOptions: { ...currentBoundaryOptions() },
     featureOptions: { ...currentFeatureOptions() },
     exclusionMask: state.exclusionMask,
@@ -5640,7 +5646,7 @@ const localAbController = setupLocalAB({
     updateLocalAbStatus();
     scheduleAutosave();
   },
-  onFeedback: (indices, kind, anchor) => applyFeedbackIndices(indices, kind, anchor),
+  onFeedback: (indices, kind, anchor, provenance) => applyFeedbackIndices(indices, kind, anchor, provenance),
 });
 function updateLocalAbStatus() {
   if (!els.localAbStatus) return;
