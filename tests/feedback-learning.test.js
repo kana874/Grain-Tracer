@@ -3,21 +3,41 @@ import assert from "node:assert/strict";
 import { selectFeedbackSegment, buildFeedbackConnection } from "../src/feedback-learning.js";
 import { createProjectSnapshot, migrateProject } from "../src/project.js";
 
-test("review select chooses nearby candidate without flooding connected image", () => {
+test("feedback selects at most 3 adjacent pixels by default, never floods long boundaries", () => {
   const w = 100, h = 100, mask = new Uint8Array(w * h);
   for (let x = 2; x < 98; x++) mask[50 * w + x] = 1;
-  for (let y = 2; y < 98; y++) mask[y * w + 50] = 1;
-  const picked = selectFeedbackSegment(mask, w, h, { x: 48, y: 51 });
-  assert.ok(picked && picked.indices.length > 0);
-  assert.ok(picked.indices.length <= 120, "review never selects entire connected grain graph");
-  assert.ok(picked.indices.every(p => mask[p] === 1));
-  assert.ok(picked.indices.every(p => Math.hypot(p % w - picked.anchor.x, Math.floor(p / w) - picked.anchor.y) <= 12));
+  const picked = selectFeedbackSegment(mask, w, h, { x: 48, y: 50 });
+  assert.deepEqual(picked.indices.length, 3);
+  assert.deepEqual(new Set(picked.indices).size, 3);
+  assert.ok(picked.indices.every(p => p >= 0 && p < mask.length && mask[p] === 1));
+  assert.equal(selectFeedbackSegment(mask, w, h, { x: 48, y: 50 }, { maxPixels: 1 }).indices.length, 1);
+  assert.equal(selectFeedbackSegment(mask, w, h, { x: 48, y: 50 }, { maxPixels: 5 }).indices.length, 5);
 });
 
-test("review does not turn unpredicted regions or exclusion into negative data", () => {
+test("junction click selects only the center pixel, never labels adjacent branches", () => {
+  const w = 35, h = 35, mask = new Uint8Array(w * h);
+  for (let x = 3; x < 32; x++) mask[17 * w + x] = 1;
+  for (let y = 3; y < 32; y++) mask[y * w + 17] = 1;
+  const choice = selectFeedbackSegment(mask, w, h, { x: 17, y: 17 }, { maxPixels: 9 });
+  assert.deepEqual(choice.indices, [17 * w + 17]);
+});
+
+test("thick/touching lines are not traversed when clicked", () => {
+  const w = 40, h = 40, mask = new Uint8Array(w * h);
+  for (let x = 4; x < 36; x++) {
+    mask[17 * w + x] = 1;
+    mask[18 * w + x] = 1;
+  }
+  const choice = selectFeedbackSegment(mask, w, h, { x: 15, y: 17 }, { maxPixels: 9 });
+  assert.equal(choice.indices.length, 1);
+});
+
+test("feedback snap is limited to 2px and never enters an excluded pixel", () => {
   const w = 40, h = 30, mask = new Uint8Array(w * h), excluded = new Uint8Array(w * h);
   mask[10 * w + 10] = 1;
   assert.equal(selectFeedbackSegment(mask, w, h, { x: 25, y: 25 }), null);
+  assert.equal(selectFeedbackSegment(mask, w, h, { x: 14, y: 10 }), null);
+  assert.equal(selectFeedbackSegment(mask, w, h, { x: 11, y: 10 }).indices.length, 1);
   excluded[10 * w + 10] = 1;
   assert.equal(selectFeedbackSegment(mask, w, h, { x: 10, y: 10 }, { exclusionMask: excluded }), null);
   assert.equal(selectFeedbackSegment(mask, w, h, { x: -100, y: 1 }), null);
