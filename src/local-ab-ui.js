@@ -402,6 +402,9 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     const move=Math.max(...points.map(p=>Math.hypot(p.x-points[0].x,p.y-points[0].y)));
     if(cancel||move<1.5)return;
     suppressClick=true;
+    // A normal pointer click is dispatched after pointerup. Do not let a
+    // suppressed drag accidentally suppress the user's next separate click.
+    setTimeout(() => { suppressClick=false; }, 0);
     const indices=rasterizeGuidedStroke(points,side==='a'?a:b,
       current.preview.width,current.preview.height,{
         snapRadius:2,roi,exclusionMask:current.exclusionMask,maxPixels:3000,
