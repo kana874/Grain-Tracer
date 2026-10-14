@@ -1,3 +1,12 @@
+# v0.8.0-alpha — Preference-based four-phase learning workflow (validation)
+
+- Phase 1: Adaptive A/B comparisons (UCB-like exploration of sensitivity/feature weights/negative evidence/minimum component/NMS). A winner becomes the next A champion; the next B is generated automatically. Both bad and undecidable do not force a winner. Prior same-image/same-feature-setting preference history resumes in the next session. This is parameter search, not neural training.
+- Phase 2: User-guided drag stroke follows candidate pixels within 2px of the path, avoids connected-component flood fill, is bounded to the selected ROI/exclusion mask, and stores the whole review as one undoable mask operation. Missing boundaries retain two-point annotation.
+- Phase 3: Active Learning ROI recommendation based on disagreement, unlabeled fraction, edge coverage and past comparisons; verified Validation/Test and provisional ROI areas are kept out of the candidate-learning ROI search.
+- Phase 4: Strict automatic adoption only after verified Validation ROI check (F1 gain >= 0.005, Recall/Precision drop <= 0.02, >=12 positive reference pixels). No Training ROI fallback and no Test data use. Explicit check/adopt button and opt-in automatic acceptance; rejected attempts do not touch live parameters. Adoption audit is persisted.
+- JSON preference votes contain only scalar settings, not image masks/classifier tensors. Existing v4 project format is preserved, with new preferenceAdoptions audit list and provenance of guided-stroke feedback.
+- Unit/regression tests cover strategy variety, stroke masks, withheld ROI protection, guard rejection/acceptance and project persistence. Real-image and interactive browser validation still required.
+
 # v0.7.0-alpha — Image Edge Recovery + Local A/B Review (validation)
 
 - 反射パディング（プレビュー外周24px）でRidge/Color/Dendriteを計算し、元プレビュー座標へクロップ。真の画像端でも特徴量を利用可能にした。
