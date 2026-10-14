@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   changeSetting, comparisonKey, proposePreferenceCandidate,
-  advancePreference, buildPreferenceVote, preferenceParameterSnapshot,
+  advancePreference, buildPreferenceVote, preferenceParameterSnapshot, recoverPreferenceChampion,
 } from "../src/preference-optimizer.js";
 import { rasterizeGuidedStroke } from "../src/stroke-review.js";
 import { recommendDisagreementRoi } from "../src/active-roi.js";
@@ -116,4 +116,18 @@ test("preference votes contain no large image-mask arrays",()=>{
     proposal:p,fingerprint:"t",roi:{x:0,y:0,width:30,height:30},round:2});
   assert.ok(JSON.stringify(v).length<1000);
   assert.equal(JSON.stringify(v).includes("exclusionMask"),false);
+});
+
+test("saved preference votes recover the best champion only on the matching source and feature configuration",()=>{
+  const candidate={...base,sensitivity:77};
+  const vote={schema:"graintracer-preference-v2",winner:"b",
+    aSettings:preferenceParameterSnapshot(base),bSettings:preferenceParameterSnapshot(candidate),
+    imageFingerprint:"image-1",featureOptions:{localEnabled:true},algorithmVersion:"v18",
+    eligibleForLearning:true};
+  assert.equal(recoverPreferenceChampion(base,[vote],"image-1",{localEnabled:true},"v18").sensitivity,77);
+  assert.equal(recoverPreferenceChampion(base,[vote],"other",{localEnabled:true},"v18").sensitivity,65);
+  assert.equal(recoverPreferenceChampion(base,[vote],"image-1",{localEnabled:false},"v18").sensitivity,65);
+  assert.equal(recoverPreferenceChampion(base,[vote],"image-1",{localEnabled:true},"v19").sensitivity,65);
+  assert.equal(recoverPreferenceChampion(base,[{...vote,eligibleForLearning:false}],
+    "image-1",{localEnabled:true},"v18").sensitivity,65);
 });
