@@ -1,3 +1,13 @@
+# v0.9.1-alpha — Dedicated Validation ROI editor and compact A/B Step ③
+
+- Added explicit Validation creation wizard. Draw new ROI → import candidate lines as editable draft → manually correct all boundaries → affirm complete → verified independent Validation ROI.
+- Incomplete regions are persisted as unverified; users can pause and resume. New Validation ROIs cannot overlap old Training ROIs, A/B votes, or saved manual feedback.
+- Editing is constrained to the ROI, and a stroke leaving the ROI is broken, preventing accidental cross-region labels. Draft import is one Undo step.
+- Validation evaluation now removes manual Negative labels inside Validation/Test when generating the baseline and proposal, reducing leakage into the held-out adoption guard.
+- Rearranged A/B Step ③ into one horizontal toolbar with A/B selection, judgement, stroke mode, Undo/Redo and small status line.
+- Project Format v4 and the v18 extraction algorithm remain unchanged; app/package/UI version v0.9.1-alpha.
+- Synthetic Node tests cover holdout conflicts and completion gates; real browser/BMP testing remains required.
+
 # v0.9.0-alpha — A/B-first workspace (six phases)
 
 - P1: A/B synchronized wheel zoom (25–800%, cursor-centered) and middle-drag pan. Coordinate transformations for accurate manual correction; left drag unchanged.
