@@ -1,11 +1,14 @@
 import { buildBoundaryMask } from './analysis.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { positionLocalRoi, withinLocalRoi, localAbCounts, filterLocalReview } from './local-ab.js';
+import { proposePreferenceCandidate, advancePreference, buildPreferenceVote, comparisonKey } from './preference-optimizer.js';
+import { rasterizeGuidedStroke } from './stroke-review.js';
+import { recommendDisagreementRoi } from './active-roi.js';
 
 // Local A/B operates on the analysis-preview coordinate grid. The same global
 // feature cache and exclusion mask are used for both candidates. A/B votes are
 // preference data, not true-positive ground-truth or F1.
-export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVote, onFeedback }) {
+export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVote, onFeedback, onAdopt }) {
   const openButton = document.getElementById('localAbButton');
   const dialog = document.createElement('dialog');
   dialog.className = 'local-ab-dialog';
@@ -22,8 +25,15 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '<option value="plus16">感度 +16</option><option value="toggleNms">NMS 切替</option>',
     '<option value="legacyEdge">旧・画像端処理（比較診断）</option>',
     '</select></label>',
-    '<button class="primary" data-k="generate" type="button">この条件で比較</button>',
-    '<p class="help">Aは現在の設定で再抽出した結果。Bは選んだ設定だけを変更し、同じ領域で比較します。学習やパラメータの自動適用は行いません。</p>',
+    '<label class="check-row"><input type="checkbox" data-k="adaptive" checked> 選好からB候補を自動生成</label>',
+    '<label class="check-row"><input type="checkbox" data-k="autoNext" checked> 選択後に次のA/Bを自動生成</label>',
+    '<label class="check-row"><input type="checkbox" data-k="autoRoi" checked> 次のROIも自動推薦</label>',
+    '<label class="check-row"><input type="checkbox" data-k="autoAdopt"> Validationで改善時だけ自動採用</label>',
+    '<button class="primary" data-k="generate" type="button">A/Bを比較</button>',
+    '<button type="button" data-k="nextRoi">次の評価ROIを推薦</button>',
+    '<button type="button" data-k="applyChampion">選択した最良設定を検証して採用</button>',
+    '<p data-k="proposalStatus" role="status" class="help">手動評価の間は「選択後に次のA/B」をOFFにしてください。</p>',
+    '<p class="help">選好学習ONではA=前回勝者、B=履歴に基づく新候補です。選好だけでは画素の正解は確定しません。採用には検証済みValidation ROIが必要で、Testは不使用です。</p>',
     '<p data-k="message" class="help" role="status">BMP読み込み後に開始できます。</p>',
     '</section><section class="local-ab-results">',
     '<div class="local-ab-controls"><label>同期倍率 <select data-k="zoom"><option value="1">100%</option><option value="2" selected>200%</option><option value="4">400%</option><option value="8">800%</option></select></label>',
@@ -37,6 +47,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '</div><div class="local-ab-manual"><strong>③ 選んだ候補を手動評価</strong>',
     '<p class="help">A/Bを選択後、該当する画像上でクリックします。「両方不正解」でも手動評価する候補を選べます。</p>',
     '<div><button type="button" data-k="judgeA">Aを修正</button><button type="button" data-k="judgeB">Bを修正</button></div>',
+    '<label class="check-row"><input type="checkbox" data-k="strokeMode" checked> ドラッグで線をまとめて評価（1操作でUndo）</label>',
     '<label>判定 <select data-k="tool"><option value="positive">正解</option><option value="negative">誤検出</option><option value="missing">検出漏れ（2点）</option></select></label>',
     '<label>一度の対象 <select data-k="pixels"><option value="1">1px</option><option value="3" selected>最大3px</option><option value="5">最大5px</option><option value="9">最大9px</option></select></label>',
     '<p data-k="reviewStatus" role="status">A/Bを選択してください。既存お手本へ部分ラベルとして保存されます。</p>',
@@ -47,6 +58,8 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   const original = document.createElement('canvas');
   let current = null, roi = null, a = null, b = null, active = null;
   let pending = null, request = 0;
+  let champion = null, challenger = null, proposal = null, localVotes = [];
+  let round = 0, lastWinner = null, stroke = null, suppressClick = false, lastVote = null;
   let busy = false, scrollLock = false;
   const candidateCanvas = { a: el('viewA'), b: el('viewB') };
   const hoverCanvas = { a: el('hoverA'), b: el('hoverB') };
@@ -141,6 +154,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     el('difference').textContent = 'Aのみ ' + counts.onlyA + 'px / Bのみ ' + counts.onlyB + 'px';
   }
   function variantOptions(base) {
+    if (el('adaptive').checked && challenger) return { ...challenger };
     const kind = el('variant').value;
     if (kind === 'plus8') return { ...base, sensitivity: bound(base.sensitivity + 8, 1, 100) };
     if (kind === 'minus8') return { ...base, sensitivity: bound(base.sensitivity - 8, 1, 100) };
@@ -148,21 +162,35 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     if (kind === 'toggleNms') return { ...base, centerlineNms: !base.centerlineNms };
     return { ...base, edgeFrameGuard: 1 };
   }
+  function prepareChallenger() {
+    if (!champion || !el('adaptive').checked) return;
+    const eligible = localVotes.filter(v => v.imageFingerprint === current?.fingerprint && v.eligibleForLearning !== false
+      && v.schema === 'graintracer-preference-v2');
+    proposal = proposePreferenceCandidate(champion, eligible, {round});
+    challenger = proposal?.parameters ?? null;
+    el('proposalStatus').textContent = proposal
+      ? '探索 '+(round+1)+'回：'+proposal.actionKey+' / A(前回勝者) 対 B(新候補)'
+      : 'これ以上、異なるB候補を生成できません。';
+  }
   async function generate() {
     if (!validContext() || busy) return;
     const myRequest = ++request;
     busy = true;
     a = b = null; clearVote();
+    if (el('adaptive').checked) {
+      prepareChallenger();
+      if (!challenger) { busy = false; report('候補生成に失敗しました。'); return; }
+    }
     const run = el('generate');
     run.disabled = true;
     report('特徴量とA/B候補を作成しています…');
     try {
       const features = await getFeatures();
       if (myRequest !== request || !validContext()) return;
-      const base = current.boundaryOptions;
+      const base = el('adaptive').checked ? champion : current.boundaryOptions;
       const maskA = await buildBoundaryMask(features, { ...base, onProgress: () => {} });
       if (myRequest !== request || !validContext()) return;
-      const old = el('variant').value === 'legacyEdge';
+      const old = !el('adaptive').checked && el('variant').value === 'legacyEdge';
       const variantFeatures = old ? await getLegacyFeatures() : features;
       const maskB = await buildBoundaryMask(variantFeatures, {
         ...variantOptions(base), onProgress: () => {},
@@ -170,6 +198,9 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       if (myRequest !== request || !validContext()) return;
       a = maskA; b = maskB;
       drawCandidates();
+      if (el('adaptive').checked)
+        el('proposalStatus').textContent = '試行 '+(round+1)+' / '+proposal.actionKey+
+          ' / 勝者に基づいて次の候補を生成します。';
       report('同一範囲で比較できます。選好は正解データではなく別の履歴として保存されます。');
     } catch (error) {
       console.error('local A/B', error);
