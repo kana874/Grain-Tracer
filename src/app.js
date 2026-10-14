@@ -6293,6 +6293,9 @@ function updateLocalAbStatus() {
 }
 const modeToggle=$("uiModeToggle");
 function setWorkspaceMode(advanced){
+  // A legacy pen may still be active when leaving advanced mode. Never
+  // leave a hidden Negative-drawing tool active in the normal workspace.
+  if(!advanced && state.tool==="negative-reference")setTool("pan");
   document.body.classList.toggle("focus-mode",!advanced);
   modeToggle.textContent=advanced?"A/B中心画面に戻す":"詳細機能を表示";
   modeToggle.setAttribute("aria-pressed",String(advanced));
