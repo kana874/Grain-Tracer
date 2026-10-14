@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.9.0-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.9.1-alpha">
 </head>
 <body class="focus-mode">
   <header class="app-header">
@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.0-alpha</div></div>
+    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.1-alpha</div></div>
   </header>
 
   <main class="layout">
@@ -129,6 +129,19 @@
         <p id="learningSummary" class="help" role="status">学習状況を読み込み中…</p>
         <button id="analyzeButton" class="full" type="button" disabled>全画像の粒界を更新</button>
         <p class="help">A/B中はROIのみ計算。全画像の更新は必要時だけ。</p>
+        <div class="validation-wizard" id="validationRoiWizard">
+          <h3>Validation ROIの作成</h3>
+          <button id="validationRoiStartButton" class="primary full" type="button" disabled>新しい検証領域を指定</button>
+          <button id="validationRoiResumeButton" class="full" type="button" disabled>未完了の領域を再開</button>
+          <div id="validationRoiReviewPanel" hidden>
+            <p class="help">範囲内の粒界を全て確認してください。「候補を下書きへ取り込む」で現設定の抽出結果を正解線の下書きに追加できます。誤検出を消し、検出漏れをお手本線で補正してください。</p>
+            <button id="validationRoiSeedButton" type="button" class="full">抽出候補を下書きに取り込む</button>
+            <label class="check-row validation-attest"><input id="validationRoiAttest" type="checkbox"> 領域内の全粒界・誤検出・欠落を目視で確認した</label>
+            <button id="validationRoiFinishButton" class="primary full" type="button">確認完了 → Validation登録</button>
+            <button id="validationRoiPauseButton" class="full" type="button">一時中断（未確認のまま保存）</button>
+          </div>
+          <p id="validationRoiCreateStatus" class="help" role="status">未完了ROIは検証に使用されません。A/B学習済みの範囲とは分けてください。</p>
+        </div>
         <h3>検証・診断</h3>
         <p class="help">検証したROIにValidationの役割を割り当ててください。Testは採用判定に使用しません。</p>
         <div class="subpanel">
@@ -395,7 +408,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.0-alpha","./src/project.js":"./src/project.js?v=0.9.0-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.0-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.0-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.0-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.0-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.0-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.0-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.0-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.0-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.0-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.0-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.0-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.0-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.0-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.0-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.9.0-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.1-alpha","./src/project.js":"./src/project.js?v=0.9.1-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.1-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.1-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.1-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.1-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.1-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.1-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.1-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.1-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.1-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.1-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.1-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.1-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.1-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.1-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.1-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.9.1-alpha"></script>
 </body>
 </html>
