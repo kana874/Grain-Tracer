@@ -302,13 +302,13 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       round++;
       lastWinner=winner;
     }
+    // The adoption toggle is independent of automatically generating the
+    // next pair, so users may stop to hand-label while keeping guard checks.
+    if (adaptive && winner === 'b' && el('autoAdopt').checked) await adoptChampion();
     if (!el('autoNext').checked || !adaptive) {
-      report('選好を保存しました。次へ進むにはA/Bを比較してください。');
+      report('選好を保存しました。手動評価後にA/Bを比較して続行できます。');
       return;
     }
-    // Automatic safe adoption is optional. Validation is always checked in
-    // the application callback, and Test masks never participate.
-    if (winner === 'b' && el('autoAdopt').checked) await adoptChampion();
     if (!validContext()) return;
     await generate();
     if (el('autoRoi').checked && validContext() && a && b) recommendRoi();
