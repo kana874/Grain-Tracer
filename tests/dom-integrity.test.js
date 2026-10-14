@@ -7,6 +7,8 @@ test("Batch1-3 controls exist exactly once in index.html", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   for (const id of [
     "feedbackCanvas",
+    "localAbButton",
+    "localAbStatus",
     "feedbackPositiveButton",
     "feedbackNegativeButton",
     "feedbackMissingButton",
