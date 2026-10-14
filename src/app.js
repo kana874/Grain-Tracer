@@ -4777,10 +4777,10 @@ function renderFeedbackHover(event) {
   }
   // Cursor ring indicates snapping location; only the solid pixels are labelled.
   ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = Math.max(0.6, Math.min(2, 1 / Math.max(state.scale, 0.1)));
+  ctx.lineWidth = Math.max(0.6, Math.min(8, 1.5 / Math.max(state.scale, 0.1)));
   ctx.beginPath();
   ctx.arc(candidate.anchor.x + 0.5, candidate.anchor.y + 0.5,
-    Math.max(2, Math.min(6, 3 / Math.max(state.scale, 0.5))), 0, Math.PI * 2);
+    Math.max(3, Math.min(32, 8 / Math.max(state.scale, 0.1))), 0, Math.PI * 2);
   ctx.stroke();
 }
 
