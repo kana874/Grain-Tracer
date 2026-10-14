@@ -1,6 +1,6 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
-import { summarizePreferenceLearning } from './local-ab-learning.js';
+import { summarizePreferenceLearning, summarizeValidationTrend } from './local-ab-learning.js';
 import { evaluatePreferenceAdoption } from './preference-adoption.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { segmentSeededRegions } from './region-segmentation.js';
@@ -5779,11 +5779,11 @@ function updateLocalAbStatus() {
   const status = $("learningSummary");
   if(status){
     const perf=localAbController.stats();
-    const last=state.preferenceAdoptions.at(-1);
+    const trend=summarizeValidationTrend(state.preferenceAdoptions);
     status.textContent="比較: "+perf.requests+"回 / キャッシュ命中 "+perf.cacheHits+
-      "回 / 直近100回の平均 "+Math.round(perf.averageMs)+"ms\n"+
-      "検証履歴 "+(summary.adopted+summary.rejected)+"件"+
-      (last?" / 直近: "+(last.accepted?"採用":"保留")+" ("+(last.reason??"")+")":"");
+      "回 / 最近100回の平均 "+Math.round(perf.averageMs)+"ms\n"+
+      "Validation: "+trend.status+" / "+trend.description+
+      "\n検証履歴 "+(summary.adopted+summary.rejected)+"件（採用 "+summary.adopted+"）";
   }
 }
 const modeToggle=$("uiModeToggle");
