@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.8.1-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.9.0-alpha">
 </head>
-<body>
+<body class="focus-mode">
   <header class="app-header">
     <div>
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.8.1-alpha</div>
+    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.0-alpha</div></div>
   </header>
 
   <main class="layout">
@@ -24,7 +24,7 @@
         <div id="dropZone" class="drop-zone">ここにBMPをドロップ</div>
       </section>
 
-      <section>
+      <section class="legacy-feature">
         <h2>画像情報</h2>
         <dl class="meta-grid">
           <dt>ファイル</dt><dd id="metaName">-</dd>
@@ -37,7 +37,7 @@
         </dl>
       </section>
 
-      <section>
+      <section class="legacy-feature">
         <h2>お手本の使い方</h2>
         <ol class="guide-list">
           <li>「お手本線」で正しい粒界をなぞる</li>
@@ -121,7 +121,35 @@
     </section>
 
     <aside class="panel right-panel">
-      <section>
+      <section class="focus-primary">
+        <h2>A/B学習ワークスペース</h2>
+        <p class="help">良い候補を選び、必要な線だけドラッグで補正。複数ROIの選好を統合してValidationで安全に検証します。</p>
+        <button id="localAbButton" class="primary full" type="button" disabled>A/B比較・手動補正を開く</button>
+        <p id="localAbStatus" class="help metric-detail">A/B選好履歴: 0件</p>
+        <p id="learningSummary" class="help" role="status">学習状況を読み込み中…</p>
+        <button id="analyzeButton" class="full" type="button" disabled>全画像の粒界を更新</button>
+        <p class="help">A/B中はROIのみ計算。全画像の更新は必要時だけ。</p>
+        <h3>検証・診断</h3>
+        <p class="help">検証したROIにValidationの役割を割り当ててください。Testは採用判定に使用しません。</p>
+        <div class="subpanel">
+          <strong class="subpanel-title">完全評価ROIの役割</strong>
+          <label class="select-row">
+            <span>選択ROI</span>
+            <select id="roiRoleSelect" disabled>
+              <option value="">未設定（旧Project互換）</option>
+              <option value="training">Training</option>
+              <option value="validation">Validation（Tune禁止）</option>
+              <option value="test">Test</option>
+            </select>
+          </label>
+          <p id="roiRoleStatus" class="help metric-detail">ROIを選択すると役割を設定できます。</p>
+          <p class="help">TrainingはTuneに使用、Validationは候補選択・Guardに使用、Testは最終評価専用です。Test ROIはTune・Guardへ混入しません。</p>
+        </div>
+
+
+        <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを保存</button>
+      </section>
+      <section class="legacy-feature">
         <h2>粒界候補抽出</h2>
         <p class="help">Dark Ridge・方向付き色差・デンドライト方向差・局所適応を組み合わせて、低解像度プレビュー上で候補を抽出します。画像端では利用可能な特徴量だけでスコアを再正規化し、最外周1pxだけは画像枠誤検出を抑えるため保護します。</p>
 
@@ -179,13 +207,12 @@
         </div>
 
         <label class="control-row"><span>線の不透明度</span><output id="overlayOpacityValue">90</output><input id="overlayOpacity" type="range" min="10" max="100" value="90"></label>
-        <button id="analyzeButton" class="primary full" type="button" disabled>プレビュー粒界抽出</button>
+
       </section>
 
-      <section>
+      <section class="legacy-feature">
 <h2>簡易フィードバック学習</h2>
-        <button id="localAbButton" class="primary full" type="button" disabled>局所A/B比較モードを開く</button>
-        <p id="localAbStatus" class="help metric-detail">A/B選好履歴: 0件</p>
+
         <p class="help">A/Bを選ぶと次の候補を自動生成。未評価ROIの推薦、一筆なぞりによる一括修正、Validation ROIで改善した設定だけの採用に対応します。A/Bはプレビュー解像度です。</p>
         <p class="help">上部で「候補は正解」「候補は誤検出」を選び、マウスを載せると今回選ばれる画素がプレビュー表示されます。異なる線が含まれる場合は選択画素数を減らしてください。枝分かれ・近接線では自動延長を止めます。検出漏れは2点指定。Undoで取り消せます。</p>
         <label class="select-row"><span>1回の評価範囲</span><select id="feedbackSelectionPixels" aria-label="正解・誤検出を1回で評価する最大候補画素数"><option value="1">1画素（精密）</option><option value="3" selected>最大3画素（標準）</option><option value="5">最大5画素</option><option value="9">最大9画素</option></select></label>
@@ -195,7 +222,7 @@
         <p class="help">この評価は完全評価ROIを作らない部分ラベルです。精度の正式なPrecision/F1は完全確認済みROIで別途評価してください。Validation/Test画像では再調整できません。クリックだけではモデルの再学習は行わず、上の再調整ボタンで既存Auto Tuneを実行します。</p>
       </section>
 
-      <section>
+      <section class="legacy-feature">
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
         <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
@@ -203,21 +230,6 @@
         <label class="check-row"><input id="borderAssistedFill" type="checkbox"> 画像端を閉境界として許可</label>
         <p class="help">ONで追加したFillだけ、画像端を仮想境界として保存します。巨大領域・反対側2辺への接触・黄色線との接触不足は安全のため拒否します。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
-
-        <div class="subpanel">
-          <strong class="subpanel-title">完全評価ROIの役割</strong>
-          <label class="select-row">
-            <span>選択ROI</span>
-            <select id="roiRoleSelect" disabled>
-              <option value="">未設定（旧Project互換）</option>
-              <option value="training">Training</option>
-              <option value="validation">Validation（Tune禁止）</option>
-              <option value="test">Test</option>
-            </select>
-          </label>
-          <p id="roiRoleStatus" class="help metric-detail">ROIを選択すると役割を設定できます。</p>
-          <p class="help">TrainingはTuneに使用、Validationは候補選択・Guardに使用、Testは最終評価専用です。Test ROIはTune・Guardへ混入しません。</p>
-        </div>
 
         <div class="subpanel optimize-panel">
           <strong class="subpanel-title">自動最適化 v0.5.0</strong>
@@ -301,7 +313,7 @@
         <div id="fullRoiMetrics" class="roi-metrics">自動最適化の精密評価ガイドでROIを確認すると True Precision / Recall / F1 を表示します。</div>
       </section>
 
-      <section>
+      <section class="legacy-feature">
         <h2>診断出力</h2>
         <p class="help">ChatGPTで改善点を分析するための診断JSONと比較・特徴画像を書き出します。</p>
         <div class="subpanel">
@@ -310,7 +322,7 @@
           <p id="baselineStatus" class="help metric-detail">未記録</p>
           <p class="help">Recall @1/2/3/4 px、Negative Leakage、ROI Precision/Recall/F1、Alignment、Closure、Open@3、Boundary/Unknown画素数をProjectへ保存します。</p>
         </div>
-        <button id="exportDiagnosticsButton" class="full" type="button" disabled>診断ZIPを書き出す</button>
+
         <p class="help">ZIP出力: manifest.json / diagnostic.json v20 / preview.jpg / comparison.png / ridge.png / dendrite.png / reference.png / non-boundary.png / exclusion.png / full-roi.png</p>
         <details>
           <summary>個別ファイル出力</summary>
@@ -319,12 +331,12 @@
         </details>
       </section>
 
-      <section>
+      <section class="legacy-feature">
         <h2>評価履歴</h2>
         <ol id="historyList" class="history-list"></ol>
       </section>
 
-      <section>
+      <section class="legacy-feature">
         <h2>v0.5 状態</h2>
         <ul class="check-list">
           <li class="done">Multi-scale Dark Ridge</li>
@@ -383,7 +395,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.8.1-alpha","./src/project.js":"./src/project.js?v=0.8.1-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.8.1-alpha","./src/analysis.js":"./src/analysis.js?v=0.8.1-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.8.1-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.8.1-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.8.1-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.8.1-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.8.1-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.8.1-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.8.1-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.8.1-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.8.1-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.0-alpha","./src/project.js":"./src/project.js?v=0.9.0-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.0-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.0-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.0-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.0-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.0-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.0-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.0-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.0-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.0-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.0-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.9.0-alpha"></script>
 </body>
 </html>
