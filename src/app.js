@@ -360,10 +360,11 @@ function recordPerformance(name, startedAt) {
   return state.performance[name];
 }
 
+let localAbController = null;
 function performanceSnapshot() {
   return {
     ...state.performance,
-    localAb: typeof localAbController !== "undefined" ? localAbController.stats() : null,
+    localAb: localAbController?.stats() ?? null,
     previewPixels: state.preview ? state.preview.width * state.preview.height : 0,
     closedFillSeedCount: state.closedNegativeSeeds.length,
     borderAssistedFillSeedCount: state.closedNegativeSeeds.filter(seed => seed?.borderAssisted).length,
@@ -5731,7 +5732,7 @@ async function guardedAdoptLocalPreference(chosen, fingerprint) {
   }
 }
 
-const localAbController = setupLocalAB({
+localAbController = setupLocalAB({
   getSnapshot: () => state.preview && state.sourceFingerprint ? {
     preview: state.preview,
     fingerprint: state.sourceFingerprint,
