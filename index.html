@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.6.3-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.6.4-alpha">
 </head>
 <body>
   <header class="app-header">
@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.6.3-alpha</div>
+    <div class="version">v0.6.4-alpha</div>
   </header>
 
   <main class="layout">
@@ -83,6 +83,10 @@
         <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>線消去</button>
         <button id="exclusionToolButton" class="tool-button exclusion-tool" type="button" disabled>除外矩形</button>
         <button id="fullRoiToolButton" class="tool-button roi-tool" type="button" disabled>完全評価ROI</button>
+        <span class="toolbar-separator"></span>
+        <button id="feedbackPositiveButton" class="tool-button feedback-tool" type="button" disabled>候補は正解</button>
+        <button id="feedbackNegativeButton" class="tool-button feedback-tool" type="button" disabled>候補は誤検出</button>
+        <button id="feedbackMissingButton" class="tool-button feedback-tool" type="button" disabled>欠落を指定（2点）</button>
         <button id="undoReferenceButton" type="button" title="注釈を元に戻す (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="redoReferenceButton" type="button" title="お手本をやり直す (Ctrl+Y / Ctrl+Shift+Z)" disabled>↷ Redo</button>
         <span class="toolbar-separator"></span>
@@ -175,6 +179,14 @@
 
         <label class="control-row"><span>線の不透明度</span><output id="overlayOpacityValue">90</output><input id="overlayOpacity" type="range" min="10" max="100" value="90"></label>
         <button id="analyzeButton" class="primary full" type="button" disabled>プレビュー粒界抽出</button>
+      </section>
+
+      <section>
+        <h2>簡易フィードバック学習</h2>
+        <p class="help">先に「解析」を実行し、上部の「候補は正解」または「候補は誤検出」で短い抽出線をクリックしてください。抽出漏れは「欠落を指定」を選び、始点・終点の順に2回クリックします。中ボタンドラッグで移動でき、Undoで取り消せます。</p>
+        <button id="feedbackTuneButton" class="primary full" type="button" disabled>評価結果を使って再調整（Auto Tune）</button>
+        <p id="feedbackStatus" class="help metric-detail" role="status">評価履歴: 正解 0 / 誤検出 0 / 検出漏れ 0</p>
+        <p class="help">この評価は完全評価ROIを作らない部分ラベルです。精度の正式なPrecision/F1は完全確認済みROIで別途評価してください。Validation/Test画像では再調整できません。クリックだけではモデルの再学習は行わず、上の再調整ボタンで既存Auto Tuneを実行します。</p>
       </section>
 
       <section>
@@ -354,6 +366,7 @@
           <li class="done">Safe / Extended Gap 自動採用Guard</li>
           <li class="done">Auto Tune v2 processed guard / processed Ablation</li>
           <li class="done">除外矩形の移動・リサイズ・削除</li>
+          <li class="done">クリック評価（正解・誤検出・2点欠落）→ 部分ラベル蓄積 → Auto Tune</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
         </ul>
@@ -361,7 +374,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.6.3-alpha","./src/project.js":"./src/project.js?v=0.6.3-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.6.3-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.6.3-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.6.4-alpha","./src/project.js":"./src/project.js?v=0.6.4-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.6.4-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.6.4-alpha"></script>
 </body>
 </html>
