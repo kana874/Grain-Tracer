@@ -2297,6 +2297,154 @@ function setSelectedRoiEvaluationRole(value) {
   updateControls();
 }
 
+// Validation ROI editor: a draft is never used for Validation adoption until
+// the user has checked the entire region and explicitly attested completion.
+function validationEditingRect() {
+  const draft=state.validationDraft;
+  return draft?.phase==='editing' ? state.fullEvaluationRois[draft.index] ?? null : null;
+}
+function refreshValidationWizardControls() {
+  const hasPreview=Boolean(state.preview),draft=state.validationDraft;
+  const editing=Boolean(validationEditingRect());
+  const start=$("validationRoiStartButton"),resume=$("validationRoiResumeButton");
+  const unfinished=state.fullEvaluationRois.findIndex(
+    r=>r?.source?.startsWith("validation-wizard")&&r.verified===false&&r.evaluationRole==="validation");
+  start.disabled=state.busy||!hasPreview||Boolean(draft);
+  resume.disabled=state.busy||!hasPreview||Boolean(draft)||unfinished<0;
+  $("validationRoiReviewPanel").hidden=!editing;
+  $("validationRoiSeedButton").disabled=state.busy||!editing;
+  $("validationRoiFinishButton").disabled=state.busy||!editing;
+  $("validationRoiPauseButton").disabled=state.busy||!editing;
+  if(draft?.phase==="selecting")$("validationRoiCreateStatus").textContent=
+    "画像上で、これまでA/B学習に使っていない範囲をドラッグしてください。";
+  else if(editing){
+    const roi=validationEditingRect();
+    const pixels=referencePixelsInRect(state.referenceCenterline,state.preview.width,
+      state.preview.height,roi,state.exclusionMask);
+    $("validationRoiCreateStatus").textContent="未確認 Validation ROI #"+(draft.index+1)+
+      " / 正解線 "+pixels+"px。抽出候補を取り込むか、お手本線・非粒界線で修正してから確認完了してください。";
+  }
+}
+function startValidationRoiWizard() {
+  if(!state.preview||state.busy||state.validationDraft)return false;
+  if(!canTuneImage(state.imageEvaluationRole)){
+    setStatus("Validation/Test画像では新しい検証用お手本を作成できません。");
+    return false;
+  }
+  if(state.precisionGuide.active){setStatus("精密評価ガイドを先に終了してください。");return false;}
+  state.validationDraft={phase:"selecting",index:null};
+  $("validationRoiAttest").checked=false;
+  setTool("full-roi");
+  refreshValidationWizardControls();
+  setStatus("Validation用の新規ROIを画像上でドラッグしてください。過去のA/B学習領域・既存ROIとは重ねないでください。");
+  return true;
+}
+function resumeValidationRoiWizard() {
+  if(!state.preview||state.busy||state.validationDraft)return false;
+  const selected=state.selectedFullRoiIndex;
+  const eligible=i=>state.fullEvaluationRois[i]?.verified===false&&
+    state.fullEvaluationRois[i]?.evaluationRole==="validation"&&
+    state.fullEvaluationRois[i]?.source?.startsWith("validation-wizard");
+  const index=eligible(selected)?selected:state.fullEvaluationRois.findIndex((_,i)=>eligible(i));
+  if(index<0)return false;
+  state.validationDraft={phase:"editing",index};
+  state.selectedFullRoiIndex=index;
+  $("validationRoiAttest").checked=false;
+  setTool("reference");
+  focusPreviewRect(state.fullEvaluationRois[index]);
+  rebuildFullRoiLayer();
+  refreshValidationWizardControls();
+  setStatus("未完了のValidation ROI #"+(index+1)+" を再開しました。");
+  return true;
+}
+function pauseValidationRoiWizard() {
+  if(!state.validationDraft)return;
+  state.validationDraft=null;
+  $("validationRoiAttest").checked=false;
+  setTool("pan");
+  rebuildFullRoiLayer();
+  refreshValidationWizardControls();
+  scheduleAutosave();
+  setStatus("Validation ROI作成を一時中断しました。未確認のROIは採用判定に使用しません。");
+}
+async function seedValidationRoiFromCandidate() {
+  const rect=validationEditingRect();
+  if(!rect||state.busy||!state.preview)return;
+  const fingerprint=state.sourceFingerprint;
+  const {x0,y0,x1,y1}=rect;
+  const roi={x:x0,y:y0,width:x1-x0+1,height:y1-y0+1};
+  setBusy(true);
+  try{
+    const features=await ensureFeatures();
+    if(fingerprint!==state.sourceFingerprint||validationEditingRect()!==rect) return;
+    const predicted=await buildLocalPrediction(features,roi,currentBoundaryOptions());
+    if(fingerprint!==state.sourceFingerprint||validationEditingRect()!==rect)return;
+    const tracker=createReferenceEditTracker();
+    let count=0;
+    for(let y=0;y<roi.height;y++){
+      for(let x=0;x<roi.width;x++){
+        const idx=y*roi.width+x;
+        if(!predicted.mask[idx])continue;
+        const px=x+roi.x,py=y+roi.y,p=py*state.preview.width+px;
+        if(state.exclusionMask?.[p]||state.negativeCenterline?.[p])continue;
+        paintReferenceCenterlineSegment(state.referenceCenterline,
+          state.preview.width,state.preview.height,{x:px,y:py},{x:px,y:py},
+          {erase:false},tracker);
+        count++;
+      }
+    }
+    const edit=finalizeReferenceEdit(state.referenceCenterline,tracker);
+    if(edit){
+      commitReferenceHistory({kind:"mask-edit",parts:[{layer:"reference",entry:edit}]});
+      invalidateAfterReferenceEdit();
+      refreshReferenceDirty(edit.bounds);
+      renderNegativeCanvas(false,true);
+      recalcAnnotationCounts();
+      updateMetrics();
+      scheduleAutosave();
+    }
+    const before={...rect};
+    rect.seededFrom="analysis-candidate";rect.seedPixels=count;
+    rect.seededAt=new Date().toISOString();
+    commitReferenceHistory({kind:"roi-edit",index:state.validationDraft.index,
+      before,after:{...rect}});
+    $("validationRoiAttest").checked=false;
+    setStatus("候補線 "+count+"px を下書きへ取り込みました。誤検出は非粒界線で除き、欠落をお手本線で補ってください。");
+  }catch(error){
+    console.error("Validation ROI seed",error);
+    setStatus("候補の取り込みに失敗: "+error.message,0);
+  }finally{setBusy(false);refreshValidationWizardControls();}
+}
+function verifyValidationWizardRoi() {
+  const rect=validationEditingRect();
+  if(!rect||state.busy||!state.preview)return;
+  const result=canVerifyValidationRoi({
+    rect,referenceCenterline:state.referenceCenterline,
+    width:state.preview.width,height:state.preview.height,
+    excluded:state.exclusionMask,attested:$("validationRoiAttest").checked,
+    existingRois:state.fullEvaluationRois,abReviews:state.localAbReviews,
+    ignoreIndex:state.validationDraft.index,minReferencePixels:20,
+  });
+  if(!result.ok){
+    setStatus("Validation登録不可: "+result.reason);
+    $("validationRoiCreateStatus").textContent=result.reason;
+    return;
+  }
+  const before={...rect},index=state.validationDraft.index;
+  rect.verified=true;rect.verifiedAt=new Date().toISOString();
+  rect.verifiedReferencePixels=result.referencePixels;
+  rect.source="validation-wizard-confirmed";
+  rect.completedByUser=true;
+  commitReferenceHistory({kind:"roi-edit",index,before,after:{...rect}});
+  state.validationDraft=null;
+  $("validationRoiAttest").checked=false;
+  setTool("pan");
+  rebuildFullRoiLayer();invalidateEvaluationOnly();
+  updateControls();scheduleAutosave();
+  setStatus("Validation ROI #"+(index+1)+" の登録完了。正解線 "+result.referencePixels+
+    "px。A/B最適化の独立した採用判定に利用します。");
+  $("validationRoiCreateStatus").textContent="登録完了。独立したValidation領域として保存されました。";
+}
 function setImageEvaluationRole(value) {
   state.imageEvaluationRole = normalizeImageEvaluationRole(value);
   updateEvaluationRoleControls();
@@ -5344,6 +5492,11 @@ function deleteSelectedRect(kind) {
   return true;
 }
 
+$("validationRoiStartButton").addEventListener("click",startValidationRoiWizard);
+$("validationRoiResumeButton").addEventListener("click",resumeValidationRoiWizard);
+$("validationRoiSeedButton").addEventListener("click",seedValidationRoiFromCandidate);
+$("validationRoiFinishButton").addEventListener("click",verifyValidationWizardRoi);
+$("validationRoiPauseButton").addEventListener("click",pauseValidationRoiWizard);
 els.fileInput.addEventListener("change", event => loadBmp(event.target.files?.[0]));
 els.projectInput.addEventListener("change", event => importProjectFile(event.target.files?.[0]));
 els.fitButton.addEventListener("click", fitToViewer);
