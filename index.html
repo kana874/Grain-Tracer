@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.9.3-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.9.4-alpha">
 </head>
 <body class="focus-mode">
   <header class="app-header">
@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.3-alpha</div></div>
+    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.4-alpha</div></div>
   </header>
 
   <main class="layout">
@@ -41,8 +41,9 @@
         <h2>お手本の使い方</h2>
         <ol class="guide-list">
           <li>「お手本線」で正しい粒界をなぞる</li>
-          <li>「非粒界線」で粒内模様・傷など誤検出してほしくない線を教える</li>
-          <li>粒を黄色線で囲ったら「閉領域→非粒界」で内側をクリックし、高信頼Negativeとして塗る。画像端と黄色線で閉じる粒は「画像端を閉境界として許可」を使える</li>
+          <li>「お手本線」で囲んだ粒の内側を「閉領域→非粒界」でクリックし、非粒界領域として塗りつぶす</li>
+          <li>誤った線は「線消去」で修正。画像端を使った閉領域は詳細設定の「画像端を閉境界として許可」を使用できる</li>
+          <li>線で直接非粒界を指定する旧機能は、必要な場合だけ「詳細機能を表示」で使用できる</li>
           <li>スケールバー・文字などは「除外矩形」で解析対象外にする</li>
           <li>「比較」「Auto Tune v2」で判定との差を確認・最適化する</li>
           <li>注釈ツール中も中ボタンドラッグで画面移動できる</li>
@@ -80,9 +81,9 @@
       <div class="toolbar">
         <button id="panToolButton" class="tool-button active" type="button" disabled>移動</button>
         <button id="referenceToolButton" class="tool-button" type="button" disabled>お手本線</button>
-        <button id="negativeToolButton" class="tool-button negative-tool" type="button" disabled>非粒界線</button>
-        <button id="closedNegativeFillToolButton" class="tool-button negative-tool" type="button" disabled>閉領域→非粒界</button>
         <button id="eraseReferenceToolButton" class="tool-button" type="button" disabled>線消去</button>
+        <button id="closedNegativeFillToolButton" class="tool-button negative-tool" type="button" title="お手本線で囲んだ粒の内側をクリックして非粒界化" disabled>閉領域→非粒界</button>
+        <button id="negativeToolButton" class="tool-button negative-tool" type="button" title="旧方式：線で非粒界を指定（詳細モードのみ）" disabled>非粒界線（詳細）</button>
         <button id="exclusionToolButton" class="tool-button exclusion-tool" type="button" disabled>除外矩形</button>
         <button id="fullRoiToolButton" class="tool-button roi-tool" type="button" disabled>完全評価ROI</button>
         <span class="toolbar-separator"></span>
@@ -153,7 +154,7 @@
           <button id="validationRoiResumeButton" class="full" type="button" disabled>未完了の領域を再開</button>
           <button id="validationRoiCancelSelectionButton" class="full" type="button" hidden>範囲指定を中止</button>
           <div id="validationRoiReviewPanel" hidden>
-            <p class="help">範囲内の粒界を全て確認してください。「候補を下書きへ取り込む」で現設定の抽出結果を正解線の下書きに追加できます。誤検出を消し、検出漏れをお手本線で補正してください。</p>
+            <p class="help">範囲内の全粒界を確認してください。「抽出候補を下書きに取り込む」→「線消去」で誤線を消す→「お手本線」で欠落を補う→「閉領域→非粒界」で粒の内側を塗る、の順に作業できます。ROI外にはみ出す塗りつぶしは拒否されます。</p>
             <button id="validationRoiSeedButton" type="button" class="full">抽出候補を下書きに取り込む</button>
             <label class="check-row validation-attest"><input id="validationRoiAttest" type="checkbox"> 領域内の全粒界・誤検出・欠落を目視で確認した</label>
             <button id="validationRoiFinishButton" class="primary full" type="button">確認完了 → Validation登録</button>
@@ -258,7 +259,7 @@
         <h2>お手本比較・自動調整</h2>
         <label class="control-row"><span>お手本線幅＝判定幅</span><output id="referenceBrushValue">5</output><input id="referenceBrush" type="range" min="1" max="15" step="2" value="5"></label>
         <label class="control-row"><span>お手本線の不透明度</span><output id="referenceOpacityValue">50</output><input id="referenceOpacity" type="range" min="10" max="100" value="50"></label>
-        <p class="help">黄色＝粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝確認済み完全評価ROI、黄破線＝精密評価候補です。「閉領域→非粒界」は黄色線で囲った粒の内側をクリックして使います。未記入領域はUnknownです。通常の調整は下の「自動最適化」だけで実行できます。</p>
+        <p class="help">黄色＝お手本粒界、オレンジ＝非粒界、灰色＝解析除外、青枠＝確認済み完全評価ROI。標準操作は「お手本線」→「線消去」→「閉領域→非粒界」です。粒の内側をクリックすると一括して非粒界化します。Validation作成中はROI外へ広がる候補を拒否します。未記入部分はUnknownのままです。必要なときだけ「非粒界線（詳細）」で直接線指定ができます。</p>
         <label class="check-row"><input id="borderAssistedFill" type="checkbox"> 画像端を閉境界として許可</label>
         <p class="help">ONで追加したFillだけ、画像端を仮想境界として保存します。巨大領域・反対側2辺への接触・黄色線との接触不足は安全のため拒否します。</p>
         <label class="control-row"><span>比較範囲</span><output id="reviewRadiusValue">18</output><input id="reviewRadius" type="range" min="6" max="40" value="18"></label>
@@ -427,7 +428,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.3-alpha","./src/project.js":"./src/project.js?v=0.9.3-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.3-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.3-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.3-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.3-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.3-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.3-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.3-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.3-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.3-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.3-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.3-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.3-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.3-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.3-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.3-alpha","./src/project-backup.js":"./src/project-backup.js?v=0.9.3-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.9.3-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.4-alpha","./src/project.js":"./src/project.js?v=0.9.4-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.4-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.4-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.4-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.4-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.4-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.4-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.4-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.4-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.4-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.4-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.4-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.4-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.4-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.4-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.4-alpha","./src/project-backup.js":"./src/project-backup.js?v=0.9.4-alpha","./src/validation-fill-guard.js":"./src/validation-fill-guard.js?v=0.9.4-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.9.4-alpha"></script>
 </body>
 </html>
