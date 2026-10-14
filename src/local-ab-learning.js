@@ -54,3 +54,18 @@ export function summarizePreferenceLearning(votes=[],adoptions=[]){
     adopted:adoptions.filter(x=>x.accepted).length,
     rejected:adoptions.filter(x=>!x.accepted).length};
 }
+
+export function summarizeValidationTrend(adoptions=[]){
+  const last=adoptions.at(-1);
+  if(!last?.before || !last?.after)return {status:'未検証',delta:null,f1:null,
+    description:last?.reason??'確認済みValidation ROIが必要'};
+  const before=Number(last.before.f1),after=Number(last.after.f1);
+  if(!Number.isFinite(before)||!Number.isFinite(after))
+    return {status:'未検証',delta:null,f1:null,description:'Validation F1不明'};
+  const delta=after-before;
+  const status=delta>.005?'改善':delta<-.005?'悪化':'停滞';
+  return {status,delta,f1:after,description:
+    'Validation F1 '+(before*100).toFixed(2)+'% → '+(after*100).toFixed(2)+
+    '% ('+(delta>=0?'+':'')+(delta*100).toFixed(2)+'pt)'+
+    (last.accepted?' 採用済み':' 未採用')};
+}
