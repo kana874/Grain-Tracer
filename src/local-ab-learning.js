@@ -6,18 +6,28 @@ function roiCell(roi,cell=128) {
 }
 export function aggregatePreferenceAcrossRois(champion,challenger,votes=[],options={}){
   const aKey=comparisonKey(champion),bKey=comparisonKey(challenger);
-  const evidence=new Map();
+  const evidence=[];
   for(const vote of votes){
     if(vote?.eligibleForLearning===false || vote?.imageFingerprint!==options.fingerprint ||
       vote?.algorithmVersion!==options.algorithmVersion ||
       JSON.stringify(vote.featureOptions??{})!==JSON.stringify(options.featureOptions??{}) ||
       vote.aKey!==aKey || vote.bKey!==bKey || !vote.roi)continue;
-    // At most one vote per spatial cell; the most recent decision supersedes
-    // duplicate repeats and prevents one small ROI dominating global search.
-    evidence.set(roiCell(vote.roi,Math.max(64,options.cellSize??128)),vote);
+    // Two heavily overlapping ROIs do not count as independent evidence.
+    // The most recent judgment replaces older decisions in the same patch.
+    const overlap=(rect1,rect2)=>{
+      const x=Math.max(0,Math.min(rect1.x+rect1.width,rect2.x+rect2.width)-
+        Math.max(rect1.x,rect2.x));
+      const y=Math.max(0,Math.min(rect1.y+rect1.height,rect2.y+rect2.height)-
+        Math.max(rect1.y,rect2.y));
+      return x*y/Math.max(1,Math.min(
+        rect1.width*rect1.height,rect2.width*rect2.height));
+    };
+    const existing=evidence.findIndex(v=>overlap(v.roi,vote.roi)>.25);
+    if(existing>=0)evidence[existing]=vote;
+    else evidence.push(vote);
   }
   let a=0,b=0,neither=0,uncertain=0;
-  for(const v of evidence.values()){
+  for(const v of evidence){
     if(v.winner==='a')a++;
     else if(v.winner==='b')b++;
     else if(v.winner==='neither')neither++;
@@ -25,7 +35,7 @@ export function aggregatePreferenceAcrossRois(champion,challenger,votes=[],optio
   }
   const threshold=Math.max(2,Number(options.minDistinctRois??2));
   const decided=b>=threshold&&b>=a+1?'b':a>=threshold&&a>=b+1?'a':null;
-  return {winner:decided,distinctRois:evidence.size,a,b,neither,uncertain,
+  return {winner:decided,distinctRois:evidence.length,a,b,neither,uncertain,
     sufficient:decided!==null,requiredDistinctRois:threshold};
 }
 export function evaluateManualLabelEvidence(maskA,maskB,width,height,roi,positive,negative,options={}){
