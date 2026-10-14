@@ -3338,6 +3338,18 @@ async function exportDiagnostics(mode = "zip") {
       classifier: state.classifier,
       hysteresis: state.lastHysteresis,
     });
+    // A diagnostic summary is an audit trail, not a complete-label metric.
+    report.feedbackReview = {
+      schema: "graintracer-feedback-review-v1",
+      labelSemantics: "partial-positive-negative-unknown",
+      reviewedCount: state.feedbackReviews.length,
+      counts: {
+        positive: state.feedbackReviews.filter(item => item.kind === "positive").length,
+        negative: state.feedbackReviews.filter(item => item.kind === "negative").length,
+        missing: state.feedbackReviews.filter(item => item.kind === "missing").length,
+      },
+      recentReviews: state.feedbackReviews.slice(-100),
+    };
 
     const comparison = renderComparisonOverlay(
       state.analysisMask,
