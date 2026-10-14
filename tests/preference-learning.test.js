@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   changeSetting, comparisonKey, proposePreferenceCandidate,
-  advancePreference, buildPreferenceVote,
+  advancePreference, buildPreferenceVote, preferenceParameterSnapshot,
 } from "../src/preference-optimizer.js";
 import { rasterizeGuidedStroke } from "../src/stroke-review.js";
 import { recommendDisagreementRoi } from "../src/active-roi.js";
@@ -103,4 +103,17 @@ test("legacy project keeps format v4 while preserving v2 votes and adoption audi
   assert.deepEqual(migrated.localAbReviews,votes);
   assert.deepEqual(migrated.preferenceAdoptions,audits);
   assert.deepEqual(migrateProject({...project,preferenceAdoptions:undefined}).preferenceAdoptions,[]);
+});
+
+test("preference votes contain no large image-mask arrays",()=>{
+  const withMasks={...base,negativeMask:new Uint8Array(100000),
+    exclusionMask:new Uint8Array(100000),classifierModel:{weights:Array(100).fill(3)}};
+  const compact=preferenceParameterSnapshot(withMasks);
+  assert.equal(compact.negativeMask,undefined);
+  assert.equal(compact.classifierModel,undefined);
+  const p=proposePreferenceCandidate(withMasks,[]);
+  const v=buildPreferenceVote({champion:withMasks,challenger:p.parameters,winner:"b",
+    proposal:p,fingerprint:"t",roi:{x:0,y:0,width:30,height:30},round:2});
+  assert.ok(JSON.stringify(v).length<1000);
+  assert.equal(JSON.stringify(v).includes("exclusionMask"),false);
 });
