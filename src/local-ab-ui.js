@@ -49,14 +49,15 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '</div><div class="local-ab-votes"><strong>② 良い方を選択（選好履歴へ保存）</strong>',
     '<button type="button" data-vote="a">Aが良い</button><button type="button" data-vote="b">Bが良い</button>',
     '<button type="button" data-vote="neither">両方不正解</button><button type="button" data-vote="uncertain">判断不能</button>',
-    '</div><div class="local-ab-manual"><strong>③ 選んだ候補を手動評価</strong>',
-    '<div class="local-ab-undo-bar"><button type="button" data-k="undo" title="直前の注釈を戻す (Ctrl+Z)">↶ Undo</button><button type="button" data-k="redo" title="注釈をやり直す (Ctrl+Y / Ctrl+Shift+Z)">↷ Redo</button><span data-k="undoStatus" class="help"></span></div>',
-    '<p class="help">A/Bを選択後、該当する画像上でクリックします。「両方不正解」でも手動評価する候補を選べます。</p>',
-    '<div><button type="button" data-k="judgeA">Aを修正</button><button type="button" data-k="judgeB">Bを修正</button></div>',
-    '<label class="check-row"><input type="checkbox" data-k="strokeMode" checked> ドラッグで線をまとめて評価（1操作でUndo）</label>',
+    '</div><div class="local-ab-manual"><strong class="local-ab-review-heading">③ 手動補正</strong>',
+    '<div class="local-ab-review-toolbar" role="group" aria-label="手動補正ツール">',
+    '<div class="local-ab-review-choose"><button type="button" data-k="judgeA">Aを修正</button><button type="button" data-k="judgeB">Bを修正</button></div>',
     '<label>判定 <select data-k="tool"><option value="positive">正解</option><option value="negative">誤検出</option><option value="missing">検出漏れ（2点）</option></select></label>',
-    '<label>一度の対象 <select data-k="pixels"><option value="1">1px</option><option value="3" selected>最大3px</option><option value="5">最大5px</option><option value="9">最大9px</option></select></label>',
-    '<p data-k="reviewStatus" role="status">A/Bを選択してください。既存お手本へ部分ラベルとして保存されます。</p>',
+    '<label class="check-row"><input type="checkbox" data-k="strokeMode" checked> 一筆なぞり</label>',
+    '<label>対象 <select data-k="pixels"><option value="1">1px</option><option value="3" selected>最大3px</option><option value="5">最大5px</option><option value="9">最大9px</option></select></label>',
+    '<div class="local-ab-undo-bar"><button type="button" data-k="undo" title="Ctrl+Z">↶ Undo</button><button type="button" data-k="redo" title="Ctrl+Y">↷ Redo</button><span data-k="undoStatus" class="help"></span></div>',
+    '</div>',
+    '<p data-k="reviewStatus" role="status">A/B選択後、修正する側を指定してください。1ストロークをまとめてUndoできます。</p>',
     '</div></section></div>'
   ].join('');
   document.body.append(dialog);
