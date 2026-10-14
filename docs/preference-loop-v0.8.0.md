@@ -1,4 +1,4 @@
-# GrainTracer v0.8.0-alpha — A/B選好から始める４フェーズ学習
+> **v0.8.1-alpha (2026-10-14) 追記**：A/B比較画面内の③「選んだ候補を手動評価」にUndo/Redoボタンを追加。Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z対応。ポインタの一筆評価はまとめて1回の履歴として取り消せる。診断ZIPの `Invalid string length` 対策として巨大配列を上限付きでJSON保存し、診断詳細が過大なときは自動で縮小版に切り替える。縮小した内容は`diagnosticExport.warnings`で確認可能。失敗時には「JSONの直列化」「ZIPの組立」等の処理段階を表示する。前回のスクリーンショットのみからエラーの正確な発生箇所を断定していない。\n\n# GrainTracer v0.8.0-alpha — A/B選好から始める４フェーズ学習
 
 対象: GitHub `validation` ブランチ。既存のProject Format v4のまま互換保存。
 2026-10-14。
