@@ -1,3 +1,14 @@
+# v0.9.3-alpha — Robust project backups and fresh-learning restart
+
+- **Fix:** The project Save path no longer calls one giant `JSON.stringify(project)` before download; instead it serializes in bounded chunks, retaining all data.
+- Large project exports automatically switch to streaming record-by-record gzip backup archives; supports `.graintracer.archive.gz` restore from the existing Import button. Ordinary small projects still save as `.graintracer.json`.
+- Added `現在の学習をバックアップして新規学習を開始` in the left project panel. First click downloads a dated backup. After verifying the download, the second click asks for explicit final confirmation before clearing the current BMP's autosaved learning state.
+- The reset retains the BMP source, returns parameters and labels to defaults, bypasses restoration of its old IndexedDB entry, and creates a fresh autosave when enabled. Other BMPs' autosaves are untouched.
+- Tracks pending backups and cancels reset if learning changes after downloading. Waits for an in-flight autosave before deleting old data.
+- Download and IndexedDB autosave failures are reported separately; file export failure never clears the current learning state.
+- Added tests covering project v4 roundtrips, long histories, streamed compressed restores, special characters and reset safety gates.
+- Real in-browser Edge test against the user's large BMP remains to be done.
+
 # v0.9.2-alpha — See previously used learning ROIs and recommend untouched Validation space
 
 - Color-coded saved A/B selections, manual feedback positions, existing evaluation ROIs and exclusions on the main micrograph and a full-image thumbnail map.
