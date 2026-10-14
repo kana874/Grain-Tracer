@@ -1,4 +1,4 @@
-import { buildBoundaryMask } from './analysis.js';
+import { buildBoundaryMask } from './analysis.js?v=0.9.0-alpha';
 self.onmessage=async ({data})=>{
   const {id,features,options}=data;
   try {
