@@ -249,7 +249,9 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   async function adoptChampion() {
     if (!champion || !validContext() || busy) return null;
     report('検証済みValidation ROIで候補を検証しています…');
-    const result = await onAdopt({ ...champion }, current.fingerprint);
+    const expectedFingerprint = current.fingerprint;
+    const result = await onAdopt({ ...champion }, expectedFingerprint);
+    if (!validContext() || current.fingerprint !== expectedFingerprint) return result;
     report(result?.accepted
       ? 'Validation検証で改善：最良設定を採用しました。' +
         'F1 '+(result.after.f1*100).toFixed(1)+'%'
