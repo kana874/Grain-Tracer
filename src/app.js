@@ -1,4 +1,5 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
+import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { segmentSeededRegions } from './region-segmentation.js';
 import { BmpError, parseBmpHeader, decodeBmpPreview } from "./bmp.js";
 import {
@@ -126,6 +127,11 @@ const els = {
   eraseReferenceToolButton: $("eraseReferenceToolButton"),
   exclusionToolButton: $("exclusionToolButton"),
   fullRoiToolButton: $("fullRoiToolButton"),
+  feedbackPositiveButton: $("feedbackPositiveButton"),
+  feedbackNegativeButton: $("feedbackNegativeButton"),
+  feedbackMissingButton: $("feedbackMissingButton"),
+  feedbackTuneButton: $("feedbackTuneButton"),
+  feedbackStatus: $("feedbackStatus"),
   undoReferenceButton: $("undoReferenceButton"),
   redoReferenceButton: $("redoReferenceButton"),
   fitButton: $("fitButton"),
@@ -297,6 +303,8 @@ const state = {
   exclusionPixelCount: 0,
   fullEvaluationRois: [],
   imageEvaluationRole: null,
+  feedbackReviews: [],
+  feedbackPending: null,
   baselineSnapshots: [],
   classifier: null,
   precisionGuide: createDefaultPrecisionGuideState(),
@@ -459,6 +467,10 @@ function updateControls() {
   els.eraseReferenceToolButton.disabled = disabled || !hasPreview || (!hasRef && !hasNegativeReference());
   els.exclusionToolButton.disabled = disabled || !hasPreview;
   els.fullRoiToolButton.disabled = disabled || !hasPreview;
+  els.feedbackPositiveButton.disabled = disabled || !hasAnalysis;
+  els.feedbackNegativeButton.disabled = disabled || !hasAnalysis;
+  els.feedbackMissingButton.disabled = disabled || !hasPreview;
+  els.feedbackTuneButton.disabled = disabled || !hasRef || !tuneAllowed;
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
@@ -2790,6 +2802,11 @@ function applyReferenceUndoRedo(direction) {
 
   if (state.comparisonMode) showNormalView();
   const item = source.pop();
+  if (item.feedbackReview) {
+    if (direction === "undo") state.feedbackReviews = state.feedbackReviews.filter(review => review.id !== item.feedbackReview.id);
+    else state.feedbackReviews.push({ ...item.feedbackReview });
+    updateFeedbackStatus();
+  }
   const affectsAnalysis = item.kind.startsWith("exclusion-");
   if (item.kind.startsWith("roi-")) invalidateEvaluationOnly();
   else invalidateAfterReferenceEdit(affectsAnalysis);
@@ -3006,6 +3023,7 @@ function buildProject() {
     imageEvaluationRole: state.imageEvaluationRole,
     baselineSnapshots: state.baselineSnapshots,
     classifier: state.classifier,
+    feedbackReviews: state.feedbackReviews,
     precisionGuide: precisionGuidePersistentState(),
     localCalibration: state.localCalibration,
     history: state.history,
@@ -3090,6 +3108,9 @@ async function restoreProject(project, source = "プロジェクト") {
     state.preview.height,
   );
   state.imageEvaluationRole = normalizeImageEvaluationRole(project.imageEvaluationRole);
+  state.feedbackReviews = Array.isArray(project.feedbackReviews) ? project.feedbackReviews.filter(item => item && ["positive", "negative", "missing"].includes(item.kind)).slice(-2000) : [];
+  state.feedbackPending = null;
+  updateFeedbackStatus();
   state.baselineSnapshots = Array.isArray(project.baselineSnapshots)
     ? project.baselineSnapshots.map(item => ({ ...item }))
     : [];
@@ -3519,6 +3540,9 @@ async function loadBmp(file) {
   state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
   state.imageEvaluationRole = null;
+  state.feedbackReviews = [];
+  state.feedbackPending = null;
+  updateFeedbackStatus();
   state.baselineSnapshots = [];
   state.classifier = null;
   updateClassifierStatus();
@@ -4639,7 +4663,114 @@ function bindRange(input, output, onInput = null) {
   });
 }
 
+
+// Feedback items are partial labels. A click is never treated as proof that the
+// surrounding ROI has been completely labelled (formal Precision/F1 remains gated).
+function updateFeedbackStatus() {
+  if (!els.feedbackStatus) return;
+  const counts = { positive: 0, negative: 0, missing: 0 };
+  for (const review of state.feedbackReviews) if (review.kind in counts) counts[review.kind]++;
+  const pending = state.feedbackPending ? " / 検出漏れ: 終点をクリック" : "";
+  els.feedbackStatus.textContent =
+    `評価履歴: 正解 ${counts.positive} / 誤検出 ${counts.negative} / 検出漏れ ${counts.missing}（部分ラベル。完全評価ROIではありません）${pending}`;
+}
+
+function applyFeedbackIndices(indices, kind, anchor) {
+  if (!state.preview || !indices?.length || state.busy) return false;
+  const w = state.preview.width, h = state.preview.height;
+  const positive = kind !== "negative";
+  const primary = positive ? state.referenceCenterline : state.negativeCenterline;
+  const opposite = positive ? state.negativeCenterline : state.referenceCenterline;
+  const mainTracker = createReferenceEditTracker();
+  const otherTracker = createReferenceEditTracker();
+  for (const index of indices) {
+    if (index < 0 || index >= w * h || state.exclusionMask?.[index]) continue;
+    const p = { x: index % w, y: Math.floor(index / w) };
+    paintReferenceCenterlineSegment(primary, w, h, p, p, { erase: false }, mainTracker);
+    if (opposite[index]) {
+      paintReferenceCenterlineSegment(opposite, w, h, p, p, { erase: true, eraseRadius: 1 }, otherTracker);
+    }
+  }
+  const mainEntry = finalizeReferenceEdit(primary, mainTracker);
+  const otherEntry = finalizeReferenceEdit(opposite, otherTracker);
+  if (!mainEntry && !otherEntry) {
+    setStatus("この候補はすでに評価済みです。別の区間をクリックしてください。");
+    return false;
+  }
+  if (state.comparisonMode) showNormalView();
+  invalidateAfterReferenceEdit();
+  const positiveBounds = positive ? mainEntry?.bounds : otherEntry?.bounds;
+  if (positiveBounds) refreshReferenceDirty(positiveBounds);
+  renderNegativeCanvas(false, true);
+  if (positiveBounds) scheduleClosedFillRefresh();
+  const review = {
+    id: `fb-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+    kind,
+    x: Math.round(anchor.x),
+    y: Math.round(anchor.y),
+    pixels: indices.length,
+    createdAt: new Date().toISOString(),
+  };
+  const parts = [];
+  if (mainEntry) parts.push({ layer: positive ? "reference" : "negative", entry: mainEntry });
+  if (otherEntry) parts.push({ layer: positive ? "negative" : "reference", entry: otherEntry });
+  commitReferenceHistory({ kind: "mask-edit", parts, feedbackReview: review });
+  state.feedbackReviews.push(review);
+  if (state.feedbackReviews.length > 2000) state.feedbackReviews.shift();
+  recalcAnnotationCounts();
+  updateFeedbackStatus();
+  updateMetrics();
+  updateControls();
+  scheduleAutosave();
+  const label = kind === "positive" ? "正解" : kind === "negative" ? "誤検出" : "検出漏れ";
+  setStatus(`フィードバック保存: ${label} / ${indices.length}候補画素。次回のAuto Tuneで利用します。Undo可能。`);
+  return true;
+}
+
+function reviewFeedbackClick(event) {
+  if (!state.preview || state.busy) return;
+  const point = eventToPreviewPoint(event);
+  if (!point || state.exclusionMask?.[Math.floor(point.y) * state.preview.width + Math.floor(point.x)]) {
+    setStatus("画像内の除外範囲外をクリックしてください。");
+    return;
+  }
+  event.preventDefault();
+  if (state.tool === "feedback-missing") {
+    if (!state.feedbackPending) {
+      state.feedbackPending = point;
+      updateFeedbackStatus();
+      setStatus("検出漏れの終点をクリック（最大80px）。別のツールを選ぶとキャンセルします。");
+      return;
+    }
+    const candidate = buildFeedbackConnection(
+      state.feedbackPending, point, state.preview.width, state.preview.height,
+      { maxLength: 80, exclusionMask: state.exclusionMask },
+    );
+    if (!candidate) {
+      setStatus("補完線が長すぎるか除外領域を横切ります。80px以内で終点を再指定してください。");
+      return;
+    }
+    state.feedbackPending = null;
+    updateFeedbackStatus();
+    applyFeedbackIndices(candidate.indices, "missing", candidate.anchor);
+    return;
+  }
+  if (!state.analysisMask) {
+    setStatus("先に粒界候補を解析してください。");
+    return;
+  }
+  const candidate = selectFeedbackSegment(state.analysisMask, state.preview.width, state.preview.height, point, {
+    searchRadius: 5, maxDistance: 12, maxPixels: 120, exclusionMask: state.exclusionMask,
+  });
+  if (!candidate) {
+    setStatus("クリックから5px以内に抽出候補がありません。検出漏れは「欠落を指定」で教えてください。");
+    return;
+  }
+  applyFeedbackIndices(candidate.indices, state.tool === "feedback-positive" ? "positive" : "negative", candidate.anchor);
+}
+
 function setTool(tool) {
+  state.feedbackPending = null;
   state.tool = tool;
   els.panToolButton.classList.toggle("active", tool === "pan");
   els.referenceToolButton.classList.toggle("active", tool === "reference");
@@ -4648,6 +4779,9 @@ function setTool(tool) {
   els.eraseReferenceToolButton.classList.toggle("active", tool === "erase-reference");
   els.exclusionToolButton.classList.toggle("active", tool === "exclusion");
   els.fullRoiToolButton.classList.toggle("active", tool === "full-roi");
+  els.feedbackPositiveButton.classList.toggle("active", tool === "feedback-positive");
+  els.feedbackNegativeButton.classList.toggle("active", tool === "feedback-negative");
+  els.feedbackMissingButton.classList.toggle("active", tool === "feedback-missing");
   els.viewer.classList.toggle("reference-mode", tool !== "pan");
   if (state.preview) {
     renderExclusionCanvas(
@@ -5124,6 +5258,11 @@ els.closedNegativeFillToolButton.addEventListener("click", () => setTool("closed
 els.eraseReferenceToolButton.addEventListener("click", () => setTool("erase-reference"));
 els.exclusionToolButton.addEventListener("click", () => setTool("exclusion"));
 els.fullRoiToolButton.addEventListener("click", () => setTool("full-roi"));
+els.feedbackPositiveButton.addEventListener("click", () => setTool("feedback-positive"));
+els.feedbackNegativeButton.addEventListener("click", () => setTool("feedback-negative"));
+els.feedbackMissingButton.addEventListener("click", () => setTool("feedback-missing"));
+els.feedbackTuneButton.addEventListener("click", () => autoTune());
+updateFeedbackStatus();
 els.undoReferenceButton.addEventListener("click", undoReference);
 els.redoReferenceButton.addEventListener("click", redoReference);
 
@@ -5298,6 +5437,7 @@ els.viewer.addEventListener("pointerdown", event => {
   }
   if (event.button !== 0) return;
 
+  if (state.tool.startsWith("feedback-")) { reviewFeedbackClick(event); return; }
   if (state.tool === "exclusion") { beginRectInteraction(event, "exclusion"); return; }
   if (state.tool === "full-roi") { beginRectInteraction(event, "roi"); return; }
   if (state.tool === "closed-negative-fill") { addClosedNegativeFill(event); return; }
