@@ -1,10 +1,10 @@
 {
   "name": "grain-tracer",
   "private": true,
-  "version": "0.9.0-alpha",
+  "version": "0.9.1-alpha",
   "type": "module",
   "scripts": {
-    "test": "node --check src/local-ab-learning.js && node --check src/local-ab-viewport.js && node --check src/local-ab-worker.js && node --check src/local-ab-engine.js && node --check src/preference-adoption.js && node --check src/active-roi.js && node --check src/stroke-review.js && node --check src/preference-optimizer.js && node --check src/edge-padding.js && node --check src/local-ab.js && node --check src/local-ab-ui.js && node --check src/diagnostic-serializer.js && node --check src/analysis.js && node --check src/feedback-learning.js && node --check src/app.js && node --check src/ground-truth-ui.js && node --check src/diagnostics.js && node --check src/topology-repair.js && node --test"
+    "test": "node --check src/validation-roi.js && node --check src/local-ab-learning.js && node --check src/local-ab-viewport.js && node --check src/local-ab-worker.js && node --check src/local-ab-engine.js && node --check src/preference-adoption.js && node --check src/active-roi.js && node --check src/stroke-review.js && node --check src/preference-optimizer.js && node --check src/edge-padding.js && node --check src/local-ab.js && node --check src/local-ab-ui.js && node --check src/diagnostic-serializer.js && node --check src/analysis.js && node --check src/feedback-learning.js && node --check src/app.js && node --check src/ground-truth-ui.js && node --check src/diagnostics.js && node --check src/topology-repair.js && node --test"
   },
   "engines": {
     "node": ">=20"
