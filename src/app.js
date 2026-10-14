@@ -1,7 +1,7 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
 import { buildLocalPrediction } from './local-ab-engine.js';
-import { validationRoiConflicts, canVerifyValidationRoi, referencePixelsInRect, validationUsageAreas, recommendUnusedValidationRoi } from './validation-roi.js';
+import { validationRoiConflicts, canVerifyValidationRoi, referencePixelsInRect, roiOverlapPixels, validationUsageAreas, recommendUnusedValidationRoi } from './validation-roi.js';
 import { summarizePreferenceLearning, summarizeValidationTrend } from './local-ab-learning.js';
 import { evaluatePreferenceAdoption } from './preference-adoption.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
@@ -2433,6 +2433,9 @@ function refreshValidationWizardControls() {
   $("validationRoiSeedButton").disabled=state.busy||!editing;
   $("validationRoiFinishButton").disabled=state.busy||!editing;
   $("validationRoiPauseButton").disabled=state.busy||!editing;
+  $("validationRoiRecommendButton").disabled=state.busy||!hasPreview||editing;
+  $("validationRoiUseRecommendationButton").disabled=state.busy||!hasPreview||
+    !state.validationSuggestedRect||editing;
   if(draft?.phase==="selecting")$("validationRoiCreateStatus").textContent=
     "画像上で、これまでA/B学習に使っていない範囲をドラッグしてください。";
   else if(editing){
@@ -2454,7 +2457,8 @@ function startValidationRoiWizard() {
   $("validationRoiAttest").checked=false;
   setTool("full-roi");
   refreshValidationWizardControls();
-  setStatus("Validation用の新規ROIを画像上でドラッグしてください。過去のA/B学習領域・既存ROIとは重ねないでください。");
+  updateValidationUsageSuggestion();
+  setStatus("オレンジ＝A/B履歴、ピンク＝手動評価、青＝既存ROI。緑の推薦枠を使用するか、着色されていない場所をドラッグしてください。");
   return true;
 }
 function resumeValidationRoiWizard() {
@@ -2466,12 +2470,15 @@ function resumeValidationRoiWizard() {
   const index=eligible(selected)?selected:state.fullEvaluationRois.findIndex((_,i)=>eligible(i));
   if(index<0)return false;
   state.validationDraft={phase:"editing",index};
+  state.validationSuggestedRect=null;
+  $("validationUsageToggle").checked=false;
   state.selectedFullRoiIndex=index;
   $("validationRoiAttest").checked=false;
   setTool("reference");
   focusPreviewRect(state.fullEvaluationRois[index]);
   rebuildFullRoiLayer();
   refreshValidationWizardControls();
+  renderValidationUsageView();
   setStatus("未完了のValidation ROI #"+(index+1)+" を再開しました。");
   return true;
 }
@@ -2482,6 +2489,7 @@ function pauseValidationRoiWizard() {
   setTool("pan");
   rebuildFullRoiLayer();
   refreshValidationWizardControls();
+  renderValidationUsageView();
   scheduleAutosave();
   setStatus("Validation ROI作成を一時中断しました。未確認のROIは採用判定に使用しません。");
 }
@@ -2558,7 +2566,7 @@ function verifyValidationWizardRoi() {
   $("validationRoiAttest").checked=false;
   setTool("pan");
   rebuildFullRoiLayer();invalidateEvaluationOnly();
-  updateControls();scheduleAutosave();
+  updateControls();scheduleAutosave();renderValidationUsageView();
   setStatus("Validation ROI #"+(index+1)+" の登録完了。正解線 "+result.referencePixels+
     "px。A/B最適化の独立した採用判定に利用します。");
   $("validationRoiCreateStatus").textContent="登録完了。独立したValidation領域として保存されました。";
