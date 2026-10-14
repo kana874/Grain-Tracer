@@ -55,7 +55,7 @@ function eraseDisk(mask, width, height, cx, cy, radius, tracker) {
 export function paintReferenceCenterlineSegment(mask, width, height, from, to, options, tracker) {
   tracker.segmentBounds = null;
   const erase = Boolean(options?.erase);
-  const eraseRadius = Math.max(1, Number(options?.eraseRadius ?? 1));
+  const eraseRadius = Math.max(0, Number(options?.eraseRadius ?? 1));
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 1.5));
