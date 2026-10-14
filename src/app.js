@@ -2429,6 +2429,7 @@ function verifyValidationWizardRoi() {
     width:state.preview.width,height:state.preview.height,
     excluded:state.exclusionMask,attested:$("validationRoiAttest").checked,
     existingRois:state.fullEvaluationRois,abReviews:state.localAbReviews,
+    feedbackReviews:state.feedbackReviews,
     ignoreIndex:state.validationDraft.index,minReferencePixels:20,
   });
   if(!result.ok){
@@ -5417,7 +5418,7 @@ function endRectInteraction(event) {
       const index = rects.length;
       const selectingValidation = !isExclusion && state.validationDraft?.phase === "selecting";
       const conflicts = selectingValidation
-        ? validationRoiConflicts(rect,state.fullEvaluationRois,state.localAbReviews)
+        ? validationRoiConflicts(rect,state.fullEvaluationRois,state.localAbReviews,-1,state.feedbackReviews)
         : {ok:true};
       if(!conflicts.ok){
         setStatus("Validation ROI: "+conflicts.reason);
