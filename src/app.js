@@ -2409,11 +2409,10 @@ async function seedValidationRoiFromCandidate() {
       updateMetrics();
       scheduleAutosave();
     }
-    const before={...rect};
+    // The entire draft import is one reference-mask Undo step; do not
+    // add a second ROI-edit history item that would intercept Ctrl+Z.
     rect.seededFrom="analysis-candidate";rect.seedPixels=count;
     rect.seededAt=new Date().toISOString();
-    commitReferenceHistory({kind:"roi-edit",index:state.validationDraft.index,
-      before,after:{...rect}});
     $("validationRoiAttest").checked=false;
     setStatus("候補線 "+count+"px を下書きへ取り込みました。誤検出は非粒界線で除き、欠落をお手本線で補ってください。");
   }catch(error){
@@ -5871,8 +5870,19 @@ async function guardedAdoptLocalPreference(chosen, fingerprint) {
   try {
     const features = await ensureFeatures();
     if (fingerprint !== state.sourceFingerprint) return reject("処理中に画像が変更されました");
-    const baseline = await buildBoundaryMask(features, { ...beforeSettings, onProgress: () => {} });
-    const proposal = await buildBoundaryMask(features, { ...candidateSettings, onProgress: () => {} });
+    // Do not let Validation/Test manual negative labels suppress predictions
+    // within the held-out areas. A candidate must generalize without seeing
+    // those corrections; both competitors use the same masked-out labels.
+    const heldOut=[...validationEvaluationRois(state.fullEvaluationRois),
+      ...testEvaluationRois(state.fullEvaluationRois)];
+    const unbiasedNegative=maskExcludingRois(beforeSettings.negativeMask,
+      state.preview.width,state.preview.height,heldOut);
+    const baseline = await buildBoundaryMask(features, {
+      ...beforeSettings,negativeMask:unbiasedNegative,onProgress:()=>{},
+    });
+    const proposal = await buildBoundaryMask(features, {
+      ...candidateSettings,negativeMask:unbiasedNegative,onProgress:()=>{},
+    });
     const result = evaluatePreferenceAdoption(baseline, proposal, state.referenceCenterline,
       state.preview.width, state.preview.height, {
         imageRole: state.imageEvaluationRole,
@@ -5908,7 +5918,9 @@ async function guardedAdoptLocalPreference(chosen, fingerprint) {
       }
     }
     resetGapBridgeState(true);
-    state.analysisMask = proposal;
+    state.analysisMask = await buildBoundaryMask(features, {
+      ...candidateSettings,onProgress:()=>{},
+    });
     state.lastHysteresis = null;
     invalidateTopology();
     renderNormalOverlay();
