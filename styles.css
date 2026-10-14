@@ -265,3 +265,5 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
 .validation-wizard [hidden] {display:none !important;}
 .validation-wizard .validation-attest {align-items:flex-start; line-height:1.5; margin:10px 0 5px;}
 .validation-wizard .validation-attest input {margin-top:3px; flex:0 0 auto;}
+
+.local-ab-manual .local-ab-undo-bar .help {width:auto;flex:0 0 auto;margin:0;}
