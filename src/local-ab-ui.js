@@ -539,7 +539,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     const direction=key==='y' || (key==='z' && event.shiftKey) ? 'redo' : key==='z' ? 'undo' : null;
     if(!direction) return;
     const tag=event.target?.tagName?.toLowerCase();
-    if(['input','textarea','select'].includes(tag)) return;
+    if(['input','textarea','select'].includes(tag)) { event.stopPropagation(); return; }
     event.preventDefault();
     event.stopPropagation(); // avoid applying global Undo/Redo twice
     reviewUndoRedo(direction);
