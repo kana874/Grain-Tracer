@@ -56,6 +56,7 @@ import {
   imageDataToBlob,
 } from "./diagnostics.js";
 import { buildStoredZip } from "./zip.js";
+import { serializeDiagnosticJson } from "./diagnostic-serializer.js";
 import { buildBaselineSnapshot } from "./baseline.js";
 import {
   PRECISION_GUIDE_COLS,
@@ -3273,6 +3274,7 @@ async function exportDiagnostics(mode = "zip") {
   if (!state.preview || !state.analysisMask || !hasReference()) return;
   ensureClosedNegativeFresh();
   setBusy(true);
+  let diagnosticStage = "特徴量・Topology計算";
   try {
     const features = await ensureFeatures();
     let topology = state.lastTopology;
@@ -3377,6 +3379,12 @@ async function exportDiagnostics(mode = "zip") {
       },
       recentReviews: state.feedbackReviews.slice(-100),
     };
+    diagnosticStage = "診断JSONの直列化";
+    const diagnosticSerialized = serializeDiagnosticJson(report);
+    if (diagnosticSerialized.reduced || diagnosticSerialized.warnings.length) {
+      console.warn("GrainTracer diagnostic export limited:", diagnosticSerialized.warnings);
+    }
+    diagnosticStage = "オーバーレイと特徴画像の作成";
 
     const comparison = renderComparisonOverlay(
       state.analysisMask,
@@ -3430,6 +3438,7 @@ async function exportDiagnostics(mode = "zip") {
     );
     const base = (state.file?.name ?? "graintracer").replace(/\.bmp$/i, "");
 
+    diagnosticStage = "PNG/JPEG画像のエンコード";
     setStatus("診断データを作成中...", 82);
     const regionArtifact = state.regionSegmentation?.sourceFingerprint === state.sourceFingerprint
       ? { name: 'region-segmentation.png', individualName: `${base}.graintracer-region-segmentation.png`,
@@ -3440,7 +3449,7 @@ async function exportDiagnostics(mode = "zip") {
       {
         name: "diagnostic.json",
         individualName: `${base}.graintracer-diagnostic.json`,
-        blob: new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
+        blob: new Blob([diagnosticSerialized.json], { type: "application/json" }),
       },
       {
         name: "preview.jpg",
@@ -3490,12 +3499,14 @@ async function exportDiagnostics(mode = "zip") {
     ];
 
     if (mode === "individual") {
+      diagnosticStage = "個別ファイルのダウンロード";
       setStatus("診断ファイルを個別に書き出し中...", 90);
       for (const artifact of artifacts) {
         downloadBlob(artifact.blob, artifact.individualName);
         await new Promise(resolve => setTimeout(resolve, 120));
       }
     } else {
+      diagnosticStage = "ZIPファイルの組み立て";
       setStatus("診断ZIPを作成中...", 90);
       const generatedAt = new Date().toISOString();
       const manifest = {
@@ -3537,9 +3548,10 @@ async function exportDiagnostics(mode = "zip") {
       100,
     );
   } catch (error) {
-    console.error(error);
-    setStatus(`診断出力エラー: ${error.message}`, 0);
-    alert(`診断出力エラー: ${error.message}`);
+    console.error("Diagnostic failed at", diagnosticStage, error);
+    const detail = `診断出力エラー（${diagnosticStage}）: ${error.message}`;
+    setStatus(detail, 0);
+    alert(detail);
   } finally {
     setBusy(false);
   }
