@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.9.2-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.9.3-alpha">
 </head>
 <body class="focus-mode">
   <header class="app-header">
@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.2-alpha</div></div>
+    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.3-alpha</div></div>
   </header>
 
   <main class="layout">
@@ -54,11 +54,13 @@
       <section>
         <h2>プロジェクト</h2>
         <button id="groundTruthButton" type="button">正解データ作成モード</button>
-        <input id="projectInput" type="file" accept=".json,application/json" hidden>
+        <input id="projectInput" type="file" accept=".json,.gz,application/json,application/gzip" hidden>
         <div class="button-grid">
           <button id="saveProjectButton" type="button" disabled>保存</button>
           <button id="loadProjectButton" type="button" disabled>読込</button>
         </div>
+        <button id="backupNewSessionButton" class="full project-backup-button" type="button" disabled>現在の学習をバックアップして新規学習を開始</button>
+        <p id="backupNewSessionStatus" class="help" role="status">学習履歴を保持したファイルを出力し、保存確認後に初期状態で再開します。</p>
         <label class="check-row"><input id="autosaveEnabled" type="checkbox" checked> 自動保存（IndexedDB）</label>
         <label class="select-row">
           <span>画像の評価役割</span>
@@ -425,7 +427,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.2-alpha","./src/project.js":"./src/project.js?v=0.9.2-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.2-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.2-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.2-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.2-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.2-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.2-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.2-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.2-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.2-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.2-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.2-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.2-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.2-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.2-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.2-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.9.2-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.3-alpha","./src/project.js":"./src/project.js?v=0.9.3-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.3-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.3-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.3-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.3-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.3-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.3-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.3-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.3-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.3-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.3-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.3-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.3-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.3-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.3-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.3-alpha","./src/project-backup.js":"./src/project-backup.js?v=0.9.3-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.9.3-alpha"></script>
 </body>
 </html>
