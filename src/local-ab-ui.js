@@ -1,7 +1,7 @@
 import { buildBoundaryMask } from './analysis.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { positionLocalRoi, withinLocalRoi, localAbCounts, filterLocalReview } from './local-ab.js';
-import { proposePreferenceCandidate, advancePreference, buildPreferenceVote, preferenceParameterSnapshot } from './preference-optimizer.js';
+import { proposePreferenceCandidate, advancePreference, buildPreferenceVote, preferenceParameterSnapshot, recoverPreferenceChampion } from './preference-optimizer.js';
 import { rasterizeGuidedStroke } from './stroke-review.js';
 import { recommendDisagreementRoi } from './active-roi.js';
 
@@ -471,8 +471,12 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     if (!data?.preview?.imageData || !data.fingerprint) return;
     request++;
     current = data; a = b = null; busy = false;
-    champion={...data.boundaryOptions}; challenger=null; proposal=null;
-    localVotes=[...(data.localAbReviews??[])];round=localVotes.filter(v=>v.schema==='graintracer-preference-v2').length;
+    localVotes=[...(data.localAbReviews??[])];
+    champion=recoverPreferenceChampion(data.boundaryOptions,localVotes,data.fingerprint,
+      data.featureOptions,data.algorithmVersion);
+    challenger=null;proposal=null;
+    round=localVotes.filter(v=>v.schema==='graintracer-preference-v2'&&
+      v.imageFingerprint===data.fingerprint).length;
     lastWinner=null;stroke=null;suppressClick=false;lastVote=null;
     const w = data.preview.width, h = data.preview.height;
     original.width = w; original.height = h;
