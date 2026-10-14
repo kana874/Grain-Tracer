@@ -5745,6 +5745,9 @@ const localAbController = setupLocalAB({
     scheduleAutosave();
   },
   onFeedback: (indices, kind, anchor, provenance) => applyFeedbackIndices(indices, kind, anchor, provenance),
+  onUndo: () => { if(!state.undoStack.length) return false; undoReference(); return true; },
+  onRedo: () => { if(!state.redoStack.length) return false; redoReference(); return true; },
+  getHistoryState: () => ({undo:state.undoStack.length,redo:state.redoStack.length}),
   onAdopt: (settings, fingerprint) => guardedAdoptLocalPreference(settings, fingerprint),
 });
 function updateLocalAbStatus() {
