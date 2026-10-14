@@ -5814,6 +5814,7 @@ els.topologyRepairPreviewButton?.addEventListener("click", previewTopologyRepair
 els.gapApplyButton.addEventListener("click", applyGapBridges);
 els.gapRevertButton.addEventListener("click", revertGapBridges);
 els.saveProjectButton.addEventListener("click", saveProjectManual);
+els.backupNewSessionButton.addEventListener("click", backupAndStartFresh);
 els.loadProjectButton.addEventListener("click", () => els.projectInput.click());
 els.exportDiagnosticsButton.addEventListener("click", () => exportDiagnostics("zip"));
 els.exportDiagnosticsIndividualButton.addEventListener("click", () => exportDiagnostics("individual"));
