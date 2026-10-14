@@ -5555,9 +5555,13 @@ function endRectInteraction(event) {
       const conflicts = selectingValidation
         ? validationRoiConflicts(rect,state.fullEvaluationRois,state.localAbReviews,-1,state.feedbackReviews)
         : {ok:true};
-      if(!conflicts.ok){
-        setStatus("Validation ROI: "+conflicts.reason);
-        $("validationRoiCreateStatus").textContent=conflicts.reason;
+      const overlapsExcluded=selectingValidation &&
+        state.exclusionRects.some(area=>roiOverlapPixels(rect,area)>0);
+      if(!conflicts.ok||overlapsExcluded){
+        const reason=overlapsExcluded?
+          "除外領域と重なっています。灰色の範囲を避けてください。":conflicts.reason;
+        setStatus("Validation ROI: "+reason);
+        $("validationRoiCreateStatus").textContent=reason;
       } else {
       const storedRect = isExclusion
         ? { ...rect }
