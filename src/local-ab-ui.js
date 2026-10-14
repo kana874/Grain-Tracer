@@ -262,28 +262,23 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     if (!rect) return;
     updateRoiAt(rect.x + rect.width / 2, rect.y + rect.height / 2);
   }
-  function recommendRoi() {
-    if (!a || !b || !current) {
-      report('ROI推薦にはまずA/B比較を実行してください。');
-      return null;
-    }
-    const snapshot = getSnapshot();
-    const candidate = recommendDisagreementRoi(a, b, current.preview.width,
-      current.preview.height, Number(el('roiSize').value), {
-        history: localVotes,
-        protectedRois: snapshot?.protectedRois ?? [],
-        exclusionMask: current.exclusionMask,
-        labelMask: snapshot?.referenceCenterline,
-        negativeLabelMask: snapshot?.negativeCenterline,
+  function recommendRoi(){
+    if(!current||!featuresCache){report('ROI推薦には特徴量を先に計算してください。');return null;}
+    const snapshot=getSnapshot();
+    const base=el('adaptive').checked?champion:current.boundaryOptions;
+    const candidate=variantOptions(base);
+    const next=recommendFeatureRoi(featuresCache,base,candidate,
+      Number(el('roiSize').value),{
+        history:localVotes,
+        protectedRois:snapshot?.protectedRois??[],
+        exclusionMask:current.exclusionMask,
+        labelMask:snapshot?.referenceCenterline,
+        negativeLabelMask:snapshot?.negativeCenterline,
       });
-    if (!candidate) {
-      report('未評価で保護領域外のROIを推薦できません。');
-      return null;
-    }
-    updateSelectionRoi(candidate.roi);
-    el('roiStatus').textContent += ' / 推薦：A/B差 ' +
-      (candidate.disagreement * 100).toFixed(1)+'%';
-    return candidate;
+    if(!next){report('保護領域以外に推薦可能なROIがありません。');return null;}
+    updateSelectionRoi(next.roi);
+    el('roiStatus').textContent+=' / 推薦スコア '+next.score.toFixed(2);
+    return next;
   }
   function roiProtected() {
     const snapshot = getSnapshot();
@@ -332,7 +327,10 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
           variant:el('variant').value };
     Object.assign(record, {
       counts, featureOptions:{...current.featureOptions}, appVersion:current.appVersion,
-      algorithmVersion:current.algorithmVersion, eligibleForLearning:true
+      algorithmVersion:current.algorithmVersion, eligibleForLearning:true,
+      manualEvidence:evaluateManualLabelEvidence(a,b,current.preview.width,
+        current.preview.height,roi,current.referenceCenterline,
+        current.negativeCenterline,{exclusionMask:current.exclusionMask}),
     });
     onVote(record);
     localVotes.push(record);
@@ -345,21 +343,36 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       active=null; pending=null; drawHover();
       el('reviewStatus').textContent = '選好を保存。必要ならA/Bを選んで手動修正できます。';
     }
-    if (adaptive) {
-      champion = advancePreference(champion, configB, winner);
+    let consensus=null;
+    if(adaptive){
+      consensus=aggregatePreferenceAcrossRois(champion,configB,localVotes,{
+        fingerprint:current.fingerprint,featureOptions:current.featureOptions,
+        algorithmVersion:current.algorithmVersion,minDistinctRois:2,
+      });
       round++;
       lastWinner=winner;
+      // A/B votes are tied to independent spatial cells; a single favorable
+      // ROI cannot promote a global candidate.
+      if(consensus.winner==='b') {
+        champion={...configB};keepPair=false;
+      } else if(consensus.winner==='a') {
+        keepPair=false;
+      } else {
+        keepPair=true;
+      }
     }
-    // The adoption toggle is independent of automatically generating the
-    // next pair, so users may stop to hand-label while keeping guard checks.
-    if (adaptive && winner === 'b' && el('autoAdopt').checked) await adoptChampion();
-    if (!el('autoNext').checked || !adaptive) {
-      report('選好を保存しました。手動評価後にA/Bを比較して続行できます。');
-      return;
-    }
-    if (!validContext()) return;
+    const canAdopt=adaptive && consensus?.winner==='b';
+    report(adaptive
+      ? '異なるROIの賛成 '+(consensus?.b??0)+' / 反対 '+(consensus?.a??0)+
+        '。'+(consensus?.winner?'複数ROIで候補を確定しました。':'追加ROIで同じ設定を検証します。')
+      : '選好を保存しました。');
+    if(canAdopt&&el('autoAdopt').checked)await adoptChampion();
+    if(!el('autoNext').checked||!adaptive)return;
+    if(!validContext())return;
+    // Recommend BEFORE generating the next ROI. Previously this happened
+    // afterward, so the displayed mask never matched the yellow ROI frame.
+    if(el('autoRoi').checked)recommendRoi();
     await generate();
-    if (el('autoRoi').checked && validContext() && a && b) recommendRoi();
   }
   function selectManualSide(side) {
     if (!a || !b) return;
@@ -440,12 +453,19 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     if(updated) {
       current.referenceCenterline=updated.referenceCenterline;
       current.negativeCenterline=updated.negativeCenterline;
+      current.boundaryOptions.negativeMask=updated.boundaryOptions.negativeMask;
+      maskRevision++;
+      predictionCache.clear();
     }
+    if(lastVote&&a&&b)lastVote.manualEvidence=evaluateManualLabelEvidence(
+      a,b,current.preview.width,current.preview.height,roi,
+      current.referenceCenterline,current.negativeCenterline,
+      {exclusionMask:current.exclusionMask});
     drawCandidates();
     refreshHistoryButtons();
   }
   function beginStroke(event,side) {
-    if(!el('strokeMode').checked||el('tool').value==='missing'||busy||
+    if(!el('strokeMode').checked||el('tool').value==='missing'||busy||roiProtected()||
         !a||!b||side!==active||event.button!==0||!validContext())return;
     const point=pointFromEvent(event,side);
     if(!point)return;
@@ -494,7 +514,11 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     updateCurrentLabels();
   }
   function judge(event, side) {
-    if (!validContext() || side !== active || !a || !b || busy) {
+    if (!validContext() || side !== active || !a || !b || busy || roiProtected()) {
+      if(roiProtected()) {
+        el('reviewStatus').textContent='この領域はValidation/Testのため学習用の手動補正を行いません。';
+        return;
+      }
       el('reviewStatus').textContent = 'A/Bを選択してから、選択した側の画像をクリックしてください。';
       return;
     }
@@ -542,6 +566,10 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     if (!data?.preview?.imageData || !data.fingerprint) return;
     request++;
     current = data; a = b = null; busy = false;
+    predictionRunner.terminate();predictionCache.clear();
+    predictionCache.hits=0;predictionCache.misses=0;
+    featuresCache=null;maskRevision=0;roiKey=null;keepPair=false;
+    generationTimes=[];comparisonAttempts=0;interactionZoom=2;el('zoom').value='2';
     localVotes=[...(data.localAbReviews??[])];
     champion=recoverPreferenceChampion(data.boundaryOptions,localVotes,data.fingerprint,
       data.featureOptions,data.algorithmVersion);
@@ -561,6 +589,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   function close() {
     request++; current = null; a = b = null; roi = null; active = null; pending = null;
     stroke=null; champion=null; challenger=null; proposal=null;
+    predictionRunner.terminate();predictionCache.clear();featuresCache=null;
     if (dialog.open) dialog.close();
   }
   openButton.addEventListener('click', open);
