@@ -133,7 +133,7 @@ export async function createProjectArchive(project){
       while(buffer.length<96*1024){
         const part=iterator.next();
         if(part.done)break;
-        buffer+=JSON.stringify(part.value)+'\\n';
+        buffer+=JSON.stringify(part.value)+'\n';
       }
       if(!buffer.length){controller.close();return;}
       controller.enqueue(encoder.encode(buffer));
@@ -184,7 +184,7 @@ async function parseProjectArchive(file){
     buffer+=value;
     if(buffer.length>3*1024*1024)throw new Error('不正な巨大レコードが含まれています');
     let index;
-    while((index=buffer.indexOf('\\n'))>=0){
+    while((index=buffer.indexOf('\n'))>=0){
       record(buffer.slice(0,index));
       buffer=buffer.slice(index+1);
     }
