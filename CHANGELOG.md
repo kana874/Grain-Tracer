@@ -1,3 +1,12 @@
+# v0.9.4-alpha — Closed Negative Fill becomes the standard annotation tool
+
+- The standard toolbar shows Move / Reference / Erase / Closed Region→Negative / Exclusion / Full Evaluation ROI / Undo / Redo. Legacy `非粒界線` is hidden in the standard workspace but still available through the advanced mode switch; returning to standard mode safely exits that hidden pen.
+- While editing an incomplete Validation ROI, a candidate Negative Fill is checked against the entire filled region. If any affected pixel extends outside the draft ROI, the click is rejected *without modifying seeds, masks or history*.
+- Successful fills and Undo/Redo uncheck the Validation completed-review attestation to ensure another explicit review before confirming.
+- Updated help and Validation wizard instructions for line erasing, Positive reference, and closed-region Negative Fill.
+- Existing project Format v4 nonBoundary masks, historical negative lines, closedFillSeeds, A/B votes, and Validation ROIs remain compatible.
+- Added synthetic filled-region/ROI safety tests, legacy project roundtrip, and static UI/Undo regression. Real BMP/Edge interaction is still to be verified.
+
 # v0.9.3-alpha — Robust project backups and fresh-learning restart
 
 - **Fix:** The project Save path no longer calls one giant `JSON.stringify(project)` before download; instead it serializes in bounded chunks, retaining all data.
