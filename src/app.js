@@ -5245,9 +5245,19 @@ function beginReferenceDraw(event) {
 }
 
 function continueReferenceDraw(event) {
-  if (!state.drawingReference || !state.lastReferencePoint) return;
+  if (!state.drawingReference) return;
   const point = eventToPreviewPoint(event);
-  if (!point || !validationPointInside(point)) return;
+  if (!point || !validationPointInside(point)) {
+    // Leaving the ROI breaks the stroke; re-entry must not create a
+    // long accidental segment across the evaluation area.
+    state.lastReferencePoint = null;
+    return;
+  }
+  if (!state.lastReferencePoint) {
+    state.lastReferencePoint = point;
+    applyReferenceSegment(point, point);
+    return;
+  }
   applyReferenceSegment(state.lastReferencePoint, point);
   state.lastReferencePoint = point;
 }
