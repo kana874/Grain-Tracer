@@ -4,9 +4,11 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**validation: v0.8.1-alpha / boundary-v18-reflected-edge-v1**（mainは別バージョン）
+**validation: v0.9.0-alpha / boundary-v18-reflected-edge-v1**（mainは別バージョン）
 
 Current capabilities:
+
+- **v0.9.0-alpha (P1-P6)**: streamlined A/B-first workspace with optional advanced mode, wheel-centered synchronized zoom and middle-drag pan, halo-local ROI segmentation in a module Worker with LRU cache, multi-ROI preference consensus, manually corrected Positive/Negative evidence, independent Validation-controlled adoption and F1 trend summary. Tests include 100 actual local candidate runs and 120 repeated voting/caching operations. [Full guide](docs/ab-workspace-v0.9.0.md).
 
 - v0.8.1-alpha: explicit Undo/Redo controls and keyboard shortcuts inside the local A/B comparison dialog. Diagnostic ZIP export now bounds JSON and avoids large typed-array expansion; errors identify the failing stage. See [v0.8.1 fix note](docs/preference-loop-v0.8.0.md).
 
