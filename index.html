@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.9.1-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.9.2-alpha">
 </head>
 <body class="focus-mode">
   <header class="app-header">
@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.1-alpha</div></div>
+    <div class="header-actions"><button id="uiModeToggle" type="button" aria-pressed="false">詳細機能を表示</button><div class="version">v0.9.2-alpha</div></div>
   </header>
 
   <main class="layout">
@@ -107,6 +107,7 @@
           <canvas id="negativeCanvas"></canvas>
           <canvas id="referenceCanvas"></canvas>
           <canvas id="feedbackCanvas"></canvas>
+          <canvas id="validationUsageCanvas" aria-hidden="true"></canvas>
         </div>
         <div id="emptyState" class="empty-state">
           <strong>未読込</strong>
@@ -131,7 +132,21 @@
         <p class="help">A/B中はROIのみ計算。全画像の更新は必要時だけ。</p>
         <div class="validation-wizard" id="validationRoiWizard">
           <h3>Validation ROIの作成</h3>
-          <button id="validationRoiStartButton" class="primary full" type="button" disabled>新しい検証領域を指定</button>
+          <label class="check-row"><input id="validationUsageToggle" type="checkbox"> 既存の学習範囲を画像上に表示</label>
+          <div id="validationUsageMapWrap" class="validation-usage-map-wrap" hidden>
+            <canvas id="validationUsageMap" aria-label="画像全体の学習済み位置マップ"></canvas>
+            <div class="validation-usage-legend">
+              <span><i class="validation-swatch ab"></i>A/B評価済み</span>
+              <span><i class="validation-swatch manual"></i>手動評価済み</span>
+              <span><i class="validation-swatch existing"></i>既存のROI</span>
+              <span><i class="validation-swatch excluded"></i>除外</span>
+              <span><i class="validation-swatch recommended"></i>推薦（未使用）</span>
+            </div>
+            <p class="help">着色箇所は保存済みの履歴に基づきます。色のない場所も過去に利用していないと保証されるわけではありません。</p>
+          </div>
+          <button id="validationRoiRecommendButton" type="button" class="full" disabled>未使用の検証候補を推薦</button>
+          <button id="validationRoiUseRecommendationButton" type="button" class="primary full" disabled>緑枠の推薦範囲で作成開始</button>
+          <button id="validationRoiStartButton" class="full" type="button" disabled>手動で検証領域を指定</button>
           <button id="validationRoiResumeButton" class="full" type="button" disabled>未完了の領域を再開</button>
           <button id="validationRoiCancelSelectionButton" class="full" type="button" hidden>範囲指定を中止</button>
           <div id="validationRoiReviewPanel" hidden>
@@ -409,7 +424,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.1-alpha","./src/project.js":"./src/project.js?v=0.9.1-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.1-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.1-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.1-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.1-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.1-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.1-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.1-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.1-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.1-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.1-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.1-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.1-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.1-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.1-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.1-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.9.1-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.2-alpha","./src/project.js":"./src/project.js?v=0.9.2-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.2-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.2-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.2-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.2-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.2-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.2-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.2-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.2-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.2-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.2-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.2-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.2-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.2-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.2-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.2-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.9.2-alpha"></script>
 </body>
 </html>
