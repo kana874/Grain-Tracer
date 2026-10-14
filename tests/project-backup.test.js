@@ -96,3 +96,18 @@ test('reset UI path requires explicit saved-file confirmation and bypasses autos
   assert.match(html,/id="backupNewSessionButton"/);
   assert.match(html,/accept="\.json,\.gz,/);
 });
+
+test('Unicode surrogate pairs remain intact when Blob encodes separate JSON chunks',async()=>{
+  const source={magic:'𩸽',characters:'あ🙂𩸽'.repeat(5000),quote:'"\\t\\n'};
+  const blob=new Blob([...projectJsonChunks(source,129)],{type:'application/json'});
+  const restored=JSON.parse(await blob.text());
+  assert.deepEqual(restored,source);
+});
+
+test('very long Unicode source metadata roundtrips a normal exported project file',async()=>{
+  const project=makeProject();
+  project.history.push({comment:'🌾'.repeat(90000)});
+  const result=await createProjectExport(project,'emoji-large',{compressAboveBytes:Infinity});
+  const loaded=await parseProjectFile(Object.assign(result.blob,{name:result.filename}));
+  assert.equal(loaded.history.at(-1).comment,project.history.at(-1).comment);
+});
