@@ -1,5 +1,6 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
+import { evaluatePreferenceAdoption } from './preference-adoption.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { segmentSeededRegions } from './region-segmentation.js';
 import { BmpError, parseBmpHeader, decodeBmpPreview } from "./bmp.js";
@@ -310,6 +311,7 @@ const state = {
   imageEvaluationRole: null,
   feedbackReviews: [],
   localAbReviews: [],
+  preferenceAdoptions: [],
   feedbackPending: null,
   baselineSnapshots: [],
   classifier: null,
@@ -3032,6 +3034,7 @@ function buildProject() {
     classifier: state.classifier,
     feedbackReviews: state.feedbackReviews,
     localAbReviews: state.localAbReviews,
+    preferenceAdoptions: state.preferenceAdoptions,
     precisionGuide: precisionGuidePersistentState(),
     localCalibration: state.localCalibration,
     history: state.history,
@@ -3118,6 +3121,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.imageEvaluationRole = normalizeImageEvaluationRole(project.imageEvaluationRole);
   state.feedbackReviews = Array.isArray(project.feedbackReviews) ? project.feedbackReviews.filter(item => item && ["positive", "negative", "missing"].includes(item.kind)).slice(-2000) : [];
   state.localAbReviews = Array.isArray(project.localAbReviews) ? project.localAbReviews.slice(-500) : [];
+  state.preferenceAdoptions = Array.isArray(project.preferenceAdoptions) ? project.preferenceAdoptions.slice(-200) : [];
   updateLocalAbStatus();
   state.feedbackPending = null;
   clearFeedbackPreview();
@@ -3356,6 +3360,12 @@ async function exportDiagnostics(mode = "zip") {
       recentVotes: state.localAbReviews.slice(-100),
       note: "Preference votes are not complete ROI ground truth or accuracy metrics",
     };
+    report.preferenceAdoption = {
+      schema: "graintracer-preference-adoption-v1",
+      count: state.preferenceAdoptions.length,
+      accepted: state.preferenceAdoptions.filter(x => x.accepted).length,
+      recent: state.preferenceAdoptions.slice(-40),
+    };
     report.feedbackReview = {
       schema: "graintracer-feedback-review-v1",
       labelSemantics: "partial-positive-negative-unknown",
@@ -3571,6 +3581,7 @@ async function loadBmp(file) {
   state.imageEvaluationRole = null;
   state.feedbackReviews = [];
   state.localAbReviews = [];
+  state.preferenceAdoptions = [];
   updateLocalAbStatus();
   localAbController?.close();
   state.feedbackPending = null;
@@ -5623,6 +5634,88 @@ window.addEventListener("blur", () => setOverlayPeekHidden(false));
 
 window.addEventListener("resize", () => { if (state.preview) fitToViewer(); });
 
+
+async function guardedAdoptLocalPreference(chosen, fingerprint) {
+  const reject = reason => ({ accepted: false, reason });
+  if (!state.preview || !state.sourceFingerprint || fingerprint !== state.sourceFingerprint)
+    return reject("選択した画像と現在の画像が一致しません");
+  if (!canTuneImage(state.imageEvaluationRole))
+    return reject("Validation/Test画像では自動採用できません");
+  if (state.busy) return reject("解析中は採用できません");
+  // Strictly require independent verified Validation ROIs. Neither Training,
+  // legacy unassigned ROIs, nor Test may be used as a fallback.
+  if (!validationEvaluationRois(state.fullEvaluationRois).length)
+    return reject("検証済みValidation ROIがありません。ROIを確認済みとして割り当ててください");
+  const permitted = ["sensitivity","darkWeight","ridgeWeight","colorWeight",
+    "dendriteWeight","negativeEvidenceWeight","minComponent","centerlineNms"];
+  const beforeSettings = currentBoundaryOptions();
+  const candidateSettings = { ...beforeSettings };
+  for (const key of permitted) {
+    if (chosen[key] !== undefined) candidateSettings[key] = chosen[key];
+  }
+  if (permitted.every(key => candidateSettings[key] === beforeSettings[key]))
+    return reject("現在の設定と同じため採用不要です");
+  setBusy(true);
+  try {
+    const features = await ensureFeatures();
+    if (fingerprint !== state.sourceFingerprint) return reject("処理中に画像が変更されました");
+    const baseline = await buildBoundaryMask(features, { ...beforeSettings, onProgress: () => {} });
+    const proposal = await buildBoundaryMask(features, { ...candidateSettings, onProgress: () => {} });
+    const result = evaluatePreferenceAdoption(baseline, proposal, state.referenceCenterline,
+      state.preview.width, state.preview.height, {
+        imageRole: state.imageEvaluationRole,
+        fullEvaluationRois: state.fullEvaluationRois,
+        exclusionMask: state.exclusionMask,
+        tolerance: currentComparisonOptions().tolerance,
+        maxRecallDrop: 0.02,
+        maxPrecisionDrop: 0.02,
+        minF1Gain: 0.005,
+        minReferencePixels: 12,
+      });
+    const audit = { ...result, schema: "graintracer-preference-adoption-v1",
+      createdAt: new Date().toISOString(), imageFingerprint: fingerprint,
+      beforeSettings: Object.fromEntries(permitted.map(k => [k, beforeSettings[k]])),
+      proposedSettings: Object.fromEntries(permitted.map(k => [k, candidateSettings[k]])),
+      usedRole: "validation", testExcluded: true,
+    };
+    state.preferenceAdoptions.push(audit);
+    if (state.preferenceAdoptions.length > 200) state.preferenceAdoptions.shift();
+    if (!result.accepted) {
+      updateLocalAbStatus();
+      scheduleAutosave();
+      return result;
+    }
+    if (fingerprint !== state.sourceFingerprint) return reject("処理中に画像が変更されました");
+    // The guard passed before any parameter was modified. Apply atomically
+    // and keep the validated mask as the current analyzed result.
+    for (const key of permitted) {
+      if (key === "centerlineNms") els.centerlineNms.checked = Boolean(candidateSettings[key]);
+      else {
+        const input = els[key];
+        if (input) setRangeValue(input, candidateSettings[key]);
+      }
+    }
+    resetGapBridgeState(true);
+    state.analysisMask = proposal;
+    state.lastHysteresis = null;
+    invalidateTopology();
+    renderNormalOverlay();
+    updateMetrics();
+    updateLocalAbStatus();
+    updateControls();
+    scheduleAutosave();
+    setStatus("A/B候補の自動採用: Validation F1 " +
+      (result.before.f1*100).toFixed(2) + "% → " +
+      (result.after.f1*100).toFixed(2) + "%。Test未参照。");
+    return result;
+  } catch (error) {
+    console.error(error);
+    return reject("Validation評価エラー: " + error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 const localAbController = setupLocalAB({
   getSnapshot: () => state.preview && state.sourceFingerprint ? {
     preview: state.preview,
@@ -5631,6 +5724,10 @@ const localAbController = setupLocalAB({
     algorithmVersion: ALGORITHM_VERSION,
     boundaryOptions: { ...currentBoundaryOptions() },
     featureOptions: { ...currentFeatureOptions() },
+    localAbReviews: state.localAbReviews,
+    canTune: canTuneImage(state.imageEvaluationRole),
+    protectedRois: (state.fullEvaluationRois ?? []).filter(
+      r => r.verified === false || ["validation","test"].includes(r.evaluationRole)),
     exclusionMask: state.exclusionMask,
     referenceCenterline: state.referenceCenterline,
     negativeCenterline: state.negativeCenterline,
@@ -5647,12 +5744,14 @@ const localAbController = setupLocalAB({
     scheduleAutosave();
   },
   onFeedback: (indices, kind, anchor, provenance) => applyFeedbackIndices(indices, kind, anchor, provenance),
+  onAdopt: (settings, fingerprint) => guardedAdoptLocalPreference(settings, fingerprint),
 });
 function updateLocalAbStatus() {
   if (!els.localAbStatus) return;
   const votes = state.localAbReviews ?? [];
-  els.localAbStatus.textContent = "A/B選好履歴: " + votes.length
-    + "件（選好はF1等の正解率とは区別して保存）";
+  const accepted = state.preferenceAdoptions.filter(x => x.accepted).length;
+  els.localAbStatus.textContent = "A/B選好: " + votes.length + "件 / 検証付き採用: " +
+    accepted + "件（Validation限定、Test不使用）";
 }
 renderHistory();
 updateLocalAbStatus();
