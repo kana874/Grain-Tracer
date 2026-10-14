@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { selectFeedbackSegment, buildFeedbackConnection } from "../src/feedback-learning.js";
 import { createProjectSnapshot, migrateProject } from "../src/project.js";
+import { createReferenceEditTracker, paintReferenceCenterlineSegment } from "../src/reference-editor.js";
 
 test("feedback selects at most 3 adjacent pixels by default, never floods long boundaries", () => {
   const w = 100, h = 100, mask = new Uint8Array(w * h);
@@ -71,4 +72,15 @@ test("feedback review log round-trips without changing legacy project format", (
   });
   assert.deepEqual(migrateProject(project).feedbackReviews, feedback);
   assert.deepEqual(migrateProject({ ...project, feedbackReviews: undefined }).feedbackReviews, []);
+});
+
+test("changing one reviewed pixel to the opposite label never erases its neighbours", () => {
+  const w = 15, h = 15, mask = new Uint8Array(w * h);
+  const index = (x,y) => y*w+x;
+  mask[index(6,6)] = mask[index(7,6)] = mask[index(8,6)] = 1;
+  const tracker = createReferenceEditTracker();
+  paintReferenceCenterlineSegment(mask,w,h,{x:7,y:6},{x:7,y:6},{erase:true,eraseRadius:0},tracker);
+  assert.equal(mask[index(6,6)],1);
+  assert.equal(mask[index(7,6)],0);
+  assert.equal(mask[index(8,6)],1);
 });
