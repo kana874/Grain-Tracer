@@ -1,6 +1,6 @@
 export const PROJECT_FORMAT = "graintracer-project";
 export const PROJECT_VERSION = 4;
-export const APP_VERSION = "0.6.3-alpha";
+export const APP_VERSION = "0.6.4-alpha";
 export const ALGORITHM_VERSION = "boundary-v17-topology-repair-v4";
 
 const ROI_ROLES = new Set(["training", "validation", "test"]);
@@ -45,6 +45,7 @@ export function migrateProject(project) {
       ? { ...project.classifier }
       : null,
     fullEvaluationRois: rois,
+    feedbackReviews: Array.isArray(project.feedbackReviews) ? project.feedbackReviews.slice(-2000) : [],
   };
 }
 
@@ -113,6 +114,7 @@ export function createProjectSnapshot(input) {
     imageEvaluationRole,
     baselineSnapshots,
     classifier,
+    feedbackReviews,
   } = input;
   return {
     format: PROJECT_FORMAT,
@@ -124,6 +126,7 @@ export function createProjectSnapshot(input) {
     preview: { width: preview.width, height: preview.height, scale: preview.scale },
     settings,
     classifier: classifier ?? null,
+    feedbackReviews: (feedbackReviews ?? []).slice(-2000).map(item => ({ ...item })),
     reference: {
       mask: packBinaryMask(referenceMask),
       centerline: packBinaryMask(referenceCenterline),
