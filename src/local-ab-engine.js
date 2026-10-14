@@ -87,7 +87,7 @@ export class LocalPredictionRunner {
     if(packet.needsGlobal || !this.enabled)return buildLocalPrediction(features,roi,settings);
     try{
       if(!this.worker){
-        this.worker=new Worker(new URL('./local-ab-worker.js',import.meta.url),{type:'module'});
+        this.worker=new Worker(new URL('./local-ab-worker.js?v=0.9.0-alpha',import.meta.url),{type:'module'});
         this.worker.onmessage=event=>{
           const {id,error,mask}=event.data;
           const job=this.pending.get(id);if(!job)return;
