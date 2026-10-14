@@ -58,3 +58,62 @@ export function recommendDisagreementRoi(maskA,maskB,width,height,size,options={
   }
   return best;
 }
+
+function approximateCandidateScore(features,p,settings) {
+  const channels=[['dark','darkWeight'],['ridge','ridgeWeight'],
+    ['color','colorWeight'],['dendrite','dendriteWeight']];
+  let sum=0,weight=0;
+  for(const [name,key] of channels){
+    const w=Math.max(0,Number(settings[key]??0));
+    sum+=(features[name]?.[p]??0)*w/255;
+    weight+=w;
+  }
+  let score=weight?sum/weight:0;
+  if(settings.scoreMode==='evidence')
+    score-=((features.dendriteLinePenalty?.[p]??0)/255)*
+      Math.max(0,Number(settings.negativeEvidenceWeight??35))/100;
+  return score;
+}
+// Fast full-preview recommendation. Uses only sampled immutable feature
+// evidence and current masks: it never performs full-image segmentation.
+export function recommendFeatureRoi(features,champion,challenger,size,options={}) {
+  const width=features.width,height=features.height;
+  const cellStep=Math.max(16,Math.floor(size/2));
+  const forbidden=options.protectedRois??[],history=options.history??[];
+  const visited=new Set();
+  let best=null;
+  for(let y=0;y<height;y+=cellStep){
+    for(let x=0;x<width;x+=cellStep){
+      const roi=positionLocalRoi(width,height,size,x+cellStep/2,y+cellStep/2);
+      const key=roi.x+','+roi.y;
+      if(visited.has(key))continue;
+      visited.add(key);
+      if(protectedArea(roi,forbidden))continue;
+      let disagreement=0,unknown=0,valid=0,texture=0;
+      for(let yy=roi.y;yy<roi.y+roi.height;yy+=4){
+        for(let xx=roi.x;xx<roi.x+roi.width;xx+=4){
+          const p=yy*width+xx;
+          if(options.exclusionMask?.[p])continue;
+          valid++;
+          const a=approximateCandidateScore(features,p,champion);
+          const b=approximateCandidateScore(features,p,challenger);
+          const tA=0.76-Math.max(1,Number(champion.sensitivity??62))/100*.55;
+          const tB=0.76-Math.max(1,Number(challenger.sensitivity??62))/100*.55;
+          if((a>=tA)!==(b>=tB))disagreement++;
+          if(!options.labelMask?.[p]&&!options.negativeLabelMask?.[p])unknown++;
+          texture+=(features.ridge?.[p]??0)/255;
+        }
+      }
+      if(!valid)continue;
+      const repeat=history.filter(v=>v.roi&&intersect(roi,toBounds(v.roi))/
+        (roi.width*roi.height)>.40).length;
+      const edge=roi.x===0||roi.y===0||roi.x+roi.width===width||roi.y+roi.height===height;
+      const score=disagreement/valid*6+unknown/valid*.4+texture/valid*.15+
+        (edge?.20:0)-Math.min(8,repeat)*.32;
+      const item={roi,score,disagreement:disagreement/valid,novelty:unknown/valid,
+        touchesEdge:edge,repeat,approximate:true};
+      if(!best||item.score>best.score+1e-12)best=item;
+    }
+  }
+  return best;
+}
