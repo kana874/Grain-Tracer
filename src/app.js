@@ -4772,6 +4772,7 @@ function reviewFeedbackClick(event) {
 function setTool(tool) {
   state.feedbackPending = null;
   state.tool = tool;
+  updateFeedbackStatus();
   els.panToolButton.classList.toggle("active", tool === "pan");
   els.referenceToolButton.classList.toggle("active", tool === "reference");
   els.negativeToolButton.classList.toggle("active", tool === "negative-reference");
