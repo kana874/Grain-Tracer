@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.6.4-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.6.5-alpha">
 </head>
 <body>
   <header class="app-header">
@@ -12,7 +12,7 @@
       <h1>GrainTracer</h1>
       <p>バーカー法・偏光アルミ組織の粒界抽出ツール</p>
     </div>
-    <div class="version">v0.6.4-alpha</div>
+    <div class="version">v0.6.5-alpha</div>
   </header>
 
   <main class="layout">
@@ -106,6 +106,7 @@
           <canvas id="exclusionCanvas"></canvas>
           <canvas id="negativeCanvas"></canvas>
           <canvas id="referenceCanvas"></canvas>
+          <canvas id="feedbackCanvas"></canvas>
         </div>
         <div id="emptyState" class="empty-state">
           <strong>未読込</strong>
@@ -182,8 +183,10 @@
       </section>
 
       <section>
-        <h2>簡易フィードバック学習</h2>
-        <p class="help">先に「解析」を実行し、上部の「候補は正解」または「候補は誤検出」で短い抽出線をクリックしてください。抽出漏れは「欠落を指定」を選び、始点・終点の順に2回クリックします。中ボタンドラッグで移動でき、Undoで取り消せます。</p>
+<h2>簡易フィードバック学習</h2>
+        <p class="help">上部で「候補は正解」「候補は誤検出」を選び、マウスを載せると今回選ばれる画素がプレビュー表示されます。異なる線が含まれる場合は選択画素数を減らしてください。枝分かれ・近接線では自動延長を止めます。検出漏れは2点指定。Undoで取り消せます。</p>
+        <label class="select-row"><span>1回の評価範囲</span><select id="feedbackSelectionPixels" aria-label="正解・誤検出を1回で評価する最大候補画素数"><option value="1">1画素（精密）</option><option value="3" selected>最大3画素（標準）</option><option value="5">最大5画素</option><option value="9">最大9画素</option></select></label>
+        <p class="help">連結した線全体は選択しません。クリック位置から最大2px以内の候補だけを使用し、交差点では1画素判定へ縮小します。白い輪郭はカーソル位置の目安で、色付きの画素だけが学習対象です。</p>
         <button id="feedbackTuneButton" class="primary full" type="button" disabled>評価結果を使って再調整（Auto Tune）</button>
         <p id="feedbackStatus" class="help metric-detail" role="status">評価履歴: 正解 0 / 誤検出 0 / 検出漏れ 0</p>
         <p class="help">この評価は完全評価ROIを作らない部分ラベルです。精度の正式なPrecision/F1は完全確認済みROIで別途評価してください。Validation/Test画像では再調整できません。クリックだけではモデルの再学習は行わず、上の再調整ボタンで既存Auto Tuneを実行します。</p>
@@ -374,7 +377,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.6.4-alpha","./src/project.js":"./src/project.js?v=0.6.4-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.6.4-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.6.4-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.6.5-alpha","./src/project.js":"./src/project.js?v=0.6.5-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.6.5-alpha"}}</script>
+  <script type="module" src="./src/app.js?v=0.6.5-alpha"></script>
 </body>
 </html>
