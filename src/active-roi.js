@@ -38,7 +38,7 @@ export function recommendDisagreementRoi(maskA,maskB,width,height,size,options={
         const a=!!maskA[p],b=!!maskB[p];
         if(a!==b)different++;
         if(a||b)active++;
-        if(!options.labelMask?.[p])unlabeled++;
+        if(!options.labelMask?.[p] && !options.negativeLabelMask?.[p])unlabeled++;
       }
     }
     if(known===0)continue;
