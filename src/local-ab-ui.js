@@ -371,6 +371,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     if(!validContext())return;
     // Recommend BEFORE generating the next ROI. Previously this happened
     // afterward, so the displayed mask never matched the yellow ROI frame.
+    if(!keepPair)prepareChallenger();
     if(el('autoRoi').checked)recommendRoi();
     await generate();
   }
@@ -385,11 +386,8 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   }
   function pointFromEvent(event, side) {
     const rect = candidateCanvas[side].getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    const x = Math.floor((event.clientX - rect.left) * roi.width / rect.width);
-    const y = Math.floor((event.clientY - rect.top) * roi.height / rect.height);
-    if (x < 0 || x >= roi.width || y < 0 || y >= roi.height) return null;
-    return { x: roi.x + x, y: roi.y + y };
+    const p=eventToRoiPixel(event.clientX,event.clientY,rect,roi.width,roi.height);
+    return p?{x:roi.x+p.x,y:roi.y+p.y}:null;
   }
   function candidateFor(side, point) {
     const mask = side === 'a' ? a : b, width = current.preview.width;
@@ -627,7 +625,8 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     challenger=proposal=null;a=b=null;clearVote();
     report('方式を変更しました。A/Bを比較してください。');
   });
-  el('zoom').addEventListener('change', updateScale);
+  el('zoom').addEventListener('change', () =>
+    updateViewportZoom(Number(el('zoom').value)));
   for (const voteButton of dialog.querySelectorAll('[data-vote]'))
     voteButton.addEventListener('click', () => vote(voteButton.dataset.vote));
   el('judgeA').addEventListener('click', () => selectManualSide('a'));
@@ -645,6 +644,42 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     candidateCanvas[side].addEventListener('pointercancel', event => endStroke(event,side,true));
     candidateCanvas[side].addEventListener('pointerleave', () => {if(!stroke)drawHover();});
   }
+  for(const side of ['A','B']){
+    const pane=el('scroll'+side);
+    pane.addEventListener('wheel',event=>{
+      if(!current||stroke||pan)return;
+      event.preventDefault();
+      const zoom=nextWheelZoom(interactionZoom,event.deltaY);
+      if(zoom!==interactionZoom)updateViewportZoom(zoom,side,event.clientX,event.clientY);
+    },{passive:false});
+    pane.addEventListener('pointerdown',event=>{
+      if(event.button!==1||!current)return;
+      event.preventDefault();event.stopPropagation();
+      pan={side,id:event.pointerId,
+        x:event.clientX,y:event.clientY,
+        scrollLeft:pane.scrollLeft,scrollTop:pane.scrollTop};
+      pane.setPointerCapture(event.pointerId);
+      pane.classList.add('local-ab-panning');
+    });
+    pane.addEventListener('pointermove',event=>{
+      if(!pan||pan.id!==event.pointerId||pan.side!==side)return;
+      event.preventDefault();
+      const position=dragViewport(pan,{x:event.clientX,y:event.clientY});
+      pane.scrollLeft=position.scrollLeft;
+      pane.scrollTop=position.scrollTop;
+    });
+    const stop=event=>{
+      if(!pan||pan.id!==event.pointerId||pan.side!==side)return;
+      pan=null;
+      if(pane.hasPointerCapture(event.pointerId))pane.releasePointerCapture(event.pointerId);
+      pane.classList.remove('local-ab-panning');
+    };
+    pane.addEventListener('pointerup',stop);
+    pane.addEventListener('pointercancel',stop);
+    pane.addEventListener('auxclick',event=>{
+      if(event.button===1)event.preventDefault();
+    });
+  }
   for (const [left, right] of [['scrollA','scrollB'],['scrollB','scrollA']]) {
     el(left).addEventListener('scroll', () => {
       if (scrollLock) return;
@@ -654,5 +689,5 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       scrollLock = false;
     });
   }
-  return { close };
+  return { close, stats };
 }
