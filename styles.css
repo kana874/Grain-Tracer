@@ -210,3 +210,24 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
 .local-ab-undo-bar button { min-width:88px; font-weight:600; }
 .local-ab-undo-bar button:disabled { opacity:.4; cursor:not-allowed; }
 .local-ab-undo-bar [data-k="undoStatus"] { font-size:11px; color:var(--muted); }
+
+/* v0.9: A/B-first workspace; advanced controls remain in the DOM for
+   backward compatibility, keyboard editing and project loading. */
+.header-actions { display:flex; align-items:center; gap:12px; }
+.header-actions #uiModeToggle { padding:7px 12px; white-space:nowrap; }
+.focus-mode .legacy-feature { display:none !important; }
+.focus-mode .toolbar > button:not(#panToolButton):not(#referenceToolButton):not(#negativeToolButton):not(#exclusionToolButton):not(#fullRoiToolButton):not(#undoReferenceButton):not(#redoReferenceButton):not(#fitButton):not(#actualButton) { display:none !important; }
+.focus-mode .toolbar .toolbar-separator { display:none; }
+.focus-primary { padding-bottom:10px; }
+.focus-primary h2 { margin:0 0 10px; }
+.focus-primary h3 { margin:14px 0 8px; font-size:13px; }
+.focus-primary #localAbButton { font-weight:700; padding:12px 6px; }
+.focus-primary #learningSummary { background:rgba(38,132,116,.12); padding:8px; border-radius:5px; white-space:pre-line; }
+.local-ab-controls .local-ab-nav-hint { font-size:11px; color:var(--muted); }
+.local-ab-scroll { overscroll-behavior:contain; scrollbar-gutter:stable; }
+.local-ab-scroll.local-ab-panning { cursor:grabbing; user-select:none; }
+.local-ab-stage canvas[data-k="viewA"], .local-ab-stage canvas[data-k="viewB"] { cursor:crosshair; }
+.local-ab-scroll.local-ab-panning canvas { cursor:grabbing; }
+.local-ab-dialog .local-ab-compare { touch-action:pan-y; }
+.local-ab-modal-performance { font-size:11px; }
+@media (max-width:750px) { .header-actions { gap:5px; } .header-actions #uiModeToggle { font-size:11px; } }
