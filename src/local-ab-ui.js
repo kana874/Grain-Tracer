@@ -360,6 +360,8 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       } else {
         keepPair=true;
       }
+      record.preferenceConsensus={...consensus};
+      record.championAfter=preferenceParameterSnapshot(champion);
     }
     const canAdopt=adaptive && consensus?.winner==='b';
     report(adaptive
