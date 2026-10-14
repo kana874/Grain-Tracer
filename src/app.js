@@ -1,5 +1,7 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
+import { buildLocalPrediction } from './local-ab-engine.js';
+import { validationRoiConflicts, canVerifyValidationRoi, referencePixelsInRect } from './validation-roi.js';
 import { summarizePreferenceLearning, summarizeValidationTrend } from './local-ab-learning.js';
 import { evaluatePreferenceAdoption } from './preference-adoption.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
@@ -283,6 +285,7 @@ const state = {
   rectInteraction: null,
   selectedExclusionIndex: -1,
   selectedFullRoiIndex: -1,
+  validationDraft: null,
   undoStack: [],
   redoStack: [],
   analysisMask: null,
@@ -484,6 +487,7 @@ function updateControls() {
   els.feedbackMissingButton.disabled = disabled || !hasPreview;
   els.feedbackTuneButton.disabled = disabled || !hasRef || !tuneAllowed;
   els.localAbButton.disabled = disabled || !hasPreview;
+  refreshValidationWizardControls();
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
@@ -2314,7 +2318,9 @@ function currentFullRoiDisplayIndex(showSelection = true) {
   if (state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0) {
     return state.precisionGuide.currentRoiIndex;
   }
-  return state.tool === "full-roi" ? state.selectedFullRoiIndex : -1;
+  return state.validationDraft?.phase === "editing"
+    ? state.validationDraft.index
+    : state.tool === "full-roi" ? state.selectedFullRoiIndex : -1;
 }
 
 function rebuildFullRoiLayer(previewRect = null, showSelection = true) {
@@ -3117,6 +3123,7 @@ async function restoreProject(project, source = "プロジェクト") {
   state.closedNegativeValidCount = 0;
   state.closedNegativeInvalidCount = 0;
   state.exclusionRects = masks.exclusionRects;
+  state.validationDraft = null;
   state.fullEvaluationRois = repairPrecisionGuideRois(
     masks.fullEvaluationRois,
     state.preview.width,
@@ -3593,6 +3600,7 @@ async function loadBmp(file) {
   state.exclusionMask = null;
   state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
+  state.validationDraft = null;
   state.imageEvaluationRole = null;
   state.feedbackReviews = [];
   state.localAbReviews = [];
@@ -4906,9 +4914,9 @@ function setTool(tool) {
       null,
       state.precisionGuide.active && state.precisionGuide.currentRoiIndex >= 0
         ? state.precisionGuide.currentRoiIndex
-        : tool === "full-roi"
-          ? state.selectedFullRoiIndex
-          : -1,
+        : state.validationDraft?.phase === "editing"
+          ? state.validationDraft.index
+          : tool === "full-roi" ? state.selectedFullRoiIndex : -1,
       annotationHandleSize(),
     );
     applyAnnotationAssistView();
@@ -5245,13 +5253,32 @@ function endRectInteraction(event) {
     const rect = interaction.previewRect;
     if (rect && rectArea(rect) >= 9) {
       const index = rects.length;
+      const selectingValidation = !isExclusion && state.validationDraft?.phase === "selecting";
+      const conflicts = selectingValidation
+        ? validationRoiConflicts(rect,state.fullEvaluationRois,state.localAbReviews)
+        : {ok:true};
+      if(!conflicts.ok){
+        setStatus("Validation ROI: "+conflicts.reason);
+        $("validationRoiCreateStatus").textContent=conflicts.reason;
+      } else {
       const storedRect = isExclusion
         ? { ...rect }
-        : { ...rect, verified: true, source: "manual", evaluationRole: "training" };
+        : selectingValidation
+          ? { ...rect, verified:false, source:"validation-wizard-draft",
+            evaluationRole:"validation", createdAt:new Date().toISOString() }
+          : { ...rect, verified: true, source: "manual", evaluationRole: "training" };
       rects.push(storedRect);
       setSelectedRectIndex(interaction.kind, index);
       commitReferenceHistory({ kind: historyPrefix + "-add", index, rect: { ...storedRect } });
       changed = true;
+      if(selectingValidation) {
+        state.validationDraft={phase:"editing",index};
+        $("validationRoiAttest").checked=false;
+        setTool("reference");
+        focusPreviewRect(storedRect);
+        setStatus("検証領域を作成しました。抽出候補を下書きに取り込み、誤検出・欠落を修正してください。");
+      }
+      }
     }
   } else {
     const after = rects[interaction.index];
