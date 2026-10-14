@@ -188,18 +188,16 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       imageFingerprint: current.fingerprint,
       roi: { ...roi }, coordinateSystem: 'analysis-preview',
       winner,
-      aSettings: {
-        sensitivity: current.boundaryOptions.sensitivity,
-        minComponent: current.boundaryOptions.minComponent,
-        centerlineNms: current.boundaryOptions.centerlineNms,
-        scoreMode: current.boundaryOptions.scoreMode,
-      },
+      aSettings: Object.fromEntries(['sensitivity','minComponent','centerlineNms','scoreMode',
+        'darkWeight','ridgeWeight','colorWeight','dendriteWeight','negativeEvidenceWeight',
+        'edgeFrameGuard'].map(name => [name, current.boundaryOptions[name] ?? null])),
+      featureOptions: { ...current.featureOptions },
+      appVersion: current.appVersion,
+      algorithmVersion: current.algorithmVersion,
       variant: el('variant').value,
-      bSettings: {
-        sensitivity: variantOptions(current.boundaryOptions).sensitivity,
-        centerlineNms: variantOptions(current.boundaryOptions).centerlineNms,
-        edgeFrameGuard: variantOptions(current.boundaryOptions).edgeFrameGuard,
-      },
+      bSettings: Object.fromEntries(['sensitivity','minComponent','centerlineNms','scoreMode',
+        'darkWeight','ridgeWeight','colorWeight','dendriteWeight','negativeEvidenceWeight',
+        'edgeFrameGuard'].map(name => [name, variantOptions(current.boundaryOptions)[name] ?? null])),
       counts,
     });
     for (const button of dialog.querySelectorAll('[data-vote]'))
@@ -276,7 +274,9 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
         return;
       }
       pending = null;
-      const saved = onFeedback(path.indices, 'missing', path.anchor);
+      const saved = onFeedback(path.indices, 'missing', path.anchor, {
+        source: 'local-ab', candidate: side, roi: { ...roi }, variant: el('variant').value,
+      });
       el('reviewStatus').textContent = saved ? '検出漏れを部分ラベルとして保存しました。' : '既存ラベルと重複しています。';
     } else {
       const picked = candidateFor(side, point);
@@ -284,7 +284,9 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
         el('reviewStatus').textContent = '候補がクリックから2px以内にありません。欠落を指定してください。';
         return;
       }
-      const saved = onFeedback(picked.indices, kind, picked.anchor);
+      const saved = onFeedback(picked.indices, kind, picked.anchor, {
+        source: 'local-ab', candidate: side, roi: { ...roi }, variant: el('variant').value,
+      });
       el('reviewStatus').textContent = saved
         ? kind === 'positive' ? '正解を保存しました。' : '誤検出を保存しました。'
         : '同じ画素は評価済みです。';
