@@ -1,7 +1,7 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
 import { buildLocalPrediction } from './local-ab-engine.js';
-import { validationRoiConflicts, canVerifyValidationRoi, referencePixelsInRect } from './validation-roi.js';
+import { validationRoiConflicts, canVerifyValidationRoi, referencePixelsInRect, validationUsageAreas, recommendUnusedValidationRoi } from './validation-roi.js';
 import { summarizePreferenceLearning, summarizeValidationTrend } from './local-ab-learning.js';
 import { evaluatePreferenceAdoption } from './preference-adoption.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
@@ -126,6 +126,7 @@ const els = {
   negativeCanvas: $("negativeCanvas"),
   referenceCanvas: $("referenceCanvas"),
   feedbackCanvas: $("feedbackCanvas"),
+  validationUsageCanvas: $("validationUsageCanvas"),
   emptyState: $("emptyState"),
   panToolButton: $("panToolButton"),
   referenceToolButton: $("referenceToolButton"),
@@ -316,6 +317,7 @@ const state = {
   imageEvaluationRole: null,
   feedbackReviews: [],
   localAbReviews: [],
+  validationSuggestedRect: null,
   preferenceAdoptions: [],
   feedbackPending: null,
   baselineSnapshots: [],
@@ -538,7 +540,7 @@ function resetMetadata() {
 }
 
 function prepareCanvas(width, height) {
-  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.gapCanvas, els.fullRoiCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas, els.feedbackCanvas]) {
+  for (const canvas of [els.imageCanvas, els.overlayCanvas, els.gapCanvas, els.fullRoiCanvas, els.exclusionCanvas, els.negativeCanvas, els.referenceCanvas, els.feedbackCanvas, els.validationUsageCanvas]) {
     canvas.width = width;
     canvas.height = height;
     canvas.style.width = `${width}px`;
@@ -2302,6 +2304,116 @@ function setSelectedRoiEvaluationRole(value) {
   updateControls();
 }
 
+
+const validationColors={
+  ab:{fill:"rgba(255,174,40,.21)",stroke:"#ffb43e"},
+  manual:{fill:"rgba(253,97,143,.32)",stroke:"#ff6293"},
+  existing:{fill:"rgba(90,169,245,.25)",stroke:"#79bdff"},
+  excluded:{fill:"rgba(136,143,156,.25)",stroke:"#9ca7b9"},
+};
+function renderValidationUsageView(){
+  const full=els.validationUsageCanvas,ctx=full.getContext("2d");
+  ctx.clearRect(0,0,full.width,full.height);
+  const wrap=$("validationUsageMapWrap"),visible=$("validationUsageToggle").checked;
+  wrap.hidden=!visible||!state.preview;
+  if(!state.preview||!visible)return;
+  const width=state.preview.width,height=state.preview.height;
+  const used=validationUsageAreas(width,height,state.fullEvaluationRois,
+    state.localAbReviews,state.feedbackReviews,state.exclusionRects,state.sourceFingerprint);
+  const suggested=state.validationSuggestedRect;
+  const draw=(context,sx,sy,rect,kind)=>{
+    const color=validationColors[kind];
+    const x=rect.x0*sx,y=rect.y0*sy,w=(rect.x1-rect.x0+1)*sx,h=(rect.y1-rect.y0+1)*sy;
+    context.fillStyle=color.fill;context.fillRect(x,y,w,h);
+    context.strokeStyle=color.stroke;context.lineWidth=Math.max(1,1.5*Math.min(sx,sy));
+    context.strokeRect(x+0.5,y+0.5,Math.max(1,w-1),Math.max(1,h-1));
+  };
+  const drawSuggested=(context,sx,sy)=>{
+    if(!suggested)return;
+    const x=suggested.x0*sx,y=suggested.y0*sy;
+    const w=(suggested.x1-suggested.x0+1)*sx,h=(suggested.y1-suggested.y0+1)*sy;
+    context.fillStyle="rgba(55,255,147,.17)";context.fillRect(x,y,w,h);
+    context.strokeStyle="#43ff99";
+    context.lineWidth=Math.max(2,2*Math.min(sx,sy));
+    context.setLineDash([Math.max(4,8*sx),Math.max(3,5*sy)]);
+    context.strokeRect(x+1,y+1,Math.max(1,w-2),Math.max(1,h-2));
+    context.setLineDash([]);
+  };
+  // The full-image overlay shares its scale and transform with the micrograph.
+  if(state.validationDraft?.phase!=="editing"){
+    for(const area of used)draw(ctx,1,1,area,area.kind);
+    drawSuggested(ctx,1,1);
+  }
+  const map=$("validationUsageMap");
+  const mapW=300,mapH=Math.max(80,Math.round(mapW*height/width));
+  if(map.width!==mapW||map.height!==mapH){map.width=mapW;map.height=mapH;}
+  const mctx=map.getContext("2d");
+  mctx.clearRect(0,0,mapW,mapH);
+  mctx.drawImage(els.imageCanvas,0,0,mapW,mapH);
+  for(const area of used)draw(mctx,mapW/width,mapH/height,area,area.kind);
+  drawSuggested(mctx,mapW/width,mapH/height);
+  const counts={ab:0,manual:0,existing:0,excluded:0};
+  for(const area of used)counts[area.kind]++;
+  $("validationUsageCounts").textContent=
+    "保存履歴: A/B "+counts.ab+" / 手動 "+counts.manual+
+    " / ROI "+counts.existing+" / 除外 "+counts.excluded+
+    (suggested?" / 推薦 "+suggested.size+"px":"");
+}
+function updateValidationUsageSuggestion(){
+  if(!state.preview||state.busy)return null;
+  const rect=recommendUnusedValidationRoi({
+    width:state.preview.width,height:state.preview.height,
+    existingRois:state.fullEvaluationRois,abReviews:state.localAbReviews,
+    feedbackReviews:state.feedbackReviews,exclusionRects:state.exclusionRects,
+    fingerprint:state.sourceFingerprint,
+  });
+  state.validationSuggestedRect=rect;
+  $("validationUsageToggle").checked=true;
+  $("validationRoiUseRecommendationButton").disabled=!rect||Boolean(state.validationDraft);
+  renderValidationUsageView();
+  if(!rect){
+    const message="保存済み履歴と重ならない96px以上の候補がありません。別の画像か学習に使用していない場所を検討してください。";
+    $("validationRoiCreateStatus").textContent=message;
+    setStatus(message);
+  }else{
+    const message="緑枠："+rect.size+"×"+rect.size+
+      "px（プレビュー座標 x="+rect.x0+", y="+rect.y0+"）。「緑枠の推薦範囲で作成開始」を押すか、マップで位置を確認してください。";
+    $("validationRoiCreateStatus").textContent=message;
+    setStatus(message);
+    fitToViewer();
+  }
+  return rect;
+}
+function createSuggestedValidationRoi(){
+  const rect=state.validationSuggestedRect;
+  if(!rect||!state.preview||state.busy)return false;
+  if(!state.validationDraft && !startValidationRoiWizard())return false;
+  if(state.validationDraft?.phase!=="selecting")return false;
+  const validated=validationRoiConflicts(rect,state.fullEvaluationRois,state.localAbReviews,-1,state.feedbackReviews);
+  if(!validated.ok||state.exclusionRects.some(e=>roiOverlapPixels(e,rect)>0)){
+    $("validationRoiCreateStatus").textContent=validated.ok?
+      "除外領域と重なっています。別の場所を推薦してください。":validated.reason;
+    updateValidationUsageSuggestion();
+    return false;
+  }
+  const index=state.fullEvaluationRois.length;
+  const stored={x0:rect.x0,y0:rect.y0,x1:rect.x1,y1:rect.y1,
+    verified:false,source:"validation-wizard-draft",
+    evaluationRole:"validation",createdAt:new Date().toISOString()};
+  state.fullEvaluationRois.push(stored);
+  state.selectedFullRoiIndex=index;
+  state.validationDraft={phase:"editing",index};
+  state.validationSuggestedRect=null;
+  commitReferenceHistory({kind:"roi-add",index,rect:{...stored}});
+  $("validationRoiAttest").checked=false;
+  $("validationUsageToggle").checked=false;
+  setTool("reference");
+  focusPreviewRect(stored);
+  rebuildFullRoiLayer();invalidateEvaluationOnly();updateControls();scheduleAutosave();
+  renderValidationUsageView();
+  setStatus("推薦された未使用の領域を作成しました。抽出候補を下書きに取り込み、正解線を確認してください。");
+  return true;
+}
 // Validation ROI editor: a draft is never used for Validation adoption until
 // the user has checked the entire region and explicitly attested completion.
 function validationEditingRect() {
@@ -3278,6 +3390,8 @@ async function restoreProject(project, source = "プロジェクト") {
   state.closedNegativeInvalidCount = 0;
   state.exclusionRects = masks.exclusionRects;
   state.validationDraft = null;
+  state.validationSuggestedRect = null;
+  $("validationUsageToggle").checked=false;
   state.fullEvaluationRois = repairPrecisionGuideRois(
     masks.fullEvaluationRois,
     state.preview.width,
@@ -3755,6 +3869,8 @@ async function loadBmp(file) {
   state.exclusionPixelCount = 0;
   state.fullEvaluationRois = [];
   state.validationDraft = null;
+  state.validationSuggestedRect = null;
+  $("validationUsageToggle").checked=false;
   state.imageEvaluationRole = null;
   state.feedbackReviews = [];
   state.localAbReviews = [];
