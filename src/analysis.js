@@ -359,6 +359,21 @@ function neighborSupport(mask, width, height) {
     for (let x = 0; x < width; x += 1) {
       const p = y * width + x;
       if (!mask[p]) continue;
+      const onFrame = x === 0 || y === 0 || x === width - 1 || y === height - 1;
+      if (onFrame) {
+        // Reject a dark rectangular frame even when its border pixels form
+        // a long connected component. A genuine boundary touching the edge
+        // must connect to image evidence at least one pixel inward.
+        let connectsInward = false;
+        for (let dy = -1; dy <= 1 && !connectsInward; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx <= 0 || ny <= 0 || nx >= width - 1 || ny >= height - 1) continue;
+            if (mask[ny * width + nx]) { connectsInward = true; break; }
+          }
+        }
+        if (!connectsInward) continue;
+      }
       let count = 0;
       for (let dy = -1; dy <= 1; dy += 1) {
         const ny = y + dy;
