@@ -1,12 +1,14 @@
-// Feedback Learning v1: local review regions are partial labels, never complete-ROI truth.
-// Restrict every approval to a small connected patch to avoid accidentally labelling
-// a complete grain network when the predicted boundary has junctions.
+// Feedback Learning v2: exact, short, branch-safe partial labels.
+// Do NOT flood-fill a connected boundary network: touching/parallel lines can
+// share 8-neighbour connections and receive the wrong label.
 export function selectFeedbackSegment(mask, width, height, point, options = {}) {
-  if (!mask || mask.length !== width * height || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
-  const searchRadius = Math.max(0, Math.min(12, Math.round(options.searchRadius ?? 5)));
-  const maxDistance = Math.max(1, Math.min(32, Math.round(options.maxDistance ?? 12)));
-  const maxPixels = Math.max(1, Math.min(256, Math.round(options.maxPixels ?? 120)));
-  const excluded = options.exclusionMask ?? null;
+  if (!mask || mask.length !== width * height || !point ||
+      !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  if (point.x < 0 || point.y < 0 || point.x >= width || point.y >= height) return null;
+
+  const searchRadius = Math.max(0, Math.min(3, Math.round(options.searchRadius ?? 2)));
+  const maxPixels = Math.max(1, Math.min(9, Math.round(options.maxPixels ?? 3)));
+  const exclusionMask = options.exclusionMask ?? null;
   const cx = Math.round(point.x), cy = Math.round(point.y);
   let seed = -1, best = Infinity;
   for (let dy = -searchRadius; dy <= searchRadius; dy++) {
@@ -16,30 +18,52 @@ export function selectFeedbackSegment(mask, width, height, point, options = {}) 
       const d2 = dx * dx + dy * dy;
       if (d2 > searchRadius * searchRadius || d2 >= best) continue;
       const p = y * width + x;
-      if (mask[p] && !excluded?.[p]) { seed = p; best = d2; }
+      if (mask[p] && !exclusionMask?.[p]) { seed = p; best = d2; }
     }
   }
   if (seed < 0) return null;
-  const sx = seed % width, sy = Math.floor(seed / width);
-  const queue = [seed], seen = new Set([seed]), indices = [];
-  let head = 0;
-  while (head < queue.length && indices.length < maxPixels) {
-    const p = queue[head++], x = p % width, y = Math.floor(p / width);
-    indices.push(p);
+  const neighbors = index => {
+    const x = index % width, y = Math.floor(index / width), out = [];
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
+        if (dx === 0 && dy === 0) continue;
         const nx = x + dx, ny = y + dy;
         if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-        if ((nx - sx) ** 2 + (ny - sy) ** 2 > maxDistance * maxDistance) continue;
-        const np = ny * width + nx;
-        if (seen.has(np) || !mask[np] || excluded?.[np]) continue;
-        seen.add(np);
-        queue.push(np);
+        const next = ny * width + nx;
+        if (mask[next] && !exclusionMask?.[next]) out.push(next);
+      }
+    }
+    return out;
+  };
+  const indices = [seed];
+  // A seed on a junction, thick area or touching neighbour is only a
+  // single-pixel judgment. Never cross a branch or guess which way to turn.
+  const roots = neighbors(seed);
+  if (maxPixels > 1 && roots.length <= 2) {
+    const arms = roots.map(next => ({ current: next, previous: seed, stopped: false }));
+    while (indices.length < maxPixels && arms.some(arm => !arm.stopped)) {
+      for (const arm of arms) {
+        if (arm.stopped || indices.length >= maxPixels) continue;
+        if (indices.includes(arm.current)) { arm.stopped = true; continue; }
+        // Do not include a junction pixel: even its first step is ambiguous.
+        const adjacent = neighbors(arm.current);
+        if (adjacent.length > 2 || !adjacent.includes(arm.previous)) {
+          arm.stopped = true;
+          continue;
+        }
+        indices.push(arm.current);
+        const onward = adjacent.filter(next => next !== arm.previous && !indices.includes(next));
+        if (onward.length !== 1) {
+          arm.stopped = true;
+        } else {
+          arm.previous = arm.current;
+          arm.current = onward[0];
+        }
       }
     }
   }
-  return { indices, anchor: { x: sx, y: sy }, truncated: head < queue.length };
+  return { indices, anchor: { x: seed % width, y: Math.floor(seed / width) },
+    snappedDistance: Math.sqrt(best), truncated: false };
 }
 
 // Explicit two-point missing boundary correction. A sampled path through any
