@@ -32,10 +32,14 @@ function scoreArm(action, votes, round) {
   for (const vote of votes) {
     if (vote.actionKey !== key) continue;
     uses++;
-    if (vote.winner === 'b') rewards+=1;
-    else if (vote.winner === 'a') rewards+=0;
-    else if (vote.winner === 'neither') rewards+=0.15;
-    else rewards+=0.4;
+    const manual=Number(vote.manualEvidence?.difference??0);
+    const labelWeight=vote.manualEvidence?.labeled>=8 ? Math.max(-.3,Math.min(.3,manual)) : 0;
+    // Explicit partial labels provide weak additional evidence, but the
+    // preference vote remains primary and unknown pixels are not negatives.
+    if (vote.winner === 'b') rewards+=Math.max(0,Math.min(1,1+labelWeight));
+    else if (vote.winner === 'a') rewards+=Math.max(0,labelWeight);
+    else if (vote.winner === 'neither') rewards+=Math.max(0,.15+labelWeight);
+    else rewards+=Math.max(0,.4+labelWeight);
   }
   // UCB1-style exploration prevents the search from repeating only sensitivity.
   return (rewards + 1) / (uses + 2) + 0.8 * Math.sqrt(Math.log(round + 2)/(uses + 1));
@@ -75,7 +79,10 @@ export function recoverPreferenceChampion(liveSettings, votes, fingerprint, feat
     JSON.stringify(v.featureOptions??{})===JSON.stringify(featureOptions??{}));
   if (!matched.length) return { ...liveSettings };
   const last=matched[matched.length-1];
-  const selected=last.winner==='b'?last.bSettings:last.aSettings;
+  // v0.9 stores the post-consensus champion explicitly. Do not restore a
+  // candidate that merely won one ROI but was never promoted globally.
+  const selected=last.championAfter ??
+    (last.winner==='b'?last.bSettings:last.aSettings);
   const result={...liveSettings};
   for (const key of Object.keys(preferenceParameterSnapshot(liveSettings))) {
     const value=selected?.[key];
