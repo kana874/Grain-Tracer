@@ -1,3 +1,14 @@
+# v0.9.0-alpha — A/B-first workspace (six phases)
+
+- P1: A/B synchronized wheel zoom (25–800%, cursor-centered) and middle-drag pan. Coordinate transformations for accurate manual correction; left drag unchanged.
+- P2: ROI+64px halo A/B segmentation instead of repeatedly processing the whole preview, Worker processing with main-thread fallback, 10-entry LRU keyed by source/ROI/parameters/feature options/manual-mask revision. Global-frame fallback for calibration coordinate maps.
+- P3: Preference learning requires favorable votes from at least two independent spatially non-overlapping ROIs before promoting B to Champion. Active ROI recommendations use cached feature evidence and exclude held-out Validation/Test regions.
+- P4: User-corrected Positive/Negative partial labels weakly bias the next parameter search; unknown pixels stay unlabeled. Guided strokes remain undoable in one action and stop at disconnected boundaries.
+- P5: Default A/B-first UI, with original Auto Tune/Topology/Gap/Classifier tools preserved under "詳細機能を表示". Safeguarded Validation-only F1 adoption, learning history status, improvement/stagnation/regression label and project-compatible vote history.
+- P6: Extended synthetic acceptance tests for zoom/pan, full-vs-ROI parity, LRU isolation, held-out ROI exclusion, manual-label scores, JSON/DOM, 120 preference/cache operations and 100 actual local segmentation operations.
+- Kept `PROJECT_VERSION=4` and `boundary-v18-reflected-edge-v1`; version bumped to v0.9.0-alpha.
+- Limitations: A/B uses preview pixels and real large-BMP speed/accuracy and browser wheel/pan/long-run behavior remain to be measured. Independent Validation/Test remain required for claims about accuracy.
+
 # v0.8.1-alpha — A/B Undo controls + diagnostic export robustness
 
 - 局所A/B比較ダイアログの手動評価欄に明示的な「Undo」「Redo」ボタンと操作件数を追加。Ctrl+Z / Ctrl+Y / Ctrl+Shift+Zに対応し、グローバル履歴を二重実行しない。
