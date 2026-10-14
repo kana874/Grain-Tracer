@@ -267,3 +267,19 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
 .validation-wizard .validation-attest input {margin-top:3px; flex:0 0 auto;}
 
 .local-ab-manual .local-ab-undo-bar .help {width:auto;flex:0 0 auto;margin:0;}
+
+/* v0.9.2 — learning history footprint; same transform as main preview. */
+#validationUsageCanvas { pointer-events:none; image-rendering:auto; }
+.validation-usage-map-wrap { margin:8px 0 10px; padding:8px; background:#121c22;
+  border:1px solid #446176; border-radius:8px; }
+.validation-usage-map-wrap[hidden] { display:none !important; }
+#validationUsageMap { display:block; width:100%; height:auto; border:1px solid #778c9f; border-radius:3px; }
+#validationUsageCounts { margin:6px 0; font-size:11px; line-height:1.5; }
+.validation-usage-legend { display:flex; flex-wrap:wrap; gap:6px 10px; margin:8px 0; }
+.validation-usage-legend span { display:inline-flex; align-items:center; gap:4px; color:var(--muted); font-size:10px; }
+.validation-swatch { display:inline-block; width:12px; height:10px; border:1px solid transparent; border-radius:2px; }
+.validation-swatch.ab {background:rgba(255,174,40,.38);border-color:#ffb43e;}
+.validation-swatch.manual {background:rgba(253,97,143,.48);border-color:#ff6293;}
+.validation-swatch.existing {background:rgba(90,169,245,.44);border-color:#79bdff;}
+.validation-swatch.excluded {background:rgba(136,143,156,.5);border-color:#9ca7b9;}
+.validation-swatch.recommended {background:rgba(55,255,147,.19);border:2px dashed #43ff99;}
