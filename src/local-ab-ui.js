@@ -226,6 +226,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
         protectedRois: snapshot?.protectedRois ?? [],
         exclusionMask: current.exclusionMask,
         labelMask: snapshot?.referenceCenterline,
+        negativeLabelMask: snapshot?.negativeCenterline,
       });
     if (!candidate) {
       report('未評価で保護領域外のROIを推薦できません。');
