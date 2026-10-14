@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cropSizeForArea,positionCrop,resizeCropForArea,previewToSource} from '../src/ground-truth-selection.js';
+import {cropSizeForArea,positionCrop,resizeCropForArea,previewToSource,canOpenCrop,sameCrop} from '../src/ground-truth-selection.js';
 import {MAX_CROP_PIXELS,decodeBmpCrop} from '../src/ground-truth.js';
 
 test('all area fractions preserve source aspect with subpixel rounding for portrait and landscape sources',()=>{
@@ -40,4 +40,14 @@ test('native crops larger than the previous cap are accepted without changing so
  assert.equal(pixels.length,w*h*4);
  assert.deepEqual(Array.from(pixels.slice(0,4)),[7,8,9,255]);
  await assert.rejects(decodeBmpCrop(file,{...header,width:MAX_CROP_PIXELS}, {x:0,y:0,width:MAX_CROP_PIXELS,height:2}));
+});
+
+test('initial editor crop can auto-open and selection changes remain distinct',()=>{
+ const initial={x:5219,y:3827,width:3480,height:2551};
+ assert.equal(canOpenCrop(initial,MAX_CROP_PIXELS),true);
+ assert.equal(canOpenCrop({...initial,width:50000},MAX_CROP_PIXELS),false);
+ assert.equal(canOpenCrop(null,MAX_CROP_PIXELS),false);
+ assert.equal(sameCrop(initial,{...initial}),true);
+ assert.equal(sameCrop(initial,{...initial,x:960,y:927}),false);
+ assert.equal(sameCrop(initial,null),false);
 });

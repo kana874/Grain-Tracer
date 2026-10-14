@@ -21,6 +21,16 @@ export function resizeCropForArea(width, height, crop, denominator) {
   return positionCrop(width, height, size, crop.x + (crop.width - size.width) / 2, crop.y + (crop.height - size.height) / 2);
 }
 
+export function canOpenCrop(crop, maxPixels) {
+  return Boolean(crop && Number.isInteger(crop.width) && Number.isInteger(crop.height)
+    && crop.width > 0 && crop.height > 0 && Number.isFinite(maxPixels)
+    && crop.width * crop.height <= maxPixels);
+}
+
+export function sameCrop(a, b) {
+  return Boolean(a && b && ['x', 'y', 'width', 'height'].every(key => a[key] === b[key]));
+}
+
 export function previewToSource(clientX, clientY, bounds, width, height) {
   return {
     x: Math.max(0, Math.min(width, (clientX - bounds.left) * width / bounds.width)),

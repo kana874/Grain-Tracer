@@ -1,5 +1,5 @@
 import {paintStroke,fillInterior,labelGrains,decodeBmpCrop,MAX_CROP_PIXELS} from './ground-truth.js';
-import {cropSizeForArea,positionCrop,resizeCropForArea} from './ground-truth-selection.js';
+import {cropSizeForArea,positionCrop,resizeCropForArea,canOpenCrop,sameCrop} from './ground-truth-selection.js';
 import {setupImageViewport} from './image-viewport.js';
 import {APP_VERSION} from './project.js';
 import {saveAutosave,loadAutosave} from './storage.js';
@@ -19,7 +19,7 @@ export function setupGroundTruth(getSource) {
  </section><section class="truth-editor" aria-label="正解データ編集">
  <div class="truth-controls"><select data-k="tool" aria-label="編集ツール"><option value="pan">移動</option><option value="1" selected>粒界（黄）</option><option value="2">粒内（緑）</option><option value="3">除外（赤）</option><option value="0">未確認へ戻す</option><option value="fill">粒内を閉領域塗り</option><option value="inspect">粒を確認</option></select>ブラシ半径(px)<input data-k="radius" type="number" value="2" min="0.5" max="100" step="0.5"><button data-action="undo">Undo</button><button data-action="redo">Redo</button><label><input data-k="overlay" type="checkbox" checked>注釈表示</label>倍率<select data-k="zoom"><option>1</option><option>2</option><option>4</option><option>8</option><option value="custom" hidden>任意</option></select><button data-action="fit">全体表示</button><button data-action="actual">100%</button><output data-k="zoomLabel"></output></div>
  <div class="truth-controls">状態<select data-k="status"><option value="draft">編集中</option><option value="review">確認待ち</option><option value="confirmed">確定（部分正解も可）</option></select>区分<select data-k="split"><option value="train">学習</option><option value="validation">検証</option><option value="test">最終評価</option></select>µm/px<input data-k="scale" type="number" min="0" step="any" placeholder="未設定"><button data-action="save">JSON保存</button><label>JSON読込<input data-k="import" type="file" accept=".json"></label><button data-action="export">正解ZIP出力</button><button data-action="close">閉じる</button></div>
- <p data-k="message" role="status"></p><div class="truth-scroll" data-k="viewer" tabindex="0" role="group" aria-label="正解データ画像ビューア"><div class="truth-stage" data-k="editorStage" hidden><canvas data-k="editor"></canvas></div></div></section></div>`;
+ <p data-k="message" role="status"></p><p data-k="editRegion" class="truth-region-state" role="status"></p><div class="truth-scroll" data-k="viewer" tabindex="0" role="group" aria-label="正解データ画像ビューア"><div class="truth-stage" data-k="editorStage" hidden><canvas data-k="editor"></canvas></div></div></section></div>`;
  document.body.append(dialog);
  const el=k=>dialog.querySelector(`[data-k="${k}"]`),canvas=el('editor'),ctx=canvas.getContext('2d');
  let catalog={},source,doc,rgba,mask,undo=[],redo=[],stroke=null,saveChain=Promise.resolve(),selection=null,drag=null,opening=false,initializing=false;
@@ -28,12 +28,22 @@ export function setupGroundTruth(getSource) {
  const editView=setupImageViewport(viewer,el('editorStage'),{getSize:()=>({width:canvas.width,height:canvas.height}),enabled:()=>Boolean(mask)&&!opening&&!initializing,canZoom:()=>!stroke,leftPan:()=>el('tool').value==='pan',onChange:v=>{el('zoomLabel').textContent=`${Math.round(v.scale*100)}%`;el('zoom').value=[1,2,4,8].includes(v.scale)?String(v.scale):'custom';}});
  const previewView=setupImageViewport(el('overview'),el('previewStage'),{getSize:()=>({width:source.preview.width,height:source.preview.height}),enabled:()=>Boolean(source)&&!opening&&!initializing,canZoom:()=>!drag,onChange:v=>{el('previewZoom').textContent=`${Math.round(v.scale*100)}%`;el('selection').style.borderWidth=2/v.scale+'px';el('selection').style.boxShadow=`0 0 0 ${1/v.scale}px #000, inset 0 0 0 ${1/v.scale}px #000`;}});
  const key=()=>`ground-truth:${source.fingerprint}`;
+ function updateRegionStatus(){
+  const label=el('editRegion');
+  if(!doc?.crop){label.textContent='編集中の範囲: 読込前';label.classList.remove('needs-open');return;}
+  const changed=!sameCrop(selection,doc.crop);
+  label.classList.toggle('needs-open',changed);
+  label.textContent=changed
+   ? `選択範囲は未反映です。編集中: X ${doc.crop.x} / Y ${doc.crop.y} / ${doc.crop.width} × ${doc.crop.height}px。切り替えるには「選択範囲を開く」を押してください。`
+   : `現在編集中: X ${doc.crop.x} / Y ${doc.crop.y} / ${doc.crop.width} × ${doc.crop.height}px`;
+ }
  function setSelection(r){
   selection=r;
   for(const k of ['x','y','width','height'])el(k).value=r[k];
   el('x').max=source.header.width-r.width;el('y').max=source.header.height-r.height;
   const frame=el('selection');
   Object.assign(frame.style,{left:r.x*source.preview.width/source.header.width+'px',top:r.y*source.preview.height/source.header.height+'px',width:r.width*source.preview.width/source.header.width+'px',height:r.height*source.preview.height/source.header.height+'px'});
+  updateRegionStatus();
   const tooLarge=r.width*r.height>MAX_CROP_PIXELS;
   dialog.querySelector('[data-action="crop"]').disabled=opening||initializing||tooLarge;
   el('selectionInfo').textContent=`${r.width.toLocaleString()} × ${r.height.toLocaleString()} px / 面積 ${(100*r.width*r.height/(source.header.width*source.header.height)).toFixed(2)}%`+(tooLarge?'。読込上限を超えています。より小さいサイズを選んでください。':'');
@@ -107,5 +117,5 @@ export function setupGroundTruth(getSource) {
  const binary=new Uint8Array(ids.length*4),view=new DataView(binary.buffer);ids.forEach((id,p)=>view.setUint32(p*4,id,true));entries.push({name:'grain-ids.u32',data:binary},{name:'manifest.json',data:JSON.stringify({schema:doc.schema,appVersion:APP_VERSION,source:doc.source,crop:doc.crop,split:doc.split,status:doc.status,micrometersPerPixel:doc.micrometersPerPixel,counts,completeCoverage:counts[0]===0,grains,grainIds:{file:'grain-ids.u32',dtype:'uint32',endianness:'little',shape:[h,w],background:0},labelValues:{unknown:0,boundary:1,interior:2,excluded:3},note:'粒IDは確認済み粒内のみ。同一元画像は同じ学習区分にまとめてください。'},null,2)});
  downloadBlob(await buildStoredZip(entries),'ground-truth.zip');say(`出力完了。未確認 ${counts[0]}px / 完全な粒 ${grains.filter(g=>!g.incomplete).length} / 不完全な粒 ${grains.filter(g=>g.incomplete).length}。`);persist();}
  }catch(e){say('エラー: '+e.message);}});
- button.addEventListener('click',async()=>{if(opening||initializing)return;source=getSource();if(!source.file||!source.header||!source.fingerprint||!source.preview){alert('先にBMPの読込完了を待ってください。');return;}doc=null;mask=null;el('editorStage').hidden=true;editView.resetPan();previewView.resetPan();ctx.clearRect(0,0,canvas.width,canvas.height);prepareSelection();dialog.showModal();previewView.fit();initializing=true;button.disabled=true;for(const k of ['fraction','x','y','regions','import'])el(k).disabled=true;dialog.querySelector('[data-action="crop"]').disabled=true;say('保存データを確認しています…');try{await saveChain;const d=await loadAutosave(key());catalog={};if(d){if(d.schema==='ground-truth-catalog-v1'){catalog=d.regions;const last=catalog[d.last];validate(last);await open(last.crop,last);selectSavedSize(last.crop);}else{validate(d);await open(d.crop,d);selectSavedSize(d.crop);}}else{say('プレビューで位置とサイズを選び「選択範囲を開く」を押してください。');}}catch(e){say(e.message);}finally{initializing=false;button.disabled=false;for(const k of ['fraction','x','y','regions','import'])el(k).disabled=false;setSelection(selection);regionMenu();}});
+ button.addEventListener('click',async()=>{if(opening||initializing)return;source=getSource();if(!source.file||!source.header||!source.fingerprint||!source.preview){alert('先にBMPの読込完了を待ってください。');return;}doc=null;mask=null;el('editorStage').hidden=true;editView.resetPan();previewView.resetPan();ctx.clearRect(0,0,canvas.width,canvas.height);prepareSelection();dialog.showModal();previewView.fit();initializing=true;button.disabled=true;for(const k of ['fraction','x','y','regions','import'])el(k).disabled=true;dialog.querySelector('[data-action="crop"]').disabled=true;say('保存データを確認しています…');try{await saveChain;const d=await loadAutosave(key());catalog={};if(d){if(d.schema==='ground-truth-catalog-v1'){catalog=d.regions;const last=catalog[d.last];validate(last);await open(last.crop,last);selectSavedSize(last.crop);}else{validate(d);await open(d.crop,d);selectSavedSize(d.crop);}}else if(canOpenCrop(selection,MAX_CROP_PIXELS)){await open({...selection});}else{say('既定の範囲が読込上限を超えています。小さいサイズを選び「選択範囲を開く」を押してください。');}}catch(e){say(e.message);}finally{initializing=false;button.disabled=false;for(const k of ['fraction','x','y','regions','import'])el(k).disabled=false;setSelection(selection);regionMenu();}});
 }

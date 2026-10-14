@@ -139,6 +139,8 @@ button.roi-tool.active { border-color: #62beff; background: rgba(66, 170, 255, .
 }
 
 .truth-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.truth-region-state { margin: 2px 0 8px; font-size: 12px; color: #a7e0cd; }
+.truth-region-state.needs-open { color: #ffdc78; font-weight: 600; }
 .truth-scroll.pan-mode { cursor: grab; }
 .truth-scroll.dragging, .truth-overview.dragging, .truth-overview.dragging .truth-selection { cursor: grabbing; }
 .truth-scroll:focus-visible { outline: 2px solid #62beff; }
