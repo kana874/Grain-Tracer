@@ -22,6 +22,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '<canvas data-k="overview" aria-label="ROIの選択"></canvas>',
     '<label>範囲サイズ <select data-k="roiSize"><option value="128">128px</option><option value="256" selected>256px</option><option value="512">512px</option></select></label>',
     '<p data-k="roiStatus" class="help"></p>',
+    '<details class="local-ab-advanced-options"><summary>比較・学習の設定（詳細）</summary>',
     '<label>候補Bの条件 <select data-k="variant">',
     '<option value="plus8">感度 +8</option><option value="minus8">感度 -8</option>',
     '<option value="plus16">感度 +16</option><option value="toggleNms">NMS 切替</option>',
@@ -31,11 +32,12 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '<label class="check-row"><input type="checkbox" data-k="autoNext" checked> 選択後に次のA/Bを自動生成</label>',
     '<label class="check-row"><input type="checkbox" data-k="autoRoi" checked> 次のROIも自動推薦</label>',
     '<label class="check-row"><input type="checkbox" data-k="autoAdopt"> Validationで改善時だけ自動採用</label>',
+    '</details>',
     '<button class="primary" data-k="generate" type="button">A/Bを比較</button>',
     '<button type="button" data-k="nextRoi">次の評価ROIを推薦</button>',
     '<button type="button" data-k="applyChampion">選択した最良設定を検証して採用</button>',
     '<p data-k="proposalStatus" role="status" class="help">手動評価の間は「選択後に次のA/B」をOFFにしてください。</p>',
-    '<p class="help">選好学習ONではA=前回勝者、B=履歴に基づく新候補です。選好だけでは画素の正解は確定しません。採用には検証済みValidation ROIが必要で、Testは不使用です。</p>',
+    '<p class="help">良い方を選ぶと次の候補・ROIへ進みます。複数ROIで確認後、独立したValidationで改善した設定だけを採用します。</p>',
     '<p data-k="message" class="help" role="status">BMP読み込み後に開始できます。</p>',
     '</section><section class="local-ab-results">',
     '<div class="local-ab-controls"><label>同期倍率 <select data-k="zoom"><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2" selected>200%</option><option value="3">300%</option><option value="4">400%</option><option value="6">600%</option><option value="8">800%</option></select></label>',
@@ -635,6 +637,10 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   el('judgeB').addEventListener('click', () => selectManualSide('b'));
   el('tool').addEventListener('change', () => { pending = null; drawHover(); });
   el('pixels').addEventListener('change', () => drawHover());
+  const pixelSelectLabel=el('pixels').closest('label');
+  const refreshStrokeOption=()=>{pixelSelectLabel.hidden=el('strokeMode').checked;};
+  el('strokeMode').addEventListener('change',refreshStrokeOption);
+  refreshStrokeOption();
   for (const side of ['a','b']) {
     candidateCanvas[side].addEventListener('click', event => judge(event, side));
     candidateCanvas[side].addEventListener('pointerdown', event => beginStroke(event,side));
