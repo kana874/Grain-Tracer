@@ -131,3 +131,14 @@ test("saved preference votes recover the best champion only on the matching sour
   assert.equal(recoverPreferenceChampion(base,[{...vote,eligibleForLearning:false}],
     "image-1",{localEnabled:true},"v18").sensitivity,65);
 });
+
+test("one guided stroke stops when it encounters a separate disconnected boundary",()=>{
+  const w=60,h=20,mask=new Uint8Array(w*h);
+  for(let x=2;x<=20;x++)mask[8*w+x]=1;
+  for(let x=30;x<=55;x++)mask[8*w+x]=1;
+  const result=rasterizeGuidedStroke([{x:2,y:8},{x:55,y:8}],mask,w,h,{
+    snapRadius:1,roi:{x:0,y:0,width:60,height:20},
+  });
+  assert.ok(result.length>=12);
+  assert.ok(result.every(p=>p%w<=20),'must not silently switch to the second line');
+});
