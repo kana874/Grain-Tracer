@@ -2257,7 +2257,7 @@ function updateEvaluationRoleControls() {
   const index = selectedFullEvaluationRoiIndex();
   const rect = index >= 0 ? state.fullEvaluationRois[index] : null;
   if (els.roiRoleSelect) {
-    els.roiRoleSelect.disabled = state.busy || !rect;
+    els.roiRoleSelect.disabled = state.busy || !rect || Boolean(state.validationDraft);
     els.roiRoleSelect.value = normalizeRoiEvaluationRole(rect?.evaluationRole) ?? "";
   }
   if (els.roiRoleStatus) {
@@ -2283,6 +2283,11 @@ function setSelectedRoiEvaluationRole(value) {
   const rect = state.fullEvaluationRois[index];
   const before = { ...rect };
   const role = normalizeRoiEvaluationRole(value);
+  if(role==="validation"&&rect.verified!==false&&rect.source!=="validation-wizard-confirmed"){
+    setStatus("検証範囲の正解確認が必要です。「新しい検証領域を指定」から作成してください。");
+    updateEvaluationRoleControls();
+    return;
+  }
   if (role) rect.evaluationRole = role;
   else delete rect.evaluationRole;
   commitReferenceHistory({
@@ -5190,8 +5195,13 @@ function applyLineSegment(layer, tracker, from, to, erase = false) {
   return true;
 }
 
+function validationPointInside(point){
+  const r=validationEditingRect();
+  return !r || (point.x>=r.x0&&point.x<=r.x1&&point.y>=r.y0&&point.y<=r.y1);
+}
 function applyReferenceSegment(from, to) {
   if (!state.currentReferenceEdit) return false;
+  if(!validationPointInside(from)||!validationPointInside(to))return false;
   let changed = false;
 
   if (state.tool === "reference") {
@@ -5214,7 +5224,8 @@ function applyReferenceSegment(from, to) {
 
 function beginReferenceDraw(event) {
   const point = eventToPreviewPoint(event);
-  if (!point) return false;
+  if (!point || !validationPointInside(point)) return false;
+  if(validationEditingRect()) $("validationRoiAttest").checked=false;
   cancelScheduledClosedFillRefresh();
   if (state.comparisonMode) showNormalView();
   invalidateAfterReferenceEdit();
@@ -5235,7 +5246,7 @@ function beginReferenceDraw(event) {
 function continueReferenceDraw(event) {
   if (!state.drawingReference || !state.lastReferencePoint) return;
   const point = eventToPreviewPoint(event);
-  if (!point) return;
+  if (!point || !validationPointInside(point)) return;
   applyReferenceSegment(state.lastReferencePoint, point);
   state.lastReferencePoint = point;
 }
