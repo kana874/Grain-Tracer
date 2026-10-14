@@ -2317,6 +2317,7 @@ function refreshValidationWizardControls() {
   start.disabled=state.busy||!hasPreview||Boolean(draft);
   resume.disabled=state.busy||!hasPreview||Boolean(draft)||unfinished<0;
   $("validationRoiReviewPanel").hidden=!editing;
+  $("validationRoiCancelSelectionButton").hidden=draft?.phase!=="selecting";
   $("validationRoiSeedButton").disabled=state.busy||!editing;
   $("validationRoiFinishButton").disabled=state.busy||!editing;
   $("validationRoiPauseButton").disabled=state.busy||!editing;
@@ -5504,6 +5505,7 @@ function deleteSelectedRect(kind) {
 }
 
 $("validationRoiStartButton").addEventListener("click",startValidationRoiWizard);
+$("validationRoiCancelSelectionButton").addEventListener("click",pauseValidationRoiWizard);
 $("validationRoiResumeButton").addEventListener("click",resumeValidationRoiWizard);
 $("validationRoiSeedButton").addEventListener("click",seedValidationRoiFromCandidate);
 $("validationRoiFinishButton").addEventListener("click",verifyValidationWizardRoi);
@@ -5959,6 +5961,7 @@ localAbController = setupLocalAB({
   onRedo: () => { if(!state.redoStack.length) return false; redoReference(); return true; },
   getHistoryState: () => ({undo:state.undoStack.length,redo:state.redoStack.length}),
   onAdopt: (settings, fingerprint) => guardedAdoptLocalPreference(settings, fingerprint),
+  onStartValidation: () => startValidationRoiWizard(),
 });
 function updateLocalAbStatus() {
   if (!els.localAbStatus) return;
