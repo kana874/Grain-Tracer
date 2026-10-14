@@ -186,7 +186,7 @@
 <h2>簡易フィードバック学習</h2>
         <button id="localAbButton" class="primary full" type="button" disabled>局所A/B比較モードを開く</button>
         <p id="localAbStatus" class="help metric-detail">A/B選好履歴: 0件</p>
-        <p class="help">画像の小領域でA/Bの抽出結果を比較し、選ばれた方に正解・誤検出・検出漏れを入力できます。プレビュー解像度での比較であり、元BMPの原寸切出しとは異なります。</p>
+        <p class="help">A/Bを選ぶと次の候補を自動生成。未評価ROIの推薦、一筆なぞりによる一括修正、Validation ROIで改善した設定だけの採用に対応します。A/Bはプレビュー解像度です。</p>
         <p class="help">上部で「候補は正解」「候補は誤検出」を選び、マウスを載せると今回選ばれる画素がプレビュー表示されます。異なる線が含まれる場合は選択画素数を減らしてください。枝分かれ・近接線では自動延長を止めます。検出漏れは2点指定。Undoで取り消せます。</p>
         <label class="select-row"><span>1回の評価範囲</span><select id="feedbackSelectionPixels" aria-label="正解・誤検出を1回で評価する最大候補画素数"><option value="1">1画素（精密）</option><option value="3" selected>最大3画素（標準）</option><option value="5">最大5画素</option><option value="9">最大9画素</option></select></label>
         <p class="help">連結した線全体は選択しません。クリック位置から最大2px以内の候補だけを使用し、交差点では1画素判定へ縮小します。白い輪郭はカーソル位置の目安で、色付きの画素だけが学習対象です。</p>
@@ -375,6 +375,7 @@
           <li class="done">クリック評価（正解・誤検出・2点欠落）→ 部分ラベル蓄積 → Auto Tune</li>
           <li class="done">反射パディングによる画像端の特徴量補完</li>
           <li class="done">局所A/B比較・選好履歴・選択候補の手動部分評価</li>
+          <li class="done">選好探索によるA/B連続生成、一筆評価、Active ROI推薦、Validation検証後の自動採用</li>
           <li>フル解像度内部タイル解析</li>
           <li>Smart Trace</li>
         </ul>
