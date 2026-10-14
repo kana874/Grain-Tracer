@@ -1,3 +1,13 @@
+# v0.7.0-alpha — Image Edge Recovery + Local A/B Review (validation)
+
+- 反射パディング（プレビュー外周24px）でRidge/Color/Dendriteを計算し、元プレビュー座標へクロップ。真の画像端でも特徴量を利用可能にした。
+- 全体解析とAuto Tuneの最外周1px強制除外を解除。内部へ連続する粒界の端点は保持し、外枠に沿った偽線は拒否。
+- 局所A/B比較モード追加。128/256/512pxのROI、A=現在設定、B=感度±8/16・NMS切替・旧端部処理。同期スクロール・100〜800%拡大。
+- A/B選好（A/B/両方不正解/判断不能）を専用履歴に保存。勝者を手動評価し、正解・誤検出・検出漏れをROI内の部分ラベルとして記録。Undo/Redo/Auto Tuneと連携。
+- A/B選好を正解ラベルやF1へ自動変換しない。Validation/TestをTuneに混ぜない。局所A/Bは元BMPの原寸ではなくプレビュー解像度。
+- Project Format v4維持、A/B履歴と判定出所はProject/IndexedDB/Diagnosticへ保存。旧Projectは互換読み込み。
+- 合成回帰テストを追加。実際のBMPによる変更前後の改善効果は未検証。
+
 # v0.6.5-alpha
 
 - 簡易フィードバック学習の正解／誤検出候補選択を安全側へ変更。従来の8近傍BFS（12px半径、最大120候補画素）を廃止。
