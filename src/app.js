@@ -1,4 +1,5 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
+import { setupLocalAB } from './local-ab-ui.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { segmentSeededRegions } from './region-segmentation.js';
 import { BmpError, parseBmpHeader, decodeBmpPreview } from "./bmp.js";
@@ -132,6 +133,8 @@ const els = {
   feedbackNegativeButton: $("feedbackNegativeButton"),
   feedbackMissingButton: $("feedbackMissingButton"),
   feedbackTuneButton: $("feedbackTuneButton"),
+  localAbButton: $("localAbButton"),
+  localAbStatus: $("localAbStatus"),
   feedbackStatus: $("feedbackStatus"),
   feedbackSelectionPixels: $("feedbackSelectionPixels"),
   undoReferenceButton: $("undoReferenceButton"),
@@ -306,6 +309,7 @@ const state = {
   fullEvaluationRois: [],
   imageEvaluationRole: null,
   feedbackReviews: [],
+  localAbReviews: [],
   feedbackPending: null,
   baselineSnapshots: [],
   classifier: null,
@@ -473,6 +477,7 @@ function updateControls() {
   els.feedbackNegativeButton.disabled = disabled || !hasAnalysis;
   els.feedbackMissingButton.disabled = disabled || !hasPreview;
   els.feedbackTuneButton.disabled = disabled || !hasRef || !tuneAllowed;
+  els.localAbButton.disabled = disabled || !hasPreview;
   els.undoReferenceButton.disabled = disabled || !hasPreview || state.undoStack.length === 0;
   els.redoReferenceButton.disabled = disabled || !hasPreview || state.redoStack.length === 0;
   els.compareButton.disabled = disabled || !hasAnalysis || !hasRef;
@@ -734,7 +739,7 @@ function currentBoundaryOptions() {
     negativeMask: state.negativeMask,
     exclusionMask: state.exclusionMask,
     hysteresis: currentHysteresisOptions(),
-    edgeFrameGuard: 1,
+    edgeFrameGuard: 0,
   };
 }
 
@@ -874,7 +879,7 @@ async function trainBoundaryClassifier() {
     const common = {
       ...currentBoundaryOptions(),
       hysteresis: { enabled: false },
-      edgeFrameGuard: 1,
+      edgeFrameGuard: 0,
       onProgress: () => {},
     };
     setStatus("Classifier Guard: Validation比較中...", 55);
@@ -3026,6 +3031,7 @@ function buildProject() {
     baselineSnapshots: state.baselineSnapshots,
     classifier: state.classifier,
     feedbackReviews: state.feedbackReviews,
+    localAbReviews: state.localAbReviews,
     precisionGuide: precisionGuidePersistentState(),
     localCalibration: state.localCalibration,
     history: state.history,
@@ -3111,6 +3117,8 @@ async function restoreProject(project, source = "プロジェクト") {
   );
   state.imageEvaluationRole = normalizeImageEvaluationRole(project.imageEvaluationRole);
   state.feedbackReviews = Array.isArray(project.feedbackReviews) ? project.feedbackReviews.filter(item => item && ["positive", "negative", "missing"].includes(item.kind)).slice(-2000) : [];
+  state.localAbReviews = Array.isArray(project.localAbReviews) ? project.localAbReviews.slice(-500) : [];
+  updateLocalAbStatus();
   state.feedbackPending = null;
   clearFeedbackPreview();
   updateFeedbackStatus();
@@ -3342,6 +3350,12 @@ async function exportDiagnostics(mode = "zip") {
       hysteresis: state.lastHysteresis,
     });
     // A diagnostic summary is an audit trail, not a complete-label metric.
+    report.localAbReview = {
+      schema: "graintracer-local-ab-v1",
+      counts: { reviewed: state.localAbReviews.length },
+      recentVotes: state.localAbReviews.slice(-100),
+      note: "Preference votes are not complete ROI ground truth or accuracy metrics",
+    };
     report.feedbackReview = {
       schema: "graintracer-feedback-review-v1",
       labelSemantics: "partial-positive-negative-unknown",
@@ -3556,6 +3570,9 @@ async function loadBmp(file) {
   state.fullEvaluationRois = [];
   state.imageEvaluationRole = null;
   state.feedbackReviews = [];
+  state.localAbReviews = [];
+  updateLocalAbStatus();
+  localAbController?.close();
   state.feedbackPending = null;
   clearFeedbackPreview();
   updateFeedbackStatus();
@@ -5602,7 +5619,37 @@ window.addEventListener("blur", () => setOverlayPeekHidden(false));
 
 window.addEventListener("resize", () => { if (state.preview) fitToViewer(); });
 
+const localAbController = setupLocalAB({
+  getSnapshot: () => state.preview && state.sourceFingerprint ? {
+    preview: state.preview,
+    fingerprint: state.sourceFingerprint,
+    boundaryOptions: { ...currentBoundaryOptions() },
+    featureOptions: { ...currentFeatureOptions() },
+    exclusionMask: state.exclusionMask,
+    referenceCenterline: state.referenceCenterline,
+    negativeCenterline: state.negativeCenterline,
+  } : null,
+  getFeatures: () => ensureFeatures(),
+  getLegacyFeatures: () => computeBoundaryFeatures(state.preview.imageData, {
+    ...currentFeatureOptions(), edgePadding: false,
+  }),
+  onVote: vote => {
+    if (vote.imageFingerprint !== state.sourceFingerprint) return;
+    state.localAbReviews.push(vote);
+    if (state.localAbReviews.length > 500) state.localAbReviews.shift();
+    updateLocalAbStatus();
+    scheduleAutosave();
+  },
+  onFeedback: (indices, kind, anchor) => applyFeedbackIndices(indices, kind, anchor),
+});
+function updateLocalAbStatus() {
+  if (!els.localAbStatus) return;
+  const votes = state.localAbReviews ?? [];
+  els.localAbStatus.textContent = "A/B選好履歴: " + votes.length
+    + "件（選好はF1等の正解率とは区別して保存）";
+}
 renderHistory();
+updateLocalAbStatus();
 els.projectStatus.textContent = `v${APP_VERSION} / ${ALGORITHM_VERSION}`;
 updateAnnotationStatus();
 updateLocalCalibrationStatus();
