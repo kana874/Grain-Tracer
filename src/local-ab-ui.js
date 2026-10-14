@@ -10,7 +10,7 @@ import { recommendFeatureRoi } from './active-roi.js';
 // Local A/B operates on the analysis-preview coordinate grid. The same global
 // feature cache and exclusion mask are used for both candidates. A/B votes are
 // preference data, not true-positive ground-truth or F1.
-export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVote, onFeedback, onAdopt, onUndo, onRedo, getHistoryState }) {
+export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVote, onFeedback, onAdopt, onUndo, onRedo, getHistoryState, onStartValidation }) {
   const openButton = document.getElementById('localAbButton');
   const dialog = document.createElement('dialog');
   dialog.className = 'local-ab-dialog';
@@ -36,6 +36,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '<button class="primary" data-k="generate" type="button">A/Bを比較</button>',
     '<button type="button" data-k="nextRoi">次の評価ROIを推薦</button>',
     '<button type="button" data-k="applyChampion">選択した最良設定を検証して採用</button>',
+    '<button type="button" data-k="startValidation">Validation ROIを新規作成</button>',
     '<p data-k="proposalStatus" role="status" class="help">手動評価の間は「選択後に次のA/B」をOFFにしてください。</p>',
     '<p class="help">良い方を選ぶと次の候補・ROIへ進みます。複数ROIで確認後、独立したValidationで改善した設定だけを採用します。</p>',
     '<p data-k="message" class="help" role="status">BMP読み込み後に開始できます。</p>',
@@ -636,6 +637,11 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   });
   el('nextRoi').addEventListener('click', () => recommendRoi());
   el('applyChampion').addEventListener('click', () => adoptChampion());
+  el('startValidation').addEventListener('click', () => {
+    if(!current || busy)return;
+    close();
+    onStartValidation?.();
+  });
   el('adaptive').addEventListener('change', () => {
     champion=current?{...current.boundaryOptions}:null;
     challenger=proposal=null;a=b=null;clearVote();
