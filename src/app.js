@@ -5569,6 +5569,9 @@ function endRectInteraction(event) {
       changed = true;
       if(selectingValidation) {
         state.validationDraft={phase:"editing",index};
+        state.validationSuggestedRect=null;
+        $("validationUsageToggle").checked=false;
+        renderValidationUsageView();
         $("validationRoiAttest").checked=false;
         setTool("reference");
         focusPreviewRect(storedRect);
@@ -5602,6 +5605,7 @@ function endRectInteraction(event) {
       setStatus("完全評価ROIを更新しました。ROI " + state.fullEvaluationRois.length + "領域。比較を実行してください。");
     }
     scheduleAutosave();
+    if($("validationUsageToggle").checked)renderValidationUsageView();
   }
 
   updateControls();
@@ -5640,6 +5644,9 @@ function deleteSelectedRect(kind) {
   return true;
 }
 
+$("validationUsageToggle").addEventListener("change",renderValidationUsageView);
+$("validationRoiRecommendButton").addEventListener("click",updateValidationUsageSuggestion);
+$("validationRoiUseRecommendationButton").addEventListener("click",createSuggestedValidationRoi);
 $("validationRoiStartButton").addEventListener("click",startValidationRoiWizard);
 $("validationRoiCancelSelectionButton").addEventListener("click",pauseValidationRoiWizard);
 $("validationRoiResumeButton").addEventListener("click",resumeValidationRoiWizard);
@@ -6098,6 +6105,7 @@ localAbController = setupLocalAB({
     if (vote.imageFingerprint !== state.sourceFingerprint) return;
     state.localAbReviews.push(vote);
     if (state.localAbReviews.length > 500) state.localAbReviews.shift();
+    if($("validationUsageToggle").checked)renderValidationUsageView();
     updateLocalAbStatus();
     scheduleAutosave();
   },
