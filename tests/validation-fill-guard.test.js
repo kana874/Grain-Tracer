@@ -91,3 +91,25 @@ test("Standard UI hides negative pen, shows closed Fill and explains Validation 
   assert.match(app,/if\(validationEditingRect\(\)\) \$\("validationRoiAttest"\)\.checked=false/);
   assert.match(app,/item\.kind === "closed-fill-add"/);
 });
+
+test("image-edge assisted Fill is allowed only if its complete painted region fits the Validation ROI",()=>{
+  const width=120,height=90,reference=new Uint8Array(width*height);
+  for(let y=0;y<=30;y++){
+    reference[y*width+20]=1;
+    reference[y*width+60]=1;
+  }
+  for(let x=20;x<=60;x++)reference[30*width+x]=1;
+  const options={safetyRadius:3,minPixels:12,borderMaxAreaFraction:.12,
+    maxBorderSides:2,minBorderReferenceContactPixels:8};
+  const index=buildClosedNegativeRegionIndex(reference,width,height,options);
+  const proposed=fillClosedNegativeRegion(reference,width,height,
+    {x:40,y:10,borderAssisted:true},options);
+  assert.equal(proposed.accepted,true);
+  assert.equal(proposed.usesImageBorder,true);
+  assert.equal(checkValidationFillBounds(index,proposed,
+    {x0:18,y0:0,x1:62,y1:32}).allowed,true);
+  const clipped=checkValidationFillBounds(index,proposed,
+    {x0:18,y0:5,x1:62,y1:32});
+  assert.equal(clipped.allowed,false);
+  assert.equal(clipped.reason,'outside-validation-roi');
+});
