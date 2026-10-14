@@ -2,6 +2,7 @@ import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
 import { buildLocalPrediction } from './local-ab-engine.js';
 import { validationRoiConflicts, canVerifyValidationRoi, referencePixelsInRect, roiOverlapPixels, validationUsageAreas, recommendUnusedValidationRoi } from './validation-roi.js';
+import { checkValidationFillBounds } from './validation-fill-guard.js';
 import { summarizePreferenceLearning, summarizeValidationTrend } from './local-ab-learning.js';
 import { evaluatePreferenceAdoption } from './preference-adoption.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
@@ -2451,7 +2452,7 @@ function refreshValidationWizardControls() {
     const pixels=referencePixelsInRect(state.referenceCenterline,state.preview.width,
       state.preview.height,roi,state.exclusionMask);
     $("validationRoiCreateStatus").textContent="未確認 Validation ROI #"+(draft.index+1)+
-      " / 正解線 "+pixels+"px。抽出候補を取り込むか、お手本線・非粒界線で修正してから確認完了してください。";
+      " / 正解線 "+pixels+"px。お手本線で粒界を修正し、「閉領域→非粒界」で粒の内部を確認してから完了してください。";
   }
 }
 function startValidationRoiWizard() {
@@ -2542,7 +2543,7 @@ async function seedValidationRoiFromCandidate() {
     rect.seededFrom="analysis-candidate";rect.seedPixels=count;
     rect.seededAt=new Date().toISOString();
     $("validationRoiAttest").checked=false;
-    setStatus("候補線 "+count+"px を下書きへ取り込みました。誤検出は非粒界線で除き、欠落をお手本線で補ってください。");
+    setStatus("候補線 "+count+"px を下書きに取り込みました。誤った線は「線消去」、粒内部は「閉領域→非粒界」、欠落線は「お手本線」で修正してください。");
   }catch(error){
     console.error("Validation ROI seed",error);
     setStatus("候補の取り込みに失敗: "+error.message,0);
@@ -3103,6 +3104,7 @@ function applyReferenceUndoRedo(direction) {
 
   if (state.comparisonMode) showNormalView();
   const item = source.pop();
+  if(validationEditingRect()) $("validationRoiAttest").checked=false;
   if (item.feedbackReview) {
     if (direction === "undo") state.feedbackReviews = state.feedbackReviews.filter(review => review.id !== item.feedbackReview.id);
     else state.feedbackReviews.push({ ...item.feedbackReview });
@@ -5361,6 +5363,11 @@ function addClosedNegativeFill(event) {
     y: Math.round(point.y),
     borderAssisted: Boolean(els.borderAssistedFill.checked),
   };
+  const editingRoi=validationEditingRect();
+  if(editingRoi && !validationPointInside(seed)) {
+    setStatus("Validation ROIの外では非粒界領域を塗りつぶせません。");
+    return false;
+  }
   const p = seed.y * state.preview.width + seed.x;
 
   if (state.closedNegativeSeeds.some(item => item.x === seed.x && item.y === seed.y)) {
@@ -5385,6 +5392,19 @@ function addClosedNegativeFill(event) {
   if (!result?.accepted) {
     setStatus(closedFillFailureMessage(result?.reason));
     return false;
+  }
+
+  // Evaluate the entire proposed closed region before persisting its seed.
+  // If a single filled pixel is outside the active Validation ROI, reject
+  // without changing any masks, audit history or project state.
+  if (editingRoi) {
+    const safety=checkValidationFillBounds(rebuilt.regionIndex,result,editingRoi);
+    if (!safety.allowed) {
+      setStatus("塗りつぶし候補がValidation ROIの外にはみ出します。" +
+        "黄色いお手本線でROI内の領域を閉じ直してください。");
+      return false;
+    }
+    $("validationRoiAttest").checked=false;
   }
 
   if (state.comparisonMode) showNormalView();
