@@ -62,8 +62,10 @@ test('supported boundary can reach true top frame; lone speck is still rejected'
     featureMargins:{dark:0,ridge:0,color:0,dendrite:0}};
   for(let y=0;y<18;y++) features.ridge[y*w+10]=255;
   features.ridge[0]=255;
+  for (let x=1; x<w; x++) features.ridge[x]=255; // continuous false top frame
   const mask=await buildBoundaryMask(features,{sensitivity:85,darkWeight:0,ridgeWeight:100,
     colorWeight:0,dendriteWeight:0,minComponent:1,centerlineNms:false,edgeFrameGuard:0});
   assert.equal(mask[10],1,'legitimate continuation meets image frame');
-  assert.equal(mask[0],0,'isolated border speck rejected');
+  assert.equal(mask[0],0,'frame-only horizontal line rejected');
+  assert.equal(mask[5],0,'long false top frame rejected');
 });
