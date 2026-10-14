@@ -210,34 +210,105 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       run.disabled = false;
     }
   }
-  function vote(winner) {
-    if (!validContext() || !a || !b || busy) return;
-    const counts = localAbCounts(a, b, current.preview.width, roi, current.exclusionMask);
-    onVote({
-      schema: 'graintracer-local-ab-v1',
-      createdAt: new Date().toISOString(),
-      imageFingerprint: current.fingerprint,
-      roi: { ...roi }, coordinateSystem: 'analysis-preview',
-      winner,
-      aSettings: Object.fromEntries(['sensitivity','minComponent','centerlineNms','scoreMode',
-        'darkWeight','ridgeWeight','colorWeight','dendriteWeight','negativeEvidenceWeight',
-        'edgeFrameGuard'].map(name => [name, current.boundaryOptions[name] ?? null])),
-      featureOptions: { ...current.featureOptions },
-      appVersion: current.appVersion,
-      algorithmVersion: current.algorithmVersion,
-      variant: el('variant').value,
-      bSettings: Object.fromEntries(['sensitivity','minComponent','centerlineNms','scoreMode',
-        'darkWeight','ridgeWeight','colorWeight','dendriteWeight','negativeEvidenceWeight',
-        'edgeFrameGuard'].map(name => [name, variantOptions(current.boundaryOptions)[name] ?? null])),
-      counts,
+  function updateSelectionRoi(rect) {
+    if (!rect) return;
+    updateRoiAt(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  }
+  function recommendRoi() {
+    if (!a || !b || !current) {
+      report('ROI推薦にはまずA/B比較を実行してください。');
+      return null;
+    }
+    const snapshot = getSnapshot();
+    const candidate = recommendDisagreementRoi(a, b, current.preview.width,
+      current.preview.height, Number(el('roiSize').value), {
+        history: localVotes,
+        protectedRois: snapshot?.protectedRois ?? [],
+        exclusionMask: current.exclusionMask,
+        labelMask: snapshot?.referenceCenterline,
+      });
+    if (!candidate) {
+      report('未評価で保護領域外のROIを推薦できません。');
+      return null;
+    }
+    updateSelectionRoi(candidate.roi);
+    el('roiStatus').textContent += ' / 推薦：A/B差 ' +
+      (candidate.disagreement * 100).toFixed(1)+'%';
+    return candidate;
+  }
+  function roiProtected() {
+    const snapshot = getSnapshot();
+    if (!snapshot?.canTune) return true;
+    return (snapshot.protectedRois ?? []).some(rect => {
+      const x0 = Math.min(rect.x0,rect.x1), x1 = Math.max(rect.x0,rect.x1);
+      const y0 = Math.min(rect.y0,rect.y1), y1 = Math.max(rect.y0,rect.y1);
+      return roi.x <= x1 && roi.x + roi.width - 1 >= x0 &&
+        roi.y <= y1 && roi.y + roi.height - 1 >= y0;
     });
+  }
+  async function adoptChampion() {
+    if (!champion || !validContext() || busy) return null;
+    report('検証済みValidation ROIで候補を検証しています…');
+    const result = await onAdopt({ ...champion }, current.fingerprint);
+    report(result?.accepted
+      ? 'Validation検証で改善：最良設定を採用しました。' +
+        'F1 '+(result.after.f1*100).toFixed(1)+'%'
+      : '設定は変更しません：'+(result?.reason ?? '検証不可'));
+    if (result?.accepted) {
+      current.boundaryOptions = { ...getSnapshot().boundaryOptions };
+      champion = { ...current.boundaryOptions };
+      proposal = challenger = null;
+    }
+    return result;
+  }
+  async function vote(winner) {
+    if (!validContext() || !a || !b || busy) return;
+    if (roiProtected()) {
+      report('Development画像の学習用領域だけを比較選択できます。Validation/TestのROIや画像は対象外です。');
+      return;
+    }
+    const counts = localAbCounts(a, b, current.preview.width, roi, current.exclusionMask);
+    const adaptive = el('adaptive').checked;
+    const configA = adaptive ? champion : current.boundaryOptions;
+    const configB = variantOptions(configA);
+    const record = adaptive
+      ? buildPreferenceVote({ champion:configA, challenger:configB, winner,
+          proposal, fingerprint:current.fingerprint, roi, round })
+      : { schema:'graintracer-local-ab-v1', winner,
+          imageFingerprint:current.fingerprint,
+          createdAt:new Date().toISOString(), coordinateSystem:'analysis-preview',
+          roi:{...roi}, aSettings:{...configA}, bSettings:{...configB},
+          variant:el('variant').value };
+    Object.assign(record, {
+      counts, featureOptions:{...current.featureOptions}, appVersion:current.appVersion,
+      algorithmVersion:current.algorithmVersion, eligibleForLearning:true
+    });
+    onVote(record);
+    localVotes.push(record);
+    if (localVotes.length > 500) localVotes.shift();
+    lastVote = record;
     for (const button of dialog.querySelectorAll('[data-vote]'))
       button.classList.toggle('selected', button.dataset.vote === winner);
     if (winner === 'a' || winner === 'b') selectManualSide(winner);
     else {
-      active = null; pending = null; drawHover();
-      el('reviewStatus').textContent = '選好を保存しました。必要なら「Aを修正」「Bを修正」で手動評価できます。';
+      active=null; pending=null; drawHover();
+      el('reviewStatus').textContent = '選好を保存。必要ならA/Bを選んで手動修正できます。';
     }
+    if (adaptive) {
+      champion = advancePreference(champion, configB, winner);
+      round++;
+      lastWinner=winner;
+    }
+    if (!el('autoNext').checked || !adaptive) {
+      report('選好を保存しました。次へ進むにはA/Bを比較してください。');
+      return;
+    }
+    // Automatic safe adoption is optional. Validation is always checked in
+    // the application callback, and Test masks never participate.
+    if (winner === 'b' && el('autoAdopt').checked) await adoptChampion();
+    if (!validContext()) return;
+    if (el('autoRoi').checked) recommendRoi();
+    await generate();
   }
   function selectManualSide(side) {
     if (!a || !b) return;
