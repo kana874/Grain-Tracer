@@ -60,12 +60,20 @@ export function advancePreference(champion, challenger, winner) {
   // 'neither' and 'uncertain' do not imply that B is better; retain champion.
   return winner === 'b' ? { ...challenger } : { ...champion };
 }
+// Only scalar, reproducible settings belong in JSON votes. Masks and classifier
+// tensors from currentBoundaryOptions must NEVER be copied into each review.
+export function preferenceParameterSnapshot(configuration) {
+  const keys = ['sensitivity','darkWeight','ridgeWeight','colorWeight',
+    'dendriteWeight','negativeEvidenceWeight','minComponent','centerlineNms',
+    'scoreMode','edgeFrameGuard'];
+  return Object.fromEntries(keys.map(key => [key, configuration?.[key] ?? null]));
+}
 export function buildPreferenceVote({ champion, challenger, winner, proposal, fingerprint, roi, round }) {
   return {
     schema:'graintracer-preference-v2',
     createdAt:new Date().toISOString(), imageFingerprint:fingerprint,
     coordinateSystem:'analysis-preview', roi:{...roi}, winner,
-    aSettings:{...champion}, bSettings:{...challenger},
+    aSettings:preferenceParameterSnapshot(champion), bSettings:preferenceParameterSnapshot(challenger),
     aKey:comparisonKey(champion), bKey:comparisonKey(challenger),
     actionKey:proposal?.actionKey ?? null, round,
   };
