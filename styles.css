@@ -193,3 +193,14 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
   .local-ab-layout { grid-template-columns: 210px minmax(0,1fr); }
   .local-ab-scroll { height: 36vh; }
 }
+
+/* Preference learning controls: keep checkbox rows compact in the narrow rail. */
+.local-ab-selector label.check-row { display:flex; flex-direction:row; align-items:center; gap:8px; margin:7px 0; }
+.local-ab-selector label.check-row input { flex:0 0 auto; }
+.local-ab-selector [data-k="generate"] { margin:8px 0; }
+.local-ab-selector [data-k="nextRoi"], .local-ab-selector [data-k="applyChampion"] {
+  margin:4px 0; white-space:normal; font-size:12px;
+}
+.local-ab-selector [data-k="proposalStatus"] { color:#bfe7dc; font-size:11px; }
+.local-ab-manual label.check-row { width:100%; margin:2px 0; }
+.local-ab-card canvas { touch-action:none; }
