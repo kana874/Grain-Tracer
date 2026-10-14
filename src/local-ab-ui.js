@@ -41,7 +41,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '<p data-k="message" class="help" role="status">BMP読み込み後に開始できます。</p>',
     '</section><section class="local-ab-results">',
     '<div class="local-ab-controls"><label>同期倍率 <select data-k="zoom"><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2" selected>200%</option><option value="3">300%</option><option value="4">400%</option><option value="6">600%</option><option value="8">800%</option></select></label>',
-    '<span class="local-ab-nav-hint">ホイール: カーソル位置で拡大 / 中ドラッグ: 同期移動</span>',
+    '<output data-k="zoomReadout">200%</output><span class="local-ab-nav-hint">ホイール: 拡大 / 中ドラッグ: 同期移動</span>',
     '<span data-k="difference"></span></div>',
     '<div class="local-ab-compare">',
     '<div class="local-ab-card" data-k="cardA"><h3>A：現在の設定</h3><div class="local-ab-scroll" data-k="scrollA"><div class="local-ab-stage" data-k="stageA"><canvas data-k="viewA"></canvas><canvas data-k="hoverA" class="local-ab-hover"></canvas></div></div><p data-k="countA"></p></div>',
@@ -90,7 +90,16 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     const newKey=[newRoi.x,newRoi.y,newRoi.width,newRoi.height].join(',');
     const changed=roiKey!==newKey;
     roi=newRoi;roiKey=newKey;
-    if(changed){a=b=null;active=null;pending=null;request++;}
+    if(changed){
+      a=b=null;active=null;pending=null;request++;
+      for(const side of ['a','b']){
+        const canvas=candidateCanvas[side];
+        canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);
+        const hover=hoverCanvas[side];
+        hover.getContext('2d').clearRect(0,0,hover.width,hover.height);
+      }
+      el('difference').textContent='新しいROIを比較してください';
+    }
     el('roiStatus').textContent =
       'x=' + roi.x + ' y=' + roi.y + ' / ' + roi.width + '×' + roi.height + ' preview px';
     drawOverview();
@@ -181,6 +190,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       clientX:anchorX,clientY:anchorY,viewportLeft:bounds.left,viewportTop:bounds.top};
     const offsets=zoomAroundCursor(previous,newZoom);
     interactionZoom=newZoom;
+    el('zoomReadout').textContent=Math.round(newZoom*100)+'%';
     const select=el('zoom');
     if([...select.options].some(o=>Number(o.value)===newZoom))select.value=String(newZoom);
     else {select.value='';}
@@ -572,6 +582,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     predictionCache.hits=0;predictionCache.misses=0;
     featuresCache=null;maskRevision=0;roiKey=null;keepPair=false;
     generationTimes=[];comparisonAttempts=0;interactionZoom=2;el('zoom').value='2';
+    el('zoomReadout').textContent='200%';
     localVotes=[...(data.localAbReviews??[])];
     champion=recoverPreferenceChampion(data.boundaryOptions,localVotes,data.fingerprint,
       data.featureOptions,data.algorithmVersion);
