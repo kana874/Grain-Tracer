@@ -1,9 +1,11 @@
-import { buildBoundaryMask } from './analysis.js';
+import { LocalPredictionRunner, LruPredictionCache, comparisonCacheKey, materializeLocalPrediction } from './local-ab-engine.js';
+import { nextWheelZoom, zoomAroundCursor, dragViewport, eventToRoiPixel } from './local-ab-viewport.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { positionLocalRoi, withinLocalRoi, localAbCounts, filterLocalReview } from './local-ab.js';
-import { proposePreferenceCandidate, advancePreference, buildPreferenceVote, preferenceParameterSnapshot, recoverPreferenceChampion } from './preference-optimizer.js';
+import { proposePreferenceCandidate, buildPreferenceVote, preferenceParameterSnapshot, recoverPreferenceChampion } from './preference-optimizer.js';
+import { aggregatePreferenceAcrossRois, evaluateManualLabelEvidence } from './local-ab-learning.js';
 import { rasterizeGuidedStroke } from './stroke-review.js';
-import { recommendDisagreementRoi } from './active-roi.js';
+import { recommendFeatureRoi } from './active-roi.js';
 
 // Local A/B operates on the analysis-preview coordinate grid. The same global
 // feature cache and exclusion mask are used for both candidates. A/B votes are
@@ -36,7 +38,8 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     '<p class="help">選好学習ONではA=前回勝者、B=履歴に基づく新候補です。選好だけでは画素の正解は確定しません。採用には検証済みValidation ROIが必要で、Testは不使用です。</p>',
     '<p data-k="message" class="help" role="status">BMP読み込み後に開始できます。</p>',
     '</section><section class="local-ab-results">',
-    '<div class="local-ab-controls"><label>同期倍率 <select data-k="zoom"><option value="1">100%</option><option value="2" selected>200%</option><option value="4">400%</option><option value="8">800%</option></select></label>',
+    '<div class="local-ab-controls"><label>同期倍率 <select data-k="zoom"><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2" selected>200%</option><option value="3">300%</option><option value="4">400%</option><option value="6">600%</option><option value="8">800%</option></select></label>',
+    '<span class="local-ab-nav-hint">ホイール: カーソル位置で拡大 / 中ドラッグ: 同期移動</span>',
     '<span data-k="difference"></span></div>',
     '<div class="local-ab-compare">',
     '<div class="local-ab-card" data-k="cardA"><h3>A：現在の設定</h3><div class="local-ab-scroll" data-k="scrollA"><div class="local-ab-stage" data-k="stageA"><canvas data-k="viewA"></canvas><canvas data-k="hoverA" class="local-ab-hover"></canvas></div></div><p data-k="countA"></p></div>',
@@ -62,6 +65,14 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   let champion = null, challenger = null, proposal = null, localVotes = [];
   let round = 0, lastWinner = null, stroke = null, suppressClick = false, lastVote = null;
   let busy = false, scrollLock = false;
+  let featuresCache=null, maskRevision=0, roiKey=null, keepPair=false;
+  let interactionZoom=2,pan=null, generationTimes=[], comparisonAttempts=0;
+  const predictionCache=new LruPredictionCache(10);
+  const predictionRunner=new LocalPredictionRunner();
+  const stats=()=>({requests:comparisonAttempts,cacheHits:predictionCache.hits,
+    cacheMisses:predictionCache.misses,averageMs:generationTimes.length
+      ? generationTimes.reduce((a,b)=>a+b,0)/generationTimes.length:0});
+  const now=()=>performance.now();
   const candidateCanvas = { a: el('viewA'), b: el('viewB') };
   const hoverCanvas = { a: el('hoverA'), b: el('hoverB') };
   const bound = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
@@ -72,8 +83,12 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   };
   function updateRoiAt(cx, cy) {
     if (!current) return;
-    roi = positionLocalRoi(current.preview.width, current.preview.height,
+    const newRoi=positionLocalRoi(current.preview.width, current.preview.height,
       Number(el('roiSize').value), cx, cy);
+    const newKey=[newRoi.x,newRoi.y,newRoi.width,newRoi.height].join(',');
+    const changed=roiKey!==newKey;
+    roi=newRoi;roiKey=newKey;
+    if(changed){a=b=null;active=null;pending=null;request++;}
     el('roiStatus').textContent =
       'x=' + roi.x + ' y=' + roi.y + ' / ' + roi.width + '×' + roi.height + ' preview px';
     drawOverview();
@@ -103,7 +118,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   }
   function updateScale() {
     if (!roi) return;
-    const zoom = Number(el('zoom').value);
+    const zoom = interactionZoom;
     for (const side of ['A','B']) {
       const stage = el('stage' + side);
       stage.style.width = roi.width * zoom + 'px';
@@ -154,6 +169,26 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     el('countB').textContent = '抽出 ' + counts.b.toLocaleString() + ' px';
     el('difference').textContent = 'Aのみ ' + counts.onlyA + 'px / Bのみ ' + counts.onlyB + 'px';
   }
+  function updateViewportZoom(newZoom,side='A',clientX=null,clientY=null){
+    if(!roi)return;
+    const pane=el('scroll'+side);
+    const bounds=pane.getBoundingClientRect();
+    const anchorX=clientX??bounds.left+bounds.width/2;
+    const anchorY=clientY??bounds.top+bounds.height/2;
+    const previous={scrollLeft:pane.scrollLeft,scrollTop:pane.scrollTop,scale:interactionZoom,
+      clientX:anchorX,clientY:anchorY,viewportLeft:bounds.left,viewportTop:bounds.top};
+    const offsets=zoomAroundCursor(previous,newZoom);
+    interactionZoom=newZoom;
+    const select=el('zoom');
+    if([...select.options].some(o=>Number(o.value)===newZoom))select.value=String(newZoom);
+    else {select.value='';}
+    updateScale();
+    for(const key of ['A','B']){
+      const view=el('scroll'+key);
+      view.scrollLeft=offsets.scrollLeft;
+      view.scrollTop=offsets.scrollTop;
+    }
+  }
   function variantOptions(base) {
     if (el('adaptive').checked && challenger) return { ...challenger };
     const kind = el('variant').value;
@@ -173,42 +208,54 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       ? '探索 '+(round+1)+'回：'+proposal.actionKey+' / A(前回勝者) 対 B(新候補)'
       : 'これ以上、異なるB候補を生成できません。';
   }
-  async function generate() {
-    if (!validContext() || busy) return;
-    const myRequest = ++request;
-    busy = true;
-    a = b = null; clearVote();
-    if (el('adaptive').checked) {
-      prepareChallenger();
-      if (!challenger) { busy = false; report('候補生成に失敗しました。'); return; }
+  async function predict(features,params,scope,legacy=false){
+    const featureKey=JSON.stringify(current.featureOptions)+(legacy?'|legacy':'|reflect');
+    const key=comparisonCacheKey(current.fingerprint,scope,params,featureKey,maskRevision);
+    const hit=predictionCache.get(key);
+    if(hit)return hit;
+    const output=await predictionRunner.compute(features,scope,params);
+    const full=materializeLocalPrediction(output.mask,scope,
+      current.preview.width,current.preview.height);
+    predictionCache.set(key,full);
+    return full;
+  }
+  async function generate(){
+    if(!validContext()||busy||!roi)return;
+    const sequence=++request, workRoi={...roi},started=now();
+    busy=true;a=b=null;clearVote();
+    if(el('adaptive').checked){
+      if(!keepPair||!challenger)prepareChallenger();
+      if(!challenger){busy=false;report('異なる候補を生成できません。');return;}
     }
-    const run = el('generate');
-    run.disabled = true;
-    report('特徴量とA/B候補を作成しています…');
-    try {
-      const features = await getFeatures();
-      if (myRequest !== request || !validContext()) return;
-      const base = el('adaptive').checked ? champion : current.boundaryOptions;
-      const maskA = await buildBoundaryMask(features, { ...base, onProgress: () => {} });
-      if (myRequest !== request || !validContext()) return;
-      const old = !el('adaptive').checked && el('variant').value === 'legacyEdge';
-      const variantFeatures = old ? await getLegacyFeatures() : features;
-      const maskB = await buildBoundaryMask(variantFeatures, {
-        ...variantOptions(base), onProgress: () => {},
-      });
-      if (myRequest !== request || !validContext()) return;
-      a = maskA; b = maskB;
+    el('generate').disabled=true;
+    report('指定したROIの候補を計算中…');
+    try{
+      const features=featuresCache??await getFeatures();
+      featuresCache=features;
+      if(sequence!==request||!validContext())return;
+      const baseline=el('adaptive').checked?champion:current.boundaryOptions;
+      const candidate=variantOptions(baseline);
+      const aMask=await predict(features,baseline,workRoi);
+      if(sequence!==request||!validContext())return;
+      const legacy=!el('adaptive').checked&&el('variant').value==='legacyEdge';
+      const candidateFeatures=legacy?await getLegacyFeatures():features;
+      const bMask=await predict(candidateFeatures,candidate,workRoi,legacy);
+      if(sequence!==request||!validContext())return;
+      a=aMask;b=bMask;comparisonAttempts++;
+      generationTimes.push(now()-started);
+      if(generationTimes.length>100)generationTimes.shift();
       drawCandidates();
-      if (el('adaptive').checked)
-        el('proposalStatus').textContent = '試行 '+(round+1)+' / '+proposal.actionKey+
-          ' / 勝者に基づいて次の候補を生成します。';
-      report('同一範囲で比較できます。選好は正解データではなく別の履歴として保存されます。');
-    } catch (error) {
-      console.error('local A/B', error);
-      report('比較に失敗しました: ' + error.message);
-    } finally {
-      busy = false;
-      run.disabled = false;
+      if(el('adaptive').checked)
+        el('proposalStatus').textContent='探索 '+(round+1)+'：'+proposal?.actionKey+
+          ' / 比較済み領域の一致が必要';
+      report('ROI計算 '+Math.round(generationTimes.at(-1))+'ms / '+
+        'キャッシュ '+predictionCache.hits+'件命中 / '+(features===featuresCache?'特徴量保持':'')+
+        '。A/B選好は正解画素とは別に保存します。');
+    }catch(error){
+      console.error('local A/B',error);
+      report('比較失敗: '+error.message);
+    }finally{
+      busy=false;el('generate').disabled=false;
     }
   }
   function updateSelectionRoi(rect) {
