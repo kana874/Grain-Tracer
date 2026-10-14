@@ -120,7 +120,7 @@ test('P5 standard mode hides legacy panels but retains Validation and A/B operat
   assert.match(html,/id="roiRoleSelect"/);
   assert.match(html,/id="localAbButton"/);
   assert.match(css,/\.focus-mode \.legacy-feature/);
-  assert.ok(html.includes('v0.9.3-alpha'));
+  assert.ok(html.includes('v0.9.4-alpha'));
 });
 test('P6 stress: 120 preferences and 120 cached ROI results remain bounded',()=>{
   const cache=new LruPredictionCache(10),votes=[];
