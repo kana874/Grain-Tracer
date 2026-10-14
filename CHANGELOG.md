@@ -1,3 +1,12 @@
+# v0.8.1-alpha — A/B Undo controls + diagnostic export robustness
+
+- 局所A/B比較ダイアログの手動評価欄に明示的な「Undo」「Redo」ボタンと操作件数を追加。Ctrl+Z / Ctrl+Y / Ctrl+Shift+Zに対応し、グローバル履歴を二重実行しない。
+- 一筆評価は引き続き1ドラッグが1回のUndo。操作後はPositive/Negativeを含む候補オーバーレイを再描画する。
+- 診断ZIPで報告された `Invalid string length` に対し、診断JSONのシリアライズをサイズ制限付きに変更。生のTypedArray/画像マスクをJSONに展開せず、巨大配列とトレースの上限を設ける。必要な場合はトポロジー詳細等を省略した縮小JSONへフォールバック（`diagnosticExport` に警告を付記）。
+- エラー発生時の段階を「指標・Topology」「JSON」「画像エンコード」「ZIP組立」で区別して表示。
+- 解析アルゴリズムはv18のまま。既存プロジェクト形式v4とA/B選好履歴は維持。
+- 大きな配列を含む合成診断とダイアログの静的結合テストを追加。実BMPからのZIP再現テストおよびブラウザ操作テストは未実施。
+
 # v0.8.0-alpha — Preference-based four-phase learning workflow (validation)
 
 - Phase 1: Adaptive A/B comparisons (UCB-like exploration of sensitivity/feature weights/negative evidence/minimum component/NMS). A winner becomes the next A champion; the next B is generated automatically. Both bad and undecidable do not force a winner. Prior same-image/same-feature-setting preference history resumes in the next session. This is parameter search, not neural training.
