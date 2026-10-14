@@ -4,9 +4,11 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**validation: v0.9.2-alpha / boundary-v18-reflected-edge-v1**（mainは別バージョン）
+**validation: v0.9.3-alpha / boundary-v18-reflected-edge-v1**（mainは別バージョン）
 
 Current capabilities:
+
+- **v0.9.3-alpha**: Save large projects without `Invalid string length` using chunked JSON or gzip record archives, restore archives via Project Load, and safely back up the current learning state before starting fresh on the same BMP. Requires explicit verification of the downloaded backup before resetting. [Guide](docs/project-backup-v0.9.3.md).
 
 - **v0.9.2-alpha**: Visual map of A/B and manual-review footprints, old ROIs and exclusions, plus automatic recommendation of independent, unused Validation rectangles (256/192/128/96 px). [Guide](docs/validation-roi-v0.9.2.md).
 
