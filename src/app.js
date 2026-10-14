@@ -5339,7 +5339,9 @@ function beginRectInteraction(event, kind) {
   if (state.comparisonMode) showNormalView();
 
   const rects = getRectCollection(kind);
-  const hit = hitTestRect(rects, point, annotationHitThreshold());
+  const hit = kind === "roi" && state.validationDraft?.phase === "selecting"
+    ? null
+    : hitTestRect(rects, point, annotationHitThreshold());
   if (hit) {
     setSelectedRectIndex(kind, hit.index);
     state.rectInteraction = {
