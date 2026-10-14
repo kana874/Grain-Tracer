@@ -52,7 +52,8 @@ button.view-button.active { border-color: var(--warn); background: rgba(255, 216
 .viewer.reference-mode.dragging { cursor: grabbing; }
 .canvas-stage { position: absolute; transform-origin: 0 0; display: none; }
 .canvas-stage canvas { position: absolute; inset: 0; image-rendering: auto; }
-#overlayCanvas, #gapCanvas, #referenceCanvas, #negativeCanvas, #exclusionCanvas, #fullRoiCanvas { pointer-events: none; }
+#overlayCanvas, #gapCanvas, #referenceCanvas, #negativeCanvas, #exclusionCanvas, #fullRoiCanvas, #feedbackCanvas { pointer-events: none; }
+#feedbackCanvas { image-rendering: pixelated; }
 .empty-state { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: var(--muted); gap: 4px; }
 .empty-state strong { color: var(--text); }
 .status-bar { display: grid; grid-template-columns: 1fr 180px; align-items: center; gap: 12px; padding: 6px 10px; background: #171b22; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
