@@ -5,7 +5,7 @@ import { buildBoundaryMask } from '../src/analysis.js';
 import { nextWheelZoom, zoomAroundCursor, dragViewport, eventToRoiPixel } from '../src/local-ab-viewport.js';
 import { buildLocalPrediction, makeLocalFeaturePacket, cropLocalPrediction,
   materializeLocalPrediction, comparisonCacheKey, LruPredictionCache } from '../src/local-ab-engine.js';
-import { aggregatePreferenceAcrossRois, evaluateManualLabelEvidence } from '../src/local-ab-learning.js';
+import { aggregatePreferenceAcrossRois, evaluateManualLabelEvidence, summarizeValidationTrend } from '../src/local-ab-learning.js';
 import { recommendFeatureRoi } from '../src/active-roi.js';
 
 function synthFeatures(width=144,height=128){
@@ -141,4 +141,32 @@ test('P6 stress: 120 preferences and 120 cached ROI results remain bounded',()=>
     votes,{fingerprint:'img',algorithmVersion:'v18',featureOptions:{}});
   assert.ok(aggregate.distinctRois>2);
   assert.ok(JSON.stringify(votes).length<60000);
+});
+
+test('P5 Validation monitoring distinguishes improvement, stagnation and regression',()=>{
+  const audit=(a,b,accepted)=>({before:{f1:a},after:{f1:b},accepted});
+  assert.equal(summarizeValidationTrend([]).status,'未検証');
+  assert.equal(summarizeValidationTrend([audit(.4,.48,true)]).status,'改善');
+  assert.equal(summarizeValidationTrend([audit(.4,.401,false)]).status,'停滞');
+  assert.equal(summarizeValidationTrend([audit(.48,.40,false)]).status,'悪化');
+});
+test('P6 stress actual ROI segmentation for 100 consecutive A/B rounds',async()=>{
+  const features=synthFeatures(80,80),cache=new LruPredictionCache(10);
+  let last=null,computed=0;
+  for(let i=0;i<100;i++){
+    const roi={x:i%2?0:28,y:i%3?0:25,width:32,height:32};
+    const params={...base,sensitivity:65+(i%5)};
+    const key=comparisonCacheKey('img',roi,params,'feature-stable');
+    let mask=cache.get(key);
+    if(!mask){
+      mask=(await buildLocalPrediction(features,roi,params)).mask;
+      cache.set(key,mask);
+      computed++;
+    }
+    assert.equal(mask.length,roi.width*roi.height);
+    assert.ok(cache.items.size<=10);
+    last=mask;
+  }
+  assert.ok(computed<100,'cache avoids regenerating recurring ROI candidates');
+  assert.equal(last.length,1024);
 });
