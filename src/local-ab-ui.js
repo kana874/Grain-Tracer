@@ -352,11 +352,79 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       ctx.fillRect(index % current.preview.width - roi.x,
         Math.floor(index / current.preview.width) - roi.y, 1, 1);
   }
+  function renderStroke() {
+    if (!stroke || !roi || !current) return;
+    const ctx=hoverCanvas[stroke.side].getContext('2d');
+    ctx.clearRect(0,0,roi.width,roi.height);
+    const source=stroke.side==='a'?a:b;
+    const indices=rasterizeGuidedStroke(stroke.points,source,current.preview.width,
+      current.preview.height,{ snapRadius:2,roi,exclusionMask:current.exclusionMask });
+    ctx.fillStyle=el('tool').value==='positive'?'#65ff91':'#ff526c';
+    for(const p of indices)ctx.fillRect(p%current.preview.width-roi.x,
+      Math.floor(p/current.preview.width)-roi.y,1,1);
+    el('reviewStatus').textContent='なぞり候補：'+indices.length+
+      'px（ドラッグ終了時に1操作として保存、Undo可能）';
+  }
+  function updateCurrentLabels() {
+    const updated=getSnapshot();
+    if(updated) {
+      current.referenceCenterline=updated.referenceCenterline;
+      current.negativeCenterline=updated.negativeCenterline;
+    }
+    drawCandidates();
+  }
+  function beginStroke(event,side) {
+    if(!el('strokeMode').checked||el('tool').value==='missing'||busy||
+        !a||!b||side!==active||event.button!==0||!validContext())return;
+    const point=pointFromEvent(event,side);
+    if(!point)return;
+    stroke={side,pointerId:event.pointerId,points:[point]};
+    candidateCanvas[side].setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+  function continueStroke(event,side) {
+    if(!stroke||stroke.side!==side||stroke.pointerId!==event.pointerId)return;
+    const point=pointFromEvent(event,side);
+    if(!point)return;
+    const last=stroke.points.at(-1);
+    if(Math.hypot(last.x-point.x,last.y-point.y)<0.5)return;
+    if(stroke.points.length<2000)stroke.points.push(point);
+    renderStroke();
+  }
+  function endStroke(event,side,cancel=false) {
+    if(!stroke||stroke.side!==side||stroke.pointerId!==event.pointerId)return;
+    const points=stroke.points;
+    const point=pointFromEvent(event,side);
+    if(point)points.push(point);
+    stroke=null;
+    const canvas=candidateCanvas[side];
+    if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);
+    const move=Math.max(...points.map(p=>Math.hypot(p.x-points[0].x,p.y-points[0].y)));
+    if(cancel||move<1.5)return;
+    suppressClick=true;
+    const indices=rasterizeGuidedStroke(points,side==='a'?a:b,
+      current.preview.width,current.preview.height,{
+        snapRadius:2,roi,exclusionMask:current.exclusionMask,maxPixels:3000,
+      });
+    if(!indices.length) {
+      el('reviewStatus').textContent='線が候補から離れています。候補に沿ってドラッグしてください。';
+      drawHover();return;
+    }
+    const saved=onFeedback(indices,el('tool').value,points[0],{
+      source:'local-ab',candidate:side,roi:{...roi},variant:el('adaptive').checked?'adaptive':el('variant').value,
+      selection:'guided-stroke',
+    });
+    el('reviewStatus').textContent=saved
+      ? '一筆評価 '+indices.length+'px を保存しました。Undoで1操作を戻せます。'
+      : '同じ区間は評価済みです。';
+    updateCurrentLabels();
+  }
   function judge(event, side) {
     if (!validContext() || side !== active || !a || !b || busy) {
       el('reviewStatus').textContent = 'A/Bを選択してから、選択した側の画像をクリックしてください。';
       return;
     }
+    if(suppressClick) { suppressClick=false; return; }
     const point = pointFromEvent(event, side);
     if (!point || current.exclusionMask?.[point.y * current.preview.width + point.x]) return;
     const kind = el('tool').value;
@@ -393,18 +461,16 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
         ? kind === 'positive' ? '正解を保存しました。' : '誤検出を保存しました。'
         : '同じ画素は評価済みです。';
     }
-    const updated = getSnapshot();
-    if (updated) {
-      current.referenceCenterline = updated.referenceCenterline;
-      current.negativeCenterline = updated.negativeCenterline;
-    }
-    drawCandidates();
+    updateCurrentLabels();
   }
   function open() {
     const data = getSnapshot();
     if (!data?.preview?.imageData || !data.fingerprint) return;
     request++;
     current = data; a = b = null; busy = false;
+    champion={...data.boundaryOptions}; challenger=null; proposal=null;
+    localVotes=[...(data.localAbReviews??[])];round=localVotes.filter(v=>v.schema==='graintracer-preference-v2').length;
+    lastWinner=null;stroke=null;suppressClick=false;lastVote=null;
     const w = data.preview.width, h = data.preview.height;
     original.width = w; original.height = h;
     original.getContext('2d').putImageData(data.preview.imageData, 0, 0);
@@ -415,6 +481,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   }
   function close() {
     request++; current = null; a = b = null; roi = null; active = null; pending = null;
+    stroke=null; champion=null; challenger=null; proposal=null;
     if (dialog.open) dialog.close();
   }
   openButton.addEventListener('click', open);
@@ -432,6 +499,13 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   });
   el('variant').addEventListener('change', () => { a = b = null; clearVote(); report('条件を変更しました。「この条件で比較」を押してください。'); });
   el('generate').addEventListener('click', generate);
+  el('nextRoi').addEventListener('click', () => recommendRoi());
+  el('applyChampion').addEventListener('click', () => adoptChampion());
+  el('adaptive').addEventListener('change', () => {
+    champion=current?{...current.boundaryOptions}:null;
+    challenger=proposal=null;a=b=null;clearVote();
+    report('方式を変更しました。A/Bを比較してください。');
+  });
   el('zoom').addEventListener('change', updateScale);
   for (const voteButton of dialog.querySelectorAll('[data-vote]'))
     voteButton.addEventListener('click', () => vote(voteButton.dataset.vote));
@@ -441,8 +515,14 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   el('pixels').addEventListener('change', () => drawHover());
   for (const side of ['a','b']) {
     candidateCanvas[side].addEventListener('click', event => judge(event, side));
-    candidateCanvas[side].addEventListener('pointermove', event => drawHover(event, side));
-    candidateCanvas[side].addEventListener('pointerleave', () => drawHover());
+    candidateCanvas[side].addEventListener('pointerdown', event => beginStroke(event,side));
+    candidateCanvas[side].addEventListener('pointermove', event => {
+      if(stroke)continueStroke(event,side);
+      else drawHover(event,side);
+    });
+    candidateCanvas[side].addEventListener('pointerup', event => endStroke(event,side));
+    candidateCanvas[side].addEventListener('pointercancel', event => endStroke(event,side,true));
+    candidateCanvas[side].addEventListener('pointerleave', () => {if(!stroke)drawHover();});
   }
   for (const [left, right] of [['scrollA','scrollB'],['scrollB','scrollA']]) {
     el(left).addEventListener('scroll', () => {
