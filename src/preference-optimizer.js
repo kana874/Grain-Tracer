@@ -68,6 +68,23 @@ export function preferenceParameterSnapshot(configuration) {
     'scoreMode','edgeFrameGuard'];
   return Object.fromEntries(keys.map(key => [key, configuration?.[key] ?? null]));
 }
+export function recoverPreferenceChampion(liveSettings, votes, fingerprint, featureOptions, algorithmVersion) {
+  const matched=(votes??[]).filter(v=>v?.schema==='graintracer-preference-v2' &&
+    v.eligibleForLearning!==false && v.imageFingerprint===fingerprint &&
+    v.algorithmVersion===algorithmVersion &&
+    JSON.stringify(v.featureOptions??{})===JSON.stringify(featureOptions??{}));
+  if (!matched.length) return { ...liveSettings };
+  const last=matched[matched.length-1];
+  const selected=last.winner==='b'?last.bSettings:last.aSettings;
+  const result={...liveSettings};
+  for (const key of Object.keys(preferenceParameterSnapshot(liveSettings))) {
+    const value=selected?.[key];
+    if (typeof value==='number' && Number.isFinite(value)) result[key]=value;
+    else if (key==='centerlineNms' && typeof value==='boolean') result[key]=value;
+  }
+  return result;
+}
+
 export function buildPreferenceVote({ champion, challenger, winner, proposal, fingerprint, roi, round }) {
   return {
     schema:'graintracer-preference-v2',
