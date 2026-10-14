@@ -552,7 +552,7 @@ export function buildDiagnosticReport(input) {
   }));
 
   return {
-    schema: "graintracer-diagnostic-v19",
+    schema: "graintracer-diagnostic-v20",
     regionSegmentation: input.regionSegmentation ?? null,
     generatedAt: new Date().toISOString(),
     appVersion,
@@ -588,7 +588,10 @@ export function buildDiagnosticReport(input) {
       },
       neighborSupportMinimum: 2,
       edgeAwareFeatureRenormalization: true,
-      edgeFrameGuard: 1,
+      edgeFrameGuard: 0,
+      edgePaddingMode: "reflect-101-feature-only",
+      edgePaddingPixels: features.edgePaddingPixels ?? 0,
+      edgeFrameConnectionGuard: "reject-frame-only-lines; retain-inward-supported-boundaries",
       centerlineNms: settings.extraction?.centerlineNms !== false,
       centerlineNmsMode: "continuous-ridge-normal-bilinear-non-maximum-suppression",
       ridgeOrientationMode: "axial-double-angle-interpolated",
