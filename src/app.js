@@ -1,5 +1,6 @@
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
+import { summarizePreferenceLearning } from './local-ab-learning.js';
 import { evaluatePreferenceAdoption } from './preference-adoption.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { segmentSeededRegions } from './region-segmentation.js';
@@ -362,6 +363,7 @@ function recordPerformance(name, startedAt) {
 function performanceSnapshot() {
   return {
     ...state.performance,
+    localAb: typeof localAbController !== "undefined" ? localAbController.stats() : null,
     previewPixels: state.preview ? state.preview.width * state.preview.height : 0,
     closedFillSeedCount: state.closedNegativeSeeds.length,
     borderAssistedFillSeedCount: state.closedNegativeSeeds.filter(seed => seed?.borderAssisted).length,
@@ -5756,7 +5758,11 @@ const localAbController = setupLocalAB({
     updateLocalAbStatus();
     scheduleAutosave();
   },
-  onFeedback: (indices, kind, anchor, provenance) => applyFeedbackIndices(indices, kind, anchor, provenance),
+  onFeedback: (indices, kind, anchor, provenance) => {
+    const saved=applyFeedbackIndices(indices, kind, anchor, provenance);
+    if(saved)updateLocalAbStatus();
+    return saved;
+  },
   onUndo: () => { if(!state.undoStack.length) return false; undoReference(); return true; },
   onRedo: () => { if(!state.redoStack.length) return false; redoReference(); return true; },
   getHistoryState: () => ({undo:state.undoStack.length,redo:state.redoStack.length}),
@@ -5765,10 +5771,31 @@ const localAbController = setupLocalAB({
 function updateLocalAbStatus() {
   if (!els.localAbStatus) return;
   const votes = state.localAbReviews ?? [];
-  const accepted = state.preferenceAdoptions.filter(x => x.accepted).length;
-  els.localAbStatus.textContent = "A/B選好: " + votes.length + "件 / 検証付き採用: " +
-    accepted + "件（Validation限定、Test不使用）";
+  const summary = summarizePreferenceLearning(votes,state.preferenceAdoptions);
+  els.localAbStatus.textContent = "A/B選好: " + summary.votes +
+    "件 / 評価ROI: " + summary.distinctRois +
+    " / Validation採用: " + summary.adopted;
+  const status = $("learningSummary");
+  if(status){
+    const perf=localAbController.stats();
+    const last=state.preferenceAdoptions.at(-1);
+    status.textContent="比較: "+perf.requests+"回 / キャッシュ命中 "+perf.cacheHits+
+      "回 / 直近100回の平均 "+Math.round(perf.averageMs)+"ms\n"+
+      "検証履歴 "+(summary.adopted+summary.rejected)+"件"+
+      (last?" / 直近: "+(last.accepted?"採用":"保留")+" ("+(last.reason??"")+")":"");
+  }
 }
+const modeToggle=$("uiModeToggle");
+function setWorkspaceMode(advanced){
+  document.body.classList.toggle("focus-mode",!advanced);
+  modeToggle.textContent=advanced?"A/B中心画面に戻す":"詳細機能を表示";
+  modeToggle.setAttribute("aria-pressed",String(advanced));
+  try{localStorage.setItem("graintracer-workspace-mode",advanced?"advanced":"focus");}catch{}
+}
+let savedWorkspace=null;
+try{savedWorkspace=localStorage.getItem("graintracer-workspace-mode");}catch{}
+setWorkspaceMode(savedWorkspace==="advanced");
+modeToggle.addEventListener("click",()=>setWorkspaceMode(document.body.classList.contains("focus-mode")));
 renderHistory();
 updateLocalAbStatus();
 els.projectStatus.textContent = `v${APP_VERSION} / ${ALGORITHM_VERSION}`;
