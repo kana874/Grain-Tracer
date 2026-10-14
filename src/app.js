@@ -18,7 +18,6 @@ import {
   APP_VERSION,
   ALGORITHM_VERSION,
   createProjectSnapshot,
-  downloadProject,
   fingerprintSource,
   restoreReferenceMasks,
   validateProject,
@@ -43,7 +42,8 @@ import {
   maskedNegativeLeakage,
   trainLogisticBoundaryClassifier,
 } from "./boundary-classifier.js";
-import { loadAutosave, saveAutosave } from "./storage.js";
+import { loadAutosave, saveAutosave, deleteAutosave } from "./storage.js";
+import { createProjectExport, parseProjectFile, downloadProjectBlob, backupName } from './project-backup.js';
 import { tuneLocalSensitivity } from "./local-tune.js";
 import {
   computeFullEvaluationRoiMetrics,
@@ -182,6 +182,7 @@ const els = {
   topologyRepairStatus: $("topologyRepairStatus"),
   saveProjectButton: $("saveProjectButton"),
   loadProjectButton: $("loadProjectButton"),
+  backupNewSessionButton: $("backupNewSessionButton"),
   exportDiagnosticsButton: $("exportDiagnosticsButton"),
   exportDiagnosticsIndividualButton: $("exportDiagnosticsIndividualButton"),
   recordBaselineButton: $("recordBaselineButton"),
@@ -339,6 +340,9 @@ const state = {
   abortController: null,
   autosaveTimer: null,
   autosaveIdleHandle: null,
+  pendingBackupReset: null,
+  learningRevision: 0,
+  autosaveSuppressed: false,
   transformFrame: null,
   performance: {
     featureComputeMs: null,
@@ -507,6 +511,7 @@ function updateControls() {
   els.showNormalButton.disabled = disabled || !state.comparisonMode;
   els.saveProjectButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
   els.loadProjectButton.disabled = disabled || !hasPreview;
+  els.backupNewSessionButton.disabled = disabled || !hasPreview || !state.sourceFingerprint;
   els.exportDiagnosticsButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   els.exportDiagnosticsIndividualButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
   if (els.recordBaselineButton) els.recordBaselineButton.disabled = disabled || !hasPreview || !hasAnalysis || !hasRef;
@@ -3339,13 +3344,16 @@ function cancelScheduledAutosave() {
 
 async function performAutosave() {
   state.autosaveIdleHandle = null;
-  if (!els.autosaveEnabled.checked || !state.sourceFingerprint || !state.preview) return;
+  if (state.autosaveSuppressed || !els.autosaveEnabled.checked ||
+    !state.sourceFingerprint || !state.preview) return;
+  const revision = state.learningRevision;
   try {
     const serializeStartedAt = nowMs();
     const project = buildProject();
     state.performance.autosaveSerializeMs = Math.max(0, nowMs() - serializeStartedAt);
 
     const writeStartedAt = nowMs();
+    if(state.autosaveSuppressed || revision!==state.learningRevision) return;
     await saveAutosave(state.sourceFingerprint, project);
     state.performance.autosaveWriteMs = Math.max(0, nowMs() - writeStartedAt);
     els.projectStatus.textContent = `自動保存済み ${new Date().toLocaleTimeString("ja-JP")} / ${state.performance.autosaveSerializeMs.toFixed(0)}+${state.performance.autosaveWriteMs.toFixed(0)} ms`;
@@ -3356,8 +3364,15 @@ async function performAutosave() {
 }
 
 function scheduleAutosave() {
+  state.learningRevision++;
+  if(state.pendingBackupReset) {
+    state.pendingBackupReset=null;
+    els.backupNewSessionButton.textContent="現在の学習をバックアップして新規学習を開始";
+    $("backupNewSessionStatus").textContent="バックアップ作成後に学習内容が変更されたため、もう一度バックアップしてください。";
+  }
   cancelScheduledAutosave();
-  if (!els.autosaveEnabled.checked || !state.sourceFingerprint || !state.preview) return;
+  if (state.autosaveSuppressed || !els.autosaveEnabled.checked ||
+    !state.sourceFingerprint || !state.preview) return;
   state.autosaveTimer = setTimeout(() => {
     state.autosaveTimer = null;
     if ("requestIdleCallback" in window) {
@@ -3846,7 +3861,7 @@ async function exportDiagnostics(mode = "zip") {
 }
 
 
-async function loadBmp(file) {
+async function loadBmp(file, { skipAutosave = false } = {}) {
   if (!file) return;
   cancelScheduledClosedFillRefresh();
   cancelScheduledAutosave();
@@ -3963,7 +3978,7 @@ async function loadBmp(file) {
     updateControls();
 
     let restored = false;
-    if (els.autosaveEnabled.checked) {
+    if (!skipAutosave && els.autosaveEnabled.checked) {
       const autosave = await loadAutosave(state.sourceFingerprint);
       if (autosave) {
         await restoreProject(autosave, "自動保存");
@@ -4012,6 +4027,7 @@ async function loadBmp(file) {
     const message = error instanceof BmpError ? error.message : `読込エラー: ${error.message}`;
     setStatus(message, 0);
     alert(message);
+    if(skipAutosave)throw error;
   } finally {
     setBusy(false);
   }
