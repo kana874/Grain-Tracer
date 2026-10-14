@@ -1,7 +1,7 @@
 import { buildBoundaryMask } from './analysis.js';
 import { selectFeedbackSegment, buildFeedbackConnection } from './feedback-learning.js';
 import { positionLocalRoi, withinLocalRoi, localAbCounts, filterLocalReview } from './local-ab.js';
-import { proposePreferenceCandidate, advancePreference, buildPreferenceVote, comparisonKey } from './preference-optimizer.js';
+import { proposePreferenceCandidate, advancePreference, buildPreferenceVote, preferenceParameterSnapshot } from './preference-optimizer.js';
 import { rasterizeGuidedStroke } from './stroke-review.js';
 import { recommendDisagreementRoi } from './active-roi.js';
 
@@ -277,7 +277,7 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
       : { schema:'graintracer-local-ab-v1', winner,
           imageFingerprint:current.fingerprint,
           createdAt:new Date().toISOString(), coordinateSystem:'analysis-preview',
-          roi:{...roi}, aSettings:{...configA}, bSettings:{...configB},
+          roi:{...roi}, aSettings:preferenceParameterSnapshot(configA), bSettings:preferenceParameterSnapshot(configB),
           variant:el('variant').value };
     Object.assign(record, {
       counts, featureOptions:{...current.featureOptions}, appVersion:current.appVersion,
@@ -307,8 +307,8 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     // the application callback, and Test masks never participate.
     if (winner === 'b' && el('autoAdopt').checked) await adoptChampion();
     if (!validContext()) return;
-    if (el('autoRoi').checked) recommendRoi();
     await generate();
+    if (el('autoRoi').checked && validContext() && a && b) recommendRoi();
   }
   function selectManualSide(side) {
     if (!a || !b) return;
