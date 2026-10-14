@@ -4,9 +4,11 @@ GrainTracer is a browser-based grain-boundary extraction and annotation tool for
 
 ## Current status
 
-**validation: v0.9.3-alpha / boundary-v18-reflected-edge-v1**（mainは別バージョン）
+**validation: v0.9.4-alpha / boundary-v18-reflected-edge-v1**（mainは別バージョン）
 
 Current capabilities:
+
+- **v0.9.4-alpha**: Closed-region → Negative Fill is part of the standard toolbar; the old freehand Negative line pen is available only in advanced mode. During Validation ROI editing, a fill crossing any ROI boundary is rejected *before* the mask/seed is committed. Undo/Redo and old Negative training data are maintained. [Guide](docs/standard-negative-fill-v0.9.4.md).
 
 - **v0.9.3-alpha**: Save large projects without `Invalid string length` using chunked JSON or gzip record archives, restore archives via Project Load, and safely back up the current learning state before starting fresh on the same BMP. Requires explicit verification of the downloaded backup before resetting. [Guide](docs/project-backup-v0.9.3.md).
 
