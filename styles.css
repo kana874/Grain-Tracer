@@ -204,3 +204,9 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
 .local-ab-selector [data-k="proposalStatus"] { color:#bfe7dc; font-size:11px; }
 .local-ab-manual label.check-row { width:100%; margin:2px 0; }
 .local-ab-card canvas { touch-action:none; }
+
+/* v0.8.1: undo/redo controls inside the local A/B modal. */
+.local-ab-undo-bar { width:100%; display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); }
+.local-ab-undo-bar button { min-width:88px; font-weight:600; }
+.local-ab-undo-bar button:disabled { opacity:.4; cursor:not-allowed; }
+.local-ab-undo-bar [data-k="undoStatus"] { font-size:11px; color:var(--muted); }
