@@ -9,7 +9,14 @@ export function *projectJsonChunks(value,chunkSize=CHUNK_SIZE){
     if(!part.length)return;
     for(let i=0;i<part.length;i+=chunkSize){
       buffer+=part.slice(i,i+chunkSize);
-      if(buffer.length>=chunkSize){yield buffer;buffer='';}
+      if(buffer.length>=chunkSize){
+        // Blob encodes each string fragment independently. Do not split an
+        // UTF-16 surrogate pair between chunks or emoji can become U+FFFD.
+        const last=buffer.charCodeAt(buffer.length-1);
+        if(last>=0xD800&&last<=0xDBFF){
+          yield buffer.slice(0,-1);buffer=buffer.slice(-1);
+        }else{yield buffer;buffer='';}
+      }
     }
   }
   function* writeString(value){
