@@ -4757,6 +4757,7 @@ function applyFeedbackIndices(indices, kind, anchor, provenance = {}) {
     candidate: provenance.source === 'local-ab' && ['a', 'b'].includes(provenance.candidate) ? provenance.candidate : null,
     roi: provenance.source === 'local-ab' ? { ...provenance.roi } : null,
     variant: provenance.source === 'local-ab' ? provenance.variant : null,
+    selection: provenance.selection === 'guided-stroke' ? 'guided-stroke' : 'point',
     createdAt: new Date().toISOString(),
   };
   const parts = [];
