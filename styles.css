@@ -287,3 +287,34 @@ button.feedback-tool.active { border-color: var(--ok); background: rgba(88, 227,
 /* v0.9.4: Fill is a standard annotation; the legacy Negative pen is advanced-only. */
 .focus-mode #negativeToolButton {display:none !important;}
 .focus-mode #closedNegativeFillToolButton {display:inline-flex !important;}
+
+/* Classifier learning remains user-initiated; show one actionable step. */
+.classifier-learning-wizard {
+  margin-bottom: 18px;
+  padding: 12px;
+  background: #152322;
+  border: 1px solid #2c716c;
+  border-radius: 8px;
+}
+.classifier-learning-wizard h2 { margin-bottom: 6px; }
+.classifier-wizard-steps {
+  margin: 8px 0 10px;
+  padding-left: 22px;
+  font-size: 12px;
+  line-height: 1.85;
+  color: var(--muted);
+}
+.classifier-wizard-steps li.is-done { color: var(--ok); }
+.classifier-wizard-steps li.is-current { color: #f9edca; font-weight: 700; }
+.classifier-wizard-instruction {
+  min-height: 46px;
+  padding: 8px;
+  background: #0d1717;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.classifier-wizard-tools { margin-top: 8px; }
+.classifier-wizard-tools button { font-size: 11px; }
+.classifier-learning-wizard #classifierWizardNextButton { min-height: 40px; }

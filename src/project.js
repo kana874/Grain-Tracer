@@ -44,6 +44,10 @@ export function migrateProject(project) {
     classifier: project.classifier && typeof project.classifier === "object"
       ? { ...project.classifier }
       : null,
+    classifierLearning: project.classifierLearning && typeof project.classifierLearning === 'object'
+      ? { ...project.classifierLearning, history: Array.isArray(project.classifierLearning.history)
+        ? project.classifierLearning.history.slice(-50) : [] }
+      : null,
     fullEvaluationRois: rois,
     feedbackReviews: Array.isArray(project.feedbackReviews) ? project.feedbackReviews.slice(-2000) : [],
     localAbReviews: Array.isArray(project.localAbReviews) ? project.localAbReviews.slice(-500) : [],
@@ -116,6 +120,7 @@ export function createProjectSnapshot(input) {
     imageEvaluationRole,
     baselineSnapshots,
     classifier,
+    classifierLearning,
     feedbackReviews,
     localAbReviews,
     preferenceAdoptions,
@@ -130,6 +135,13 @@ export function createProjectSnapshot(input) {
     preview: { width: preview.width, height: preview.height, scale: preview.scale },
     settings,
     classifier: classifier ?? null,
+    classifierLearning: classifierLearning ? {
+      revision: classifierLearning.revision ?? 0,
+      validationRevision: classifierLearning.validationRevision ?? 0,
+      lastTrainedRevision: classifierLearning.lastTrainedRevision ?? -1,
+      status: classifierLearning.status ?? 'idle',
+      history: (classifierLearning.history ?? []).slice(-50),
+    } : null,
     feedbackReviews: (feedbackReviews ?? []).slice(-2000).map(item => ({ ...item })),
     localAbReviews: (localAbReviews ?? []).slice(-500).map(item => ({ ...item })),
     preferenceAdoptions: (preferenceAdoptions ?? []).slice(-200).map(item => ({ ...item })),

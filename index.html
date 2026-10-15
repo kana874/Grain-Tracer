@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GrainTracer</title>
-  <link rel="stylesheet" href="./styles.css?v=0.9.4-alpha">
+  <link rel="stylesheet" href="./styles.css?v=0.9.4-alpha-guide-1">
 </head>
 <body class="focus-mode">
   <header class="app-header">
@@ -126,6 +126,23 @@
 
     <aside class="panel right-panel">
       <section class="focus-primary">
+        <div class="classifier-learning-wizard" id="classifierLearningWizard">
+          <h2>Classifier学習ガイド</h2>
+          <p class="help">お手本の描画中は学習しません。手順を進め、最後にボタンを押した時だけ学習・検証を実行します。</p>
+          <ol class="classifier-wizard-steps" aria-label="学習の手順">
+            <li id="classifierWizardStepTraining">1. Training範囲を作成</li>
+            <li id="classifierWizardStepLabels">2. 粒界・非粒界を入力</li>
+            <li id="classifierWizardStepValidation">3. Validation範囲を確認</li>
+            <li id="classifierWizardStepTrain">4. 学習・検証を実行</li>
+          </ol>
+          <p id="classifierWizardInstruction" role="status" class="classifier-wizard-instruction">BMP画像を開くと、次の操作を案内します。</p>
+          <button id="classifierWizardNextButton" class="primary full" type="button" disabled>画像を読み込んでください</button>
+          <div class="button-grid classifier-wizard-tools">
+            <button id="classifierWizardPositiveButton" type="button" disabled>粒界線を描く</button>
+            <button id="classifierWizardNegativeButton" type="button" disabled>非粒界を指定</button>
+          </div>
+          <p id="classifierWizardResult" class="help metric-detail" role="status">学習状態: 未実行。既存のROI・教師ラベルはそのまま利用できます。</p>
+        </div>
         <h2>A/B学習ワークスペース</h2>
         <p class="help">良い候補を選び、必要な線だけドラッグで補正。複数ROIの選好を統合してValidationで安全に検証します。</p>
         <button id="localAbButton" class="primary full" type="button" disabled>A/B比較・手動補正を開く</button>
@@ -206,9 +223,10 @@
           <div class="button-grid">
             <button id="trainClassifierButton" type="button" disabled>Classifier学習・検証</button>
             <button id="resetClassifierButton" type="button" disabled>Classifier解除</button>
+            <button id="rollbackClassifierButton" type="button" disabled>直前の採用モデルへ戻す</button>
           </div>
           <p id="classifierStatus" class="help metric-detail">Classifier: 未学習</p>
-          <p class="help">粒内デンドライトらしい長い平行線を独立Penaltyとして扱います。Classifierは明示的Training ROIのPositive/Negativeだけで学習し、Validation ROIでRecall・F1・Negative Leakage・Topology Guardを通過した場合だけ自動採用します。Test ROIは学習・Guardに使用しません。</p>
+          <p class="help">粒内デンドライトらしい長い平行線を独立Penaltyとして扱います。Classifierは明示的Training ROIのPositive/Negativeだけで学習し、確認済みValidation ROIでF1改善・Recall・Precision・Negative Leakage・Topologyを検証した候補だけを採用します。フィードバック後も描画中に自動学習せず、上部の学習ガイドから明示的に実行します。Test ROIは学習・Guardに使用しません。</p>
         </div>
 
         <label class="control-row"><span>最小連結サイズ</span><output id="minComponentValue">24</output><input id="minComponent" type="range" min="1" max="300" value="24"></label>
@@ -428,7 +446,7 @@
     </aside>
   </main>
 
-  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.4-alpha","./src/project.js":"./src/project.js?v=0.9.4-alpha","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.4-alpha","./src/analysis.js":"./src/analysis.js?v=0.9.4-alpha","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.4-alpha","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.4-alpha","./src/local-ab.js":"./src/local-ab.js?v=0.9.4-alpha","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.4-alpha","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.4-alpha","./src/active-roi.js":"./src/active-roi.js?v=0.9.4-alpha","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.4-alpha","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.4-alpha","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.4-alpha","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.4-alpha","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.4-alpha","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.4-alpha","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.4-alpha","./src/project-backup.js":"./src/project-backup.js?v=0.9.4-alpha","./src/validation-fill-guard.js":"./src/validation-fill-guard.js?v=0.9.4-alpha"}}</script>
-  <script type="module" src="./src/app.js?v=0.9.4-alpha"></script>
+  <script type="importmap">{"imports":{"./src/ground-truth-ui.js":"./src/ground-truth-ui.js?v=0.9.4-alpha-guide-1","./src/project.js":"./src/project.js?v=0.9.4-alpha-guide-1","./src/image-viewport.js":"./src/image-viewport.js?v=0.9.4-alpha-guide-1","./src/analysis.js":"./src/analysis.js?v=0.9.4-alpha-guide-1","./src/edge-padding.js":"./src/edge-padding.js?v=0.9.4-alpha-guide-1","./src/local-ab-ui.js":"./src/local-ab-ui.js?v=0.9.4-alpha-guide-1","./src/local-ab.js":"./src/local-ab.js?v=0.9.4-alpha-guide-1","./src/preference-optimizer.js":"./src/preference-optimizer.js?v=0.9.4-alpha-guide-1","./src/stroke-review.js":"./src/stroke-review.js?v=0.9.4-alpha-guide-1","./src/active-roi.js":"./src/active-roi.js?v=0.9.4-alpha-guide-1","./src/preference-adoption.js":"./src/preference-adoption.js?v=0.9.4-alpha-guide-1","./src/diagnostic-serializer.js":"./src/diagnostic-serializer.js?v=0.9.4-alpha-guide-1","./src/local-ab-engine.js":"./src/local-ab-engine.js?v=0.9.4-alpha-guide-1","./src/local-ab-worker.js":"./src/local-ab-worker.js?v=0.9.4-alpha-guide-1","./src/local-ab-viewport.js":"./src/local-ab-viewport.js?v=0.9.4-alpha-guide-1","./src/local-ab-learning.js":"./src/local-ab-learning.js?v=0.9.4-alpha-guide-1","./src/validation-roi.js":"./src/validation-roi.js?v=0.9.4-alpha-guide-1","./src/project-backup.js":"./src/project-backup.js?v=0.9.4-alpha-guide-1","./src/validation-fill-guard.js":"./src/validation-fill-guard.js?v=0.9.4-alpha-guide-1"}}</script>
+  <script type="module" src="./src/app.js?v=0.9.4-alpha-guide-1"></script>
 </body>
 </html>

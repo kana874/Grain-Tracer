@@ -1,3 +1,7 @@
+import { createLearningCoordinator } from "./learning-coordinator.js";
+import { assessClassifierWizard } from "./classifier-wizard.js";
+import { createCompactTrainingPacket, trainClassifierInWorker,
+  verifyLearningPartitions, evaluateAutoClassifierGuard } from "./classifier-learning.js";
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
 import { buildLocalPrediction } from './local-ab-engine.js';
@@ -201,6 +205,7 @@ const els = {
   negativeEvidenceWeight: $("negativeEvidenceWeight"),
   trainClassifierButton: $("trainClassifierButton"),
   resetClassifierButton: $("resetClassifierButton"),
+  rollbackClassifierButton: $("rollbackClassifierButton"),
   classifierStatus: $("classifierStatus"),
   hysteresisEnabled: $("hysteresisEnabled"),
   hysteresisHighThreshold: $("hysteresisHighThreshold"),
@@ -324,6 +329,10 @@ const state = {
   feedbackPending: null,
   baselineSnapshots: [],
   classifier: null,
+  classifierLearning: {revision:0,validationRevision:0,lastTrainedRevision:-1,
+    status:"idle",history:[]},
+  classifierTrainingAbort: null,
+  loadingProject: false,
   precisionGuide: createDefaultPrecisionGuideState(),
   comparisonMode: false,
   annotationAssist: false,
@@ -361,6 +370,156 @@ const state = {
     gapBridgeMs: null,
   },
 };
+
+function canAutoTrainClassifier() {
+  if (!state.preview || !state.sourceFingerprint || !canTuneImage(state.imageEvaluationRole)) return false;
+  if (state.referenceCount < 24 || Math.max(state.negativeCount, state.combinedNegativeCount) < 24) return false;
+  return verifyLearningPartitions(state.fullEvaluationRois).ok;
+}
+
+const classifierLearningCoordinator = createLearningCoordinator({
+  ready: canAutoTrainClassifier,
+  run: trainBoundaryClassifier,
+  debounceMs: 1800,
+  // Never schedule training from pointer/annotation edits; only explicit UI actions run it.
+  autoRun: false,
+  onStatus: (status) => {
+    if (state.loadingProject) return;
+    state.classifierLearning.status = status;
+    updateClassifierStatus();
+  },
+});
+
+function noteClassifierLearningChange(kind = "labels") {
+  if (state.loadingProject || !state.preview) return;
+  state.classifierLearning.revision++;
+  // A changed label can be within the held-out Validation ROI.
+  if (kind === "validation" || kind === "labels" || kind === "configuration")
+    state.classifierLearning.validationRevision++;
+  state.classifierLearning.status = "pending";
+  state.classifierTrainingAbort?.abort();
+  classifierLearningCoordinator.changed();
+  updateClassifierStatus();
+  renderClassifierWizard();
+}
+
+let lastClassifierWizardKey = null;
+let latestClassifierWizard = null;
+
+function renderClassifierWizard() {
+  const button = $("classifierWizardNextButton");
+  if (!button) return;
+  if (state.drawingReference) {
+    button.disabled = true;
+    return;
+  }
+  const learning = state.classifierLearning;
+  const roiFingerprint = (state.fullEvaluationRois ?? []).map(rect =>
+    [rect.x0,rect.y0,rect.x1,rect.y1,rect.evaluationRole,rect.verified,rect.source].join(":")
+  ).join("|");
+  const key = [state.sourceFingerprint, state.preview?.width, state.preview?.height,
+    learning?.revision, learning?.lastTrainedRevision, learning?.status,
+    state.referenceCount, state.negativeCount, state.combinedNegativeCount,
+    state.imageEvaluationRole, state.classifier?.trainedAt, state.classifier?.accepted,
+    roiFingerprint].join("#");
+  if (key !== lastClassifierWizardKey) {
+    lastClassifierWizardKey = key;
+    latestClassifierWizard = assessClassifierWizard({
+      width: state.preview?.width,
+      height: state.preview?.height,
+      rois: state.fullEvaluationRois,
+      positiveMask: state.referenceCenterline,
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+      imageRole: state.imageEvaluationRole,
+      learning,
+      classifier: state.classifier,
+    });
+  }
+  const guide = latestClassifierWizard;
+  if (!guide) return;
+  $("classifierWizardInstruction").textContent = guide.title + " — " + guide.instruction;
+  const activeIndex = ({image:0,training:0,labels:1,validation:2,ready:3,
+    complete:4,blocked:2})[guide.step] ?? 0;
+  const steps = ["classifierWizardStepTraining","classifierWizardStepLabels",
+    "classifierWizardStepValidation","classifierWizardStepTrain"];
+  for (let i=0;i<steps.length;i++) {
+    const item=$(steps[i]);
+    item.classList.toggle("is-done",i<activeIndex);
+    item.classList.toggle("is-current",i===activeIndex);
+  }
+  const labels={
+    "none":"画像・ROIの状態を確認",
+    "open-image":"BMPを開く",
+    "create-training":"Training範囲を指定",
+    "edit-positive":"お手本線（粒界）を描く",
+    "edit-negative":"非粒界を指定する",
+    "create-validation":"Validation作成へ進む",
+    "train":"Classifier学習・独立検証を実行",
+    "retrain":"もう一度、学習・検証を実行",
+  };
+  const actionAllowed=guide.action!=="none" && !state.busy &&
+    !state.rectInteraction && !state.validationDraft;
+  button.disabled = !actionAllowed;
+  button.textContent = labels[guide.action] || "次へ";
+  const hasTraining=guide.details.trainingRois>0 && state.preview;
+  const allowDrawing=Boolean(hasTraining && !state.busy && !state.validationDraft);
+  $("classifierWizardPositiveButton").disabled=!allowDrawing;
+  $("classifierWizardNegativeButton").disabled=!allowDrawing;
+
+  const counts=guide.details;
+  const last=learning?.history?.at(-1);
+  const metrics=last?.before?.f1!=null && last?.after?.f1!=null
+    ? " / Validation F1 " + (last.before.f1*100).toFixed(2) + "% → " +
+        (last.after.f1*100).toFixed(2) + "%" : "";
+  const decision=last
+    ? last.accepted ? "直前の候補は採用" : "直前の候補は棄却（旧モデル維持）" :
+      state.classifier?.accepted ? "採用済みClassifierあり" : "学習未実行";
+  $("classifierWizardResult").textContent = "Training " + counts.trainingRois +
+    "領域 / 粒界 " + counts.positive + "/24以上 / 非粒界 " +
+    counts.negative + "/24以上 / 確認済みValidation " +
+    counts.validationRois + "領域 / " + decision + metrics +
+    " / " + (learning?.status ?? "idle");
+}
+
+function focusClassifierTraining(tool) {
+  if (!state.preview || state.busy || state.validationDraft) return;
+  const rect=(state.fullEvaluationRois ?? []).find(r =>
+    r?.evaluationRole==="training" && r.verified!==false);
+  if (!rect) return;
+  state.selectedFullRoiIndex = state.fullEvaluationRois.indexOf(rect);
+  setTool(tool);
+  focusPreviewRect(rect);
+  setStatus(tool==="negative-reference"
+    ? "Training範囲の非粒界をオレンジ線で指定してください。閉じた粒内は「閉領域→非粒界」も利用できます。"
+    : "Training範囲の粒界を黄色のお手本線でなぞってください。描画中にClassifierは起動しません。");
+}
+
+function handleClassifierWizardNext() {
+  const action=latestClassifierWizard?.action;
+  if (state.busy || state.drawingReference || state.rectInteraction) return;
+  if (action==="create-training") {
+    setTool("full-roi");
+    setStatus("画像上でTraining ROIの矩形を描いてください。作成した矩形はTrainingに設定されます。");
+  } else if(action==="edit-positive") {
+    focusClassifierTraining("reference");
+  } else if(action==="edit-negative") {
+    focusClassifierTraining("negative-reference");
+  } else if(action==="create-validation") {
+    if (!state.validationDraft) {
+      const unfinished=state.fullEvaluationRois.some(r =>
+        r?.evaluationRole==="validation" && r.verified===false &&
+        r.source?.startsWith("validation-wizard"));
+      if (unfinished) resumeValidationRoiWizard();
+      else startValidationRoiWizard();
+      $("validationRoiWizard")?.scrollIntoView({block:"nearest",behavior:"smooth"});
+    }
+  } else if (action==="train" || action==="retrain") {
+    void trainBoundaryClassifier({automatic:false});
+  } else if (action==="open-image") {
+    els.fileInput.click();
+  }
+}
 
 function nowMs() {
   return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -523,6 +682,7 @@ function updateControls() {
   if (els.resetClassifierButton) els.resetClassifierButton.disabled = disabled || !state.classifier;
   if (els.imageEvaluationRoleSelect) els.imageEvaluationRoleSelect.disabled = disabled || !hasPreview;
   updateEvaluationRoleControls();
+  renderClassifierWizard();
 }
 
 function setBusy(busy) {
@@ -747,7 +907,9 @@ function buildNegativeHoldout() {
 }
 function currentBoundaryOptions() {
   const extraction = currentExtractionOptions();
-  const classifierAccepted = Boolean(state.classifier?.accepted && state.classifier?.model);
+  const classifierAccepted = Boolean(state.classifier?.accepted && state.classifier?.model
+    && (!state.classifier.featureKey ||
+      state.classifier.featureKey === JSON.stringify(currentFeatureOptions())));
   return {
     ...extraction,
     scoreMode: extraction.scoreMode === "classifier" && !classifierAccepted
@@ -778,8 +940,13 @@ function updateLocalCalibrationStatus() {
 
 function updateClassifierStatus() {
   if (!els.classifierStatus) return;
+  const learning = state.classifierLearning;
+  const status = learning?.status && learning.status !== "idle"
+    ? " / 手動学習: " + learning.status : "";
+  if (els.rollbackClassifierButton) els.rollbackClassifierButton.disabled =
+    !state.classifier?.previous || state.busy;
   if (!state.classifier?.model) {
-    els.classifierStatus.textContent = "Classifier: 未学習";
+    els.classifierStatus.textContent = "Classifier: 未学習" + status;
     return;
   }
   const samples = state.classifier.model.sampleCounts ?? {};
@@ -789,10 +956,10 @@ function updateClassifierStatus() {
     const leak = Number.isFinite(delta?.negativeLeakage)
       ? ` / ΔLeak ${(delta.negativeLeakage * 100).toFixed(2)}pt`
       : "";
-    els.classifierStatus.textContent = `Classifier: Guard合格 / ${sampleText}${leak}`;
+    els.classifierStatus.textContent = `Classifier: Guard合格 / ${sampleText}${leak}${status}`;
   } else {
     const reasons = state.classifier.guard?.reasons?.join(", ") || "Guard未評価";
-    els.classifierStatus.textContent = `Classifier: 未採用 / ${sampleText} / ${reasons}`;
+    els.classifierStatus.textContent = `Classifier: 未採用 / ${sampleText} / ${reasons}${status}`;
   }
 }
 
@@ -860,105 +1027,185 @@ function classifierValidationEvaluation(mask, rois) {
   };
 }
 
-async function trainBoundaryClassifier() {
+async function trainBoundaryClassifier({automatic = false} = {}) {
+  // An explicit button action is the sole authorized entry point. A long
+  // pointer stroke must never trigger/overlap classifier work.
+  if (automatic || state.busy || state.drawingReference || state.rectInteraction || state.validationDraft) return;
   if (!state.preview || !hasReference() || !hasNegativeReference()) return;
   if (!canTuneImage(state.imageEvaluationRole)) {
     setStatus("Validation/Test画像ではClassifier学習できません。", 0);
     return;
   }
-  const trainingRois = explicitTrainingEvaluationRois();
-  const validationRois = validationEvaluationRois(state.fullEvaluationRois);
-  if (!trainingRois.length) {
-    setStatus("Classifier学習には明示的なTraining ROIが必要です。Legacy ROIは学習に使用しません。", 0);
-    return;
-  }
-  if (!validationRois.length) {
-    setStatus("Classifier自動採用GuardにはValidation ROIが必要です。Test ROIは使用しません。", 0);
+  const split = verifyLearningPartitions(state.fullEvaluationRois);
+  if (!split.ok) {
+    state.classifierLearning.status = "waiting";
+    updateClassifierStatus();
+    if (!automatic) setStatus("Classifier学習を保留: " + split.reason, 0);
     return;
   }
 
+  const fingerprint = state.sourceFingerprint;
+  const revision = state.classifierLearning.revision;
+  const featureKey = JSON.stringify(currentFeatureOptions());
+  const validationRevision = state.classifierLearning.validationRevision;
+  const controller = new AbortController();
+  state.classifierTrainingAbort = controller;
+  const previousAccepted = state.classifier?.accepted ? state.classifier : null;
+  const oldScoreMode = els.scoreMode?.value ?? "legacy";
+  state.classifierLearning.status = "training";
   setBusy(true);
+  updateClassifierStatus();
+
   try {
     ensureClosedNegativeFresh();
     const features = await ensureFeatures();
-    const trainingMask = buildRoiMask(state.preview.width, state.preview.height, trainingRois);
-    setStatus("Classifier学習中...", 8);
-    const model = trainLogisticBoundaryClassifier(
-      features,
-      state.referenceCenterline,
-      state.negativeMask,
-      {
-        roiMask: trainingMask,
-        exclusionMask: state.exclusionMask,
+    const trainingMask = buildRoiMask(state.preview.width, state.preview.height, split.training);
+    const packet = createCompactTrainingPacket(
+      features, state.referenceCenterline, state.negativeMask, {
+        roiMask: trainingMask, exclusionMask: state.exclusionMask,
       },
     );
+    setStatus("Classifier学習中（ROI教師画素のみWorkerへ送信）...", 12);
+    const model = await trainClassifierInWorker(packet, {signal: controller.signal});
+    if (controller.signal.aborted || state.sourceFingerprint !== fingerprint ||
+        state.classifierLearning.revision !== revision ||
+        JSON.stringify(currentFeatureOptions()) !== featureKey) return;
 
-    const extraction = currentExtractionOptions();
-    const baselineMode = extraction.scoreMode === "evidence" ? "evidence" : "legacy";
+    // A previously accepted classifier is the baseline for subsequent rounds.
+    // The initial round uses the currently selected legacy/evidence baseline.
+    const oldModel = previousAccepted && (!previousAccepted.featureKey || previousAccepted.featureKey === featureKey)
+      && oldScoreMode === "classifier" ? previousAccepted.model : null;
+    const baselineMode = oldModel ? "classifier"
+      : oldScoreMode === "evidence" ? "evidence" : "legacy";
+    // Hold-out Negative labels must never suppress predictions in Validation/Test.
+    const heldOut = [...split.validation, ...testEvaluationRois(state.fullEvaluationRois)];
+    const unbiasedNegative = maskExcludingRois(state.negativeMask,
+      state.preview.width, state.preview.height, heldOut);
     const common = {
       ...currentBoundaryOptions(),
-      hysteresis: { enabled: false },
-      edgeFrameGuard: 0,
+      negativeMask: unbiasedNegative,
       onProgress: () => {},
+      onHysteresisDiagnostics: () => {},
     };
-    setStatus("Classifier Guard: Validation比較中...", 55);
+    setStatus("Classifier: 独立Validationで旧モデルと候補を比較中...", 62);
     const baselineMask = await buildBoundaryMask(features, {
-      ...common,
-      scoreMode: baselineMode,
-      classifierModel: null,
+      ...common, scoreMode: baselineMode, classifierModel: oldModel,
     });
     const classifierMask = await buildBoundaryMask(features, {
-      ...common,
-      scoreMode: "classifier",
-      classifierModel: model,
+      ...common, scoreMode: "classifier", classifierModel: model,
     });
+    if (controller.signal.aborted || state.sourceFingerprint !== fingerprint ||
+        state.classifierLearning.revision !== revision ||
+        state.classifierLearning.validationRevision !== validationRevision ||
+        JSON.stringify(currentFeatureOptions()) !== featureKey) return;
 
-    const baselineEval = classifierValidationEvaluation(baselineMask, validationRois);
-    const candidateEval = classifierValidationEvaluation(classifierMask, validationRois);
-    const guard = evaluateClassifierGuard(baselineEval, candidateEval);
-    state.classifier = {
-      model,
+    const baselineEval = classifierValidationEvaluation(baselineMask, split.validation);
+    const candidateEval = classifierValidationEvaluation(classifierMask, split.validation);
+    const guard = evaluateAutoClassifierGuard(baselineEval, candidateEval);
+    // Prepare the live mask before switching the active model. A rendering or
+    // computation failure must never leave a partially adopted classifier.
+    const adoptedMask = guard.accepted ? await buildBoundaryMask(features, {
+      ...currentBoundaryOptions(), scoreMode: "classifier",
+      classifierModel: model, onProgress: () => {},
+    }) : null;
+    if (controller.signal.aborted || state.sourceFingerprint !== fingerprint ||
+        state.classifierLearning.revision !== revision ||
+        state.classifierLearning.validationRevision !== validationRevision ||
+        JSON.stringify(currentFeatureOptions()) !== featureKey) return;
+    const record = {
+      createdAt: new Date().toISOString(),
+      schema: "graintracer-classifier-learning-v1",
+      imageFingerprint: fingerprint,
+      trainingRevision: revision,
+      validationRevision,
+      algorithmVersion: ALGORITHM_VERSION,
+      featureKey,
       accepted: guard.accepted,
       guard,
-      baselineMode,
-      trainingRoiCount: trainingRois.length,
-      validationRoiCount: validationRois.length,
-      baseline: baselineEval,
-      candidate: candidateEval,
-      trainedAt: model.trainedAt,
+      sampleCounts: model.sampleCounts,
+      before: baselineEval,
+      after: candidateEval,
+      testExcluded: true,
     };
+    state.classifierLearning.history.push(record);
+    state.classifierLearning.history = state.classifierLearning.history.slice(-50);
+    state.classifierLearning.lastTrainedRevision = revision;
+    state.classifierLearning.status = guard.accepted ? "accepted" : "rejected";
 
     if (guard.accepted) {
+      const previous = previousAccepted ? {
+        model: previousAccepted.model,
+        accepted: previousAccepted.accepted,
+        guard: previousAccepted.guard,
+        baselineMode: previousAccepted.baselineMode,
+        baseline: previousAccepted.baseline,
+        candidate: previousAccepted.candidate,
+        trainedAt: previousAccepted.trainedAt,
+        featureKey: previousAccepted.featureKey,
+      } : null;
+      // Switch only after the comparison is complete. Preserve one rollback generation.
+      state.classifier = {
+        model, accepted: true, guard, baselineMode,
+        trainingRoiCount: split.training.length,
+        validationRoiCount: split.validation.length,
+        baseline: baselineEval, candidate: candidateEval,
+        trainedAt: model.trainedAt, featureKey, previous,
+      };
       if (els.scoreMode) els.scoreMode.value = "classifier";
-      state.analysisMask = classifierMask;
+      // The live mask was computed before the model swap.
+      state.analysisMask = adoptedMask;
       resetGapBridgeState(true);
       invalidateTopology();
       renderNormalOverlay();
       updateMetrics();
       setStatus(
-        `Classifier Guard合格: Validation F1 ${(baselineEval.f1 * 100).toFixed(1)}→${(candidateEval.f1 * 100).toFixed(1)}% / Leakage ${(baselineEval.negativeLeakage * 100).toFixed(2)}→${(candidateEval.negativeLeakage * 100).toFixed(2)}%`,
+        "Classifier採用: Validation F1 " +
+        (baselineEval.f1 * 100).toFixed(2) + "% → " +
+        (candidateEval.f1 * 100).toFixed(2) + "%。Test未参照。",
         100,
       );
     } else {
-      if (els.scoreMode?.value === "classifier") els.scoreMode.value = baselineMode;
-      setStatus(`Classifier Guard不合格: ${guard.reasons.join(", ")}。従来方式を維持します。`, 100);
+      // Failed candidates never overwrite a working model or active score mode.
+      setStatus("Classifier候補を棄却: " + guard.reasons.join(", ") +
+        "。従来の採用済みモデルを維持します。", 100);
     }
     updateClassifierStatus();
     updateControls();
     scheduleAutosave();
   } catch (error) {
-    console.error(error);
-    state.classifier = null;
-    updateClassifierStatus();
-    setStatus(`Classifier学習エラー: ${error.message}。従来方式を維持します。`, 0);
+    if (error?.name !== "AbortError") {
+      console.error(error);
+      state.classifierLearning.status = "failed";
+      // Do not destroy state.classifier on errors; the previous model stays live.
+      updateClassifierStatus();
+      setStatus("Classifier学習エラー: " + error.message + "。旧モデルを維持します。", 0);
+    }
   } finally {
+    if (state.classifierTrainingAbort === controller) state.classifierTrainingAbort = null;
     setBusy(false);
+    updateClassifierStatus();
   }
+}
+
+function rollbackBoundaryClassifier() {
+  if (!state.classifier?.previous || state.busy) return;
+  state.classifier = {...state.classifier.previous, previous: null};
+  if (els.scoreMode) els.scoreMode.value = "classifier";
+  state.classifierLearning.status = "rolled-back";
+  state.analysisMask = null;
+  invalidateTopology();
+  renderNormalOverlay();
+  updateClassifierStatus();
+  updateControls();
+  scheduleAutosave();
+  setStatus("直前の採用済みClassifierへ戻しました。再解析してください。");
 }
 
 function resetBoundaryClassifier() {
   state.classifier = null;
+  classifierLearningCoordinator.cancel();
   if (els.scoreMode?.value === "classifier") els.scoreMode.value = "legacy";
+  state.classifierLearning.status = "idle";
   updateClassifierStatus();
   updateControls();
   scheduleAutosave();
@@ -1124,8 +1371,12 @@ function extractionSettingChanged() {
 }
 
 function featureSettingChanged() {
+  noteClassifierLearningChange("configuration");
   invalidateFeatures();
   clearLocalCalibration(true);
+  if (state.classifier?.featureKey && state.classifier.featureKey !==
+      JSON.stringify(currentFeatureOptions()) && els.scoreMode?.value === "classifier")
+    els.scoreMode.value = "legacy";
   scheduleAutosave();
 }
 
@@ -3045,7 +3296,8 @@ function commitReferenceHistory(entry) {
   updateControls();
 }
 
-function invalidateAfterReferenceEdit(affectsAnalysis = false) {
+function invalidateAfterReferenceEdit(affectsAnalysis = false, {deferLearning = false} = {}) {
+  if (!deferLearning) noteClassifierLearningChange("labels");
   clearLocalCalibration(true);
   const gapWasApplied = Boolean(state.gapBaseMask);
   if (gapWasApplied) {
@@ -3071,6 +3323,7 @@ function invalidateAfterReferenceEdit(affectsAnalysis = false) {
 }
 
 function invalidateEvaluationOnly() {
+  noteClassifierLearningChange("validation");
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
   els.negativeCanvas.style.visibility = "visible";
@@ -3326,6 +3579,7 @@ function buildProject() {
     imageEvaluationRole: state.imageEvaluationRole,
     baselineSnapshots: state.baselineSnapshots,
     classifier: state.classifier,
+    classifierLearning: state.classifierLearning,
     feedbackReviews: state.feedbackReviews,
     localAbReviews: state.localAbReviews,
     preferenceAdoptions: state.preferenceAdoptions,
@@ -3396,6 +3650,9 @@ function scheduleAutosave() {
 }
 
 async function restoreProject(project, source = "プロジェクト") {
+  classifierLearningCoordinator.cancel();
+  state.classifierTrainingAbort?.abort();
+  state.loadingProject = true;
   project = validateProject(project);
   if (!state.preview || !state.sourceFingerprint) throw new Error("先に対応するBMPを開いてください。");
   if (project.source?.fingerprint && project.source.fingerprint !== state.sourceFingerprint) {
@@ -3442,6 +3699,15 @@ async function restoreProject(project, source = "プロジェクト") {
   state.classifier = project.classifier && typeof project.classifier === "object"
     ? structuredClone(project.classifier)
     : null;
+  state.classifierLearning = {
+    revision: Math.max(0, Number(project.classifierLearning?.revision) || 0),
+    validationRevision: Math.max(0, Number(project.classifierLearning?.validationRevision) || 0),
+    lastTrainedRevision: Number.isInteger(project.classifierLearning?.lastTrainedRevision)
+      ? project.classifierLearning.lastTrainedRevision : -1,
+    status: "idle",
+    history: Array.isArray(project.classifierLearning?.history)
+      ? project.classifierLearning.history.slice(-50) : [],
+  };
   state.precisionGuide = createDefaultPrecisionGuideState(project.precisionGuide ?? {});
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -3469,6 +3735,9 @@ async function restoreProject(project, source = "プロジェクト") {
   renderNormalOverlay();
   updateMetrics();
   updateControls();
+  state.loadingProject = false;
+  if (state.classifierLearning.revision > state.classifierLearning.lastTrainedRevision)
+    classifierLearningCoordinator.changed();
   els.projectStatus.textContent = `${source}を復元しました`;
   setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界線 ${state.negativeCount.toLocaleString()} px / 閉領域Fill ${state.closedNegativeValidCount}領域 / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
 }
@@ -3771,6 +4040,18 @@ async function exportDiagnostics(mode = "zip") {
       classifier: state.classifier,
       hysteresis: state.lastHysteresis,
     });
+    report.classifierLearning = {
+      schema: "graintracer-classifier-learning-audit-v1",
+      executionMode: "manual-only",
+      status: state.classifierLearning.status,
+      revision: state.classifierLearning.revision,
+      validationRevision: state.classifierLearning.validationRevision,
+      lastTrainedRevision: state.classifierLearning.lastTrainedRevision,
+      accepted: Boolean(state.classifier?.accepted),
+      history: state.classifierLearning.history.slice(-20),
+      wizardStep: latestClassifierWizard?.step ?? null,
+      note: "Editing annotations never launches classifier training",
+    };
     // A diagnostic summary is an audit trail, not a complete-label metric.
     report.localAbReview = {
       schema: "graintracer-local-ab-v1",
@@ -3976,6 +4257,12 @@ async function exportDiagnostics(mode = "zip") {
 
 async function loadBmp(file, { skipAutosave = false } = {}) {
   if (!file) return;
+  classifierLearningCoordinator.cancel();
+  state.classifierTrainingAbort?.abort();
+  state.classifierTrainingAbort = null;
+  state.loadingProject = false;
+  state.classifierLearning = {revision:0,validationRevision:0,lastTrainedRevision:-1,
+    status:"idle",history:[]};
   cancelScheduledClosedFillRefresh();
   cancelScheduledAutosave();
   state.abortController?.abort();
@@ -5502,7 +5789,7 @@ function beginReferenceDraw(event) {
   if(validationEditingRect()) $("validationRoiAttest").checked=false;
   cancelScheduledClosedFillRefresh();
   if (state.comparisonMode) showNormalView();
-  invalidateAfterReferenceEdit();
+  invalidateAfterReferenceEdit(false, { deferLearning: true });
 
   state.currentReferenceEdit = {
     reference: createReferenceEditTracker(),
@@ -5560,6 +5847,7 @@ function endReferenceDraw(event) {
   }
 
   recalcAnnotationCounts();
+  if (parts.length) noteClassifierLearningChange("labels");
   updateMetrics();
   updateControls();
   recordPerformance("annotationCommitMs", annotationCommitStartedAt);
@@ -5876,8 +6164,12 @@ els.scoreMode?.addEventListener("change", () => {
   }
   extractionSettingChanged();
 });
-els.trainClassifierButton?.addEventListener("click", trainBoundaryClassifier);
+$("classifierWizardNextButton")?.addEventListener("click", handleClassifierWizardNext);
+$("classifierWizardPositiveButton")?.addEventListener("click", () => focusClassifierTraining("reference"));
+$("classifierWizardNegativeButton")?.addEventListener("click", () => focusClassifierTraining("negative-reference"));
+els.trainClassifierButton?.addEventListener("click", () => { void trainBoundaryClassifier({automatic:false}); });
 els.resetClassifierButton?.addEventListener("click", resetBoundaryClassifier);
+els.rollbackClassifierButton?.addEventListener("click", rollbackBoundaryClassifier);
 const hysteresisSettingChanged = () => {
   state.lastHysteresis = null;
   updateHysteresisStatus();
