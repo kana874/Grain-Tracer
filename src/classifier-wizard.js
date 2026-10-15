@@ -13,7 +13,7 @@ export function assessClassifierWizard(input = {}) {
   });
   if(!width||!height||!positiveMask||!negativeMask)
     return base("image","BMP画像を開く",
-      "最初にBMPを読み込んでください。保存済みのプロジェクトも復元できます。","none");
+      "最初にBMPを読み込んでください。保存済みのプロジェクトも復元できます。","open-image");
   if(!canTuneImage(imageRole))
     return base("blocked","この画像は学習対象外です",
       "画像の役割がValidation/Testです。学習用画像ではDevelopmentを選択してください。","none");
