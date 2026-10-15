@@ -5,7 +5,7 @@ import { computeLocalLuminanceNormalization, normalizeFeatureLocally } from "./l
 import { compareBoundaryMasks, computeFullEvaluationRoiMetrics, computeRegionalMetrics, dilateBinaryMask } from "./evaluation.js";
 import { interpolateSensitivityDelta } from "./local-tune.js";
 import { computeDendriteDifference, computeDendriteLinePenalty, computeDendriteOrientation } from "./dendrite.js";
-import { isUsableClassifierModel, predictBoundaryProbability } from "./boundary-classifier.js";
+import { isUsableClassifierModel, predictBoundaryProbability, makeClassifierPredictor } from "./boundary-classifier.js";
 import { computeClosureSnapshot } from "./topology.js";
 import { classifyStrongWeak, trackWeakBoundaries } from "./hysteresis.js";
 
@@ -149,9 +149,13 @@ export function buildBoundaryCandidates(features, options = {}) {
   const negativeEvidenceWeight = clamp01(Number(options.negativeEvidenceWeight ?? 35) / 100);
   const calibration = options.localCalibration ?? null;
   const score = new Float32Array(features.width * features.height);
-  const positiveEvidence = new Float32Array(score.length);
-  const negativeEvidence = new Float32Array(score.length);
+  // Full evidence planes are only needed by diagnostic callers, not ordinary masks.
+  const collectEvidence = options.collectEvidence !== false;
+  const positiveEvidence = collectEvidence ? new Float32Array(score.length) : null;
+  const negativeEvidence = collectEvidence ? new Float32Array(score.length) : null;
   const mask = new Uint8Array(score.length);
+  const classifierPredict = scoreMode === "classifier"
+    ? makeClassifierPredictor(features, options.classifierModel) : null;
   const margins = features.featureMargins ?? {
     dark: 0,
     ridge: 5,
@@ -196,17 +200,19 @@ export function buildBoundaryCandidates(features, options = {}) {
       const p = base + x;
       const positive = positiveScoreAt(p, x, y);
       const penaltyAvailable = available(margins.dendriteLinePenalty ?? margins.dendrite ?? 0, x, y);
-      const negative = penaltyAvailable
+      const negative = (collectEvidence || scoreMode === "evidence") && penaltyAvailable
         ? ((features.dendriteLinePenalty?.[p] ?? 0) / 255) * negativeEvidenceWeight
         : 0;
-      positiveEvidence[p] = positive;
-      negativeEvidence[p] = negative;
+      if (collectEvidence) {
+        positiveEvidence[p] = positive;
+        negativeEvidence[p] = negative;
+      }
 
       let value = positive;
       if (scoreMode === "evidence") {
         value = clamp01(positive - negative);
       } else if (scoreMode === "classifier") {
-        value = predictBoundaryProbability(features, p, options.classifierModel) ?? positive;
+        value = classifierPredict?.(p) ?? positive;
       }
       score[p] = value;
 
@@ -504,7 +510,7 @@ function applyAdditiveHysteresis(features, candidates, baseMask, options = {}) {
     return {
       mask: baseMask,
       hysteresisDiagnostics: null,
-      recoveredWeakMask: new Uint8Array(baseMask.length),
+      recoveredWeakMask: null,
     };
   }
 
@@ -613,7 +619,7 @@ export async function buildBoundaryMask(features, options = {}) {
   const onProgress = options.onProgress ?? (() => {});
   onProgress(0.10);
   await new Promise(resolve => setTimeout(resolve, 0));
-  const candidates = buildBoundaryCandidates(features, options);
+  const candidates = buildBoundaryCandidates(features, { ...options, collectEvidence: false });
   onProgress(0.38);
   await new Promise(resolve => setTimeout(resolve, 0));
   const processed = buildProcessedBoundaryFromCandidates(
