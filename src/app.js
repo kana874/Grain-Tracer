@@ -403,6 +403,123 @@ function noteClassifierLearningChange(kind = "labels") {
   renderClassifierWizard();
 }
 
+let lastClassifierWizardKey = null;
+let latestClassifierWizard = null;
+
+function renderClassifierWizard() {
+  const button = $("classifierWizardNextButton");
+  if (!button) return;
+  if (state.drawingReference) {
+    button.disabled = true;
+    return;
+  }
+  const learning = state.classifierLearning;
+  const roiFingerprint = (state.fullEvaluationRois ?? []).map(rect =>
+    [rect.x0,rect.y0,rect.x1,rect.y1,rect.evaluationRole,rect.verified,rect.source].join(":")
+  ).join("|");
+  const key = [state.sourceFingerprint, state.preview?.width, state.preview?.height,
+    learning?.revision, learning?.lastTrainedRevision, learning?.status,
+    state.referenceCount, state.negativeCount, state.combinedNegativeCount,
+    state.imageEvaluationRole, state.classifier?.trainedAt, state.classifier?.accepted,
+    roiFingerprint].join("#");
+  if (key !== lastClassifierWizardKey) {
+    lastClassifierWizardKey = key;
+    latestClassifierWizard = assessClassifierWizard({
+      width: state.preview?.width,
+      height: state.preview?.height,
+      rois: state.fullEvaluationRois,
+      positiveMask: state.referenceCenterline,
+      negativeMask: state.negativeMask,
+      exclusionMask: state.exclusionMask,
+      imageRole: state.imageEvaluationRole,
+      learning,
+      classifier: state.classifier,
+    });
+  }
+  const guide = latestClassifierWizard;
+  if (!guide) return;
+  $("classifierWizardInstruction").textContent = guide.title + " — " + guide.instruction;
+  const activeIndex = ({image:0,training:0,labels:1,validation:2,ready:3,
+    complete:4,blocked:2})[guide.step] ?? 0;
+  const steps = ["classifierWizardStepTraining","classifierWizardStepLabels",
+    "classifierWizardStepValidation","classifierWizardStepTrain"];
+  for (let i=0;i<steps.length;i++) {
+    const item=$(steps[i]);
+    item.classList.toggle("is-done",i<activeIndex);
+    item.classList.toggle("is-current",i===activeIndex);
+  }
+  const labels={
+    "none":"画像・ROIの状態を確認",
+    "create-training":"Training範囲を指定",
+    "edit-positive":"お手本線（粒界）を描く",
+    "edit-negative":"非粒界を指定する",
+    "create-validation":"Validation作成へ進む",
+    "train":"Classifier学習・独立検証を実行",
+    "retrain":"もう一度、学習・検証を実行",
+  };
+  const actionAllowed=guide.action!=="none" && !state.busy &&
+    !state.rectInteraction && !state.validationDraft;
+  button.disabled = !actionAllowed;
+  button.textContent = labels[guide.action] || "次へ";
+  const hasTraining=guide.details.trainingRois>0 && state.preview;
+  const allowDrawing=Boolean(hasTraining && !state.busy && !state.validationDraft);
+  $("classifierWizardPositiveButton").disabled=!allowDrawing;
+  $("classifierWizardNegativeButton").disabled=!allowDrawing;
+
+  const counts=guide.details;
+  const last=learning?.history?.at(-1);
+  const metrics=last?.before?.f1!=null && last?.after?.f1!=null
+    ? " / Validation F1 " + (last.before.f1*100).toFixed(2) + "% → " +
+        (last.after.f1*100).toFixed(2) + "%" : "";
+  const decision=last
+    ? last.accepted ? "直前の候補は採用" : "直前の候補は棄却（旧モデル維持）" :
+      state.classifier?.accepted ? "採用済みClassifierあり" : "学習未実行";
+  $("classifierWizardResult").textContent = "Training " + counts.trainingRois +
+    "領域 / 粒界 " + counts.positive + "/24以上 / 非粒界 " +
+    counts.negative + "/24以上 / 確認済みValidation " +
+    counts.validationRois + "領域 / " + decision + metrics +
+    " / " + (learning?.status ?? "idle");
+}
+
+function focusClassifierTraining(tool) {
+  if (!state.preview || state.busy || state.validationDraft) return;
+  const rect=(state.fullEvaluationRois ?? []).find(r =>
+    r?.evaluationRole==="training" && r.verified!==false);
+  if (!rect) return;
+  state.selectedFullRoiIndex = state.fullEvaluationRois.indexOf(rect);
+  setTool(tool);
+  focusPreviewRect(rect);
+  setStatus(tool==="negative-reference"
+    ? "Training範囲の非粒界をオレンジ線で指定してください。閉じた粒内は「閉領域→非粒界」も利用できます。"
+    : "Training範囲の粒界を黄色のお手本線でなぞってください。描画中にClassifierは起動しません。");
+}
+
+function handleClassifierWizardNext() {
+  const action=latestClassifierWizard?.action;
+  if (state.busy || state.drawingReference || state.rectInteraction) return;
+  if (action==="create-training") {
+    setTool("full-roi");
+    setStatus("画像上でTraining ROIの矩形を描いてください。作成した矩形はTrainingに設定されます。");
+  } else if(action==="edit-positive") {
+    focusClassifierTraining("reference");
+  } else if(action==="edit-negative") {
+    focusClassifierTraining("negative-reference");
+  } else if(action==="create-validation") {
+    if (!state.validationDraft) {
+      const unfinished=state.fullEvaluationRois.some(r =>
+        r?.evaluationRole==="validation" && r.verified===false &&
+        r.source?.startsWith("validation-wizard"));
+      if (unfinished) resumeValidationRoiWizard();
+      else startValidationRoiWizard();
+      $("validationRoiWizard")?.scrollIntoView({block:"nearest",behavior:"smooth"});
+    }
+  } else if (action==="train" || action==="retrain") {
+    void trainBoundaryClassifier({automatic:false});
+  } else if (action==="none" && !state.preview) {
+    els.fileInput.click();
+  }
+}
+
 function nowMs() {
   return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 }
@@ -6034,6 +6151,9 @@ els.scoreMode?.addEventListener("change", () => {
   }
   extractionSettingChanged();
 });
+$("classifierWizardNextButton")?.addEventListener("click", handleClassifierWizardNext);
+$("classifierWizardPositiveButton")?.addEventListener("click", () => focusClassifierTraining("reference"));
+$("classifierWizardNegativeButton")?.addEventListener("click", () => focusClassifierTraining("negative-reference"));
 els.trainClassifierButton?.addEventListener("click", () => { void trainBoundaryClassifier({automatic:false}); });
 els.resetClassifierButton?.addEventListener("click", resetBoundaryClassifier);
 els.rollbackClassifierButton?.addEventListener("click", rollbackBoundaryClassifier);
