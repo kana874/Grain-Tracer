@@ -126,6 +126,23 @@
 
     <aside class="panel right-panel">
       <section class="focus-primary">
+        <div class="classifier-learning-wizard" id="classifierLearningWizard">
+          <h2>Classifier学習ガイド</h2>
+          <p class="help">お手本の描画中は学習しません。手順を進め、最後にボタンを押した時だけ学習・検証を実行します。</p>
+          <ol class="classifier-wizard-steps" aria-label="学習の手順">
+            <li id="classifierWizardStepTraining">1. Training範囲を作成</li>
+            <li id="classifierWizardStepLabels">2. 粒界・非粒界を入力</li>
+            <li id="classifierWizardStepValidation">3. Validation範囲を確認</li>
+            <li id="classifierWizardStepTrain">4. 学習・検証を実行</li>
+          </ol>
+          <p id="classifierWizardInstruction" role="status" class="classifier-wizard-instruction">BMP画像を開くと、次の操作を案内します。</p>
+          <button id="classifierWizardNextButton" class="primary full" type="button" disabled>画像を読み込んでください</button>
+          <div class="button-grid classifier-wizard-tools">
+            <button id="classifierWizardPositiveButton" type="button" disabled>粒界線を描く</button>
+            <button id="classifierWizardNegativeButton" type="button" disabled>非粒界を指定</button>
+          </div>
+          <p id="classifierWizardResult" class="help metric-detail" role="status">学習状態: 未実行。既存のROI・教師ラベルはそのまま利用できます。</p>
+        </div>
         <h2>A/B学習ワークスペース</h2>
         <p class="help">良い候補を選び、必要な線だけドラッグで補正。複数ROIの選好を統合してValidationで安全に検証します。</p>
         <button id="localAbButton" class="primary full" type="button" disabled>A/B比較・手動補正を開く</button>
@@ -209,7 +226,7 @@
             <button id="rollbackClassifierButton" type="button" disabled>直前の採用モデルへ戻す</button>
           </div>
           <p id="classifierStatus" class="help metric-detail">Classifier: 未学習</p>
-          <p class="help">粒内デンドライトらしい長い平行線を独立Penaltyとして扱います。Classifierは明示的Training ROIのPositive/Negativeだけで学習し、確認済みValidation ROIでF1改善・Recall・Precision・Negative Leakage・Topologyを検証した候補だけを採用します。フィードバック後は条件が揃うと自動再学習します。Test ROIは学習・Guardに使用しません。</p>
+          <p class="help">粒内デンドライトらしい長い平行線を独立Penaltyとして扱います。Classifierは明示的Training ROIのPositive/Negativeだけで学習し、確認済みValidation ROIでF1改善・Recall・Precision・Negative Leakage・Topologyを検証した候補だけを採用します。フィードバック後も描画中に自動学習せず、上部の学習ガイドから明示的に実行します。Test ROIは学習・Guardに使用しません。</p>
         </div>
 
         <label class="control-row"><span>最小連結サイズ</span><output id="minComponentValue">24</output><input id="minComponent" type="range" min="1" max="300" value="24"></label>
