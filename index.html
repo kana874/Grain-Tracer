@@ -206,9 +206,10 @@
           <div class="button-grid">
             <button id="trainClassifierButton" type="button" disabled>Classifier学習・検証</button>
             <button id="resetClassifierButton" type="button" disabled>Classifier解除</button>
+            <button id="rollbackClassifierButton" type="button" disabled>直前の採用モデルへ戻す</button>
           </div>
           <p id="classifierStatus" class="help metric-detail">Classifier: 未学習</p>
-          <p class="help">粒内デンドライトらしい長い平行線を独立Penaltyとして扱います。Classifierは明示的Training ROIのPositive/Negativeだけで学習し、Validation ROIでRecall・F1・Negative Leakage・Topology Guardを通過した場合だけ自動採用します。Test ROIは学習・Guardに使用しません。</p>
+          <p class="help">粒内デンドライトらしい長い平行線を独立Penaltyとして扱います。Classifierは明示的Training ROIのPositive/Negativeだけで学習し、確認済みValidation ROIでF1改善・Recall・Precision・Negative Leakage・Topologyを検証した候補だけを採用します。フィードバック後は条件が揃うと自動再学習します。Test ROIは学習・Guardに使用しません。</p>
         </div>
 
         <label class="control-row"><span>最小連結サイズ</span><output id="minComponentValue">24</output><input id="minComponent" type="range" min="1" max="300" value="24"></label>
