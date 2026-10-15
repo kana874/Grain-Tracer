@@ -215,7 +215,8 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
   function prepareChallenger() {
     if (!champion || !el('adaptive').checked) return;
     const eligible = localVotes.filter(v => v.imageFingerprint === current?.fingerprint && v.eligibleForLearning !== false
-      && v.schema === 'graintracer-preference-v2');
+      && v.schema === 'graintracer-preference-v2' && v.algorithmVersion === current?.algorithmVersion
+      && JSON.stringify(v.featureOptions ?? {}) === JSON.stringify(current?.featureOptions ?? {}));
     proposal = proposePreferenceCandidate(champion, eligible, {round});
     challenger = proposal?.parameters ?? null;
     el('proposalStatus').textContent = proposal
@@ -226,12 +227,12 @@ export function setupLocalAB({ getSnapshot, getFeatures, getLegacyFeatures, onVo
     const featureKey=JSON.stringify(current.featureOptions)+(legacy?'|legacy':'|reflect');
     const key=comparisonCacheKey(current.fingerprint,scope,params,featureKey,maskRevision);
     const hit=predictionCache.get(key);
-    if(hit)return hit;
-    const output=await predictionRunner.compute(features,scope,params);
-    const full=materializeLocalPrediction(output.mask,scope,
+    // Only keep the small ROI plane in the LRU. The current comparison still
+    // materializes a full-sized mask for legacy annotation consumers.
+    const local=hit ?? (await predictionRunner.compute(features,scope,params)).mask;
+    if(!hit)predictionCache.set(key,local);
+    return materializeLocalPrediction(local,scope,
       current.preview.width,current.preview.height);
-    predictionCache.set(key,full);
-    return full;
   }
   async function generate(){
     if(!validContext()||busy||!roi)return;
