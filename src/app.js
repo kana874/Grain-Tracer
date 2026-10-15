@@ -372,7 +372,7 @@ const state = {
 
 function canAutoTrainClassifier() {
   if (!state.preview || !state.sourceFingerprint || !canTuneImage(state.imageEvaluationRole)) return false;
-  if (state.referenceCount < 24 || state.negativeCount < 24) return false;
+  if (state.referenceCount < 24 || Math.max(state.negativeCount, state.combinedNegativeCount) < 24) return false;
   return verifyLearningPartitions(state.fullEvaluationRois).ok;
 }
 
