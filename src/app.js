@@ -1,4 +1,5 @@
 import { createLearningCoordinator } from "./learning-coordinator.js";
+import { assessClassifierWizard } from "./classifier-wizard.js";
 import { createCompactTrainingPacket, trainClassifierInWorker,
   verifyLearningPartitions, evaluateAutoClassifierGuard } from "./classifier-learning.js";
 import { setupGroundTruth } from './ground-truth-ui.js';
@@ -380,6 +381,8 @@ const classifierLearningCoordinator = createLearningCoordinator({
   ready: canAutoTrainClassifier,
   run: trainBoundaryClassifier,
   debounceMs: 1800,
+  // Never schedule training from pointer/annotation edits; only explicit UI actions run it.
+  autoRun: false,
   onStatus: (status) => {
     if (state.loadingProject) return;
     state.classifierLearning.status = status;
@@ -397,6 +400,7 @@ function noteClassifierLearningChange(kind = "labels") {
   state.classifierTrainingAbort?.abort();
   classifierLearningCoordinator.changed();
   updateClassifierStatus();
+  renderClassifierWizard();
 }
 
 function nowMs() {
@@ -560,6 +564,7 @@ function updateControls() {
   if (els.resetClassifierButton) els.resetClassifierButton.disabled = disabled || !state.classifier;
   if (els.imageEvaluationRoleSelect) els.imageEvaluationRoleSelect.disabled = disabled || !hasPreview;
   updateEvaluationRoleControls();
+  renderClassifierWizard();
 }
 
 function setBusy(busy) {
@@ -819,7 +824,7 @@ function updateClassifierStatus() {
   if (!els.classifierStatus) return;
   const learning = state.classifierLearning;
   const status = learning?.status && learning.status !== "idle"
-    ? " / 自動学習: " + learning.status : "";
+    ? " / 手動学習: " + learning.status : "";
   if (els.rollbackClassifierButton) els.rollbackClassifierButton.disabled =
     !state.classifier?.previous || state.busy;
   if (!state.classifier?.model) {
@@ -905,10 +910,9 @@ function classifierValidationEvaluation(mask, rois) {
 }
 
 async function trainBoundaryClassifier({automatic = false} = {}) {
-  if (state.busy) {
-    if (automatic && canAutoTrainClassifier()) classifierLearningCoordinator.changed();
-    return;
-  }
+  // An explicit button action is the sole authorized entry point. A long
+  // pointer stroke must never trigger/overlap classifier work.
+  if (automatic || state.busy || state.drawingReference || state.rectInteraction || state.validationDraft) return;
   if (!state.preview || !hasReference() || !hasNegativeReference()) return;
   if (!canTuneImage(state.imageEvaluationRole)) {
     setStatus("Validation/Test画像ではClassifier学習できません。", 0);
@@ -3174,8 +3178,8 @@ function commitReferenceHistory(entry) {
   updateControls();
 }
 
-function invalidateAfterReferenceEdit(affectsAnalysis = false) {
-  noteClassifierLearningChange("labels");
+function invalidateAfterReferenceEdit(affectsAnalysis = false, {deferLearning = false} = {}) {
+  if (!deferLearning) noteClassifierLearningChange("labels");
   clearLocalCalibration(true);
   const gapWasApplied = Boolean(state.gapBaseMask);
   if (gapWasApplied) {
@@ -5655,7 +5659,7 @@ function beginReferenceDraw(event) {
   if(validationEditingRect()) $("validationRoiAttest").checked=false;
   cancelScheduledClosedFillRefresh();
   if (state.comparisonMode) showNormalView();
-  invalidateAfterReferenceEdit();
+  invalidateAfterReferenceEdit(false, { deferLearning: true });
 
   state.currentReferenceEdit = {
     reference: createReferenceEditTracker(),
@@ -5713,6 +5717,7 @@ function endReferenceDraw(event) {
   }
 
   recalcAnnotationCounts();
+  if (parts.length) noteClassifierLearningChange("labels");
   updateMetrics();
   updateControls();
   recordPerformance("annotationCommitMs", annotationCommitStartedAt);
