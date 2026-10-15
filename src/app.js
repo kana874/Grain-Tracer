@@ -450,6 +450,7 @@ function renderClassifierWizard() {
   }
   const labels={
     "none":"画像・ROIの状態を確認",
+    "open-image":"BMPを開く",
     "create-training":"Training範囲を指定",
     "edit-positive":"お手本線（粒界）を描く",
     "edit-negative":"非粒界を指定する",
@@ -515,7 +516,7 @@ function handleClassifierWizardNext() {
     }
   } else if (action==="train" || action==="retrain") {
     void trainBoundaryClassifier({automatic:false});
-  } else if (action==="none" && !state.preview) {
+  } else if (action==="open-image") {
     els.fileInput.click();
   }
 }
@@ -4039,6 +4040,18 @@ async function exportDiagnostics(mode = "zip") {
       classifier: state.classifier,
       hysteresis: state.lastHysteresis,
     });
+    report.classifierLearning = {
+      schema: "graintracer-classifier-learning-audit-v1",
+      executionMode: "manual-only",
+      status: state.classifierLearning.status,
+      revision: state.classifierLearning.revision,
+      validationRevision: state.classifierLearning.validationRevision,
+      lastTrainedRevision: state.classifierLearning.lastTrainedRevision,
+      accepted: Boolean(state.classifier?.accepted),
+      history: state.classifierLearning.history.slice(-20),
+      wizardStep: latestClassifierWizard?.step ?? null,
+      note: "Editing annotations never launches classifier training",
+    };
     // A diagnostic summary is an audit trail, not a complete-label metric.
     report.localAbReview = {
       schema: "graintracer-local-ab-v1",
