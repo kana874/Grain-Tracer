@@ -1,5 +1,5 @@
 // Debounce edits into one learning round. Never run concurrently.
-export function createLearningCoordinator({ready, run, onStatus=()=>{}, debounceMs=1800}) {
+export function createLearningCoordinator({ready, run, onStatus=()=>{}, debounceMs=1800, autoRun=true}) {
   let timer=null, running=false, changedWhileRunning=false, disposed=false;
   const cancel=()=>{if(timer!=null)clearTimeout(timer);timer=null;};
   function schedule(delay=debounceMs) {
@@ -23,11 +23,11 @@ export function createLearningCoordinator({ready, run, onStatus=()=>{}, debounce
       return false;
     } finally {
       running=false;
-      if(changedWhileRunning&&!disposed)schedule();
+      if(changedWhileRunning&&!disposed&&autoRun)schedule();
     }
   }
   return {
-    changed(){if(!disposed){changedWhileRunning ||= running;schedule();onStatus("pending");}},
+    changed(){if(!disposed){changedWhileRunning ||= running;if(autoRun)schedule();else cancel();onStatus("pending");}},
     flush,cancel,
     dispose(){disposed=true;cancel();},
     get running(){return running;},
