@@ -132,20 +132,30 @@ export function trainLogisticBoundaryClassifier(features, positiveMask, negative
   const trainIndices = positive.concat(negative);
   const labels = new Uint8Array(sampleCount);
   labels.fill(1, 0, positive.length);
+  // Normalize once: avoids allocating a seven-element array for every
+  // sample on every SGD iteration while retaining Float64 arithmetic.
+  const normalized = new Float64Array(sampleCount * featureCount);
+  for (let i = 0; i < sampleCount; i += 1) {
+    const vector = featureVectorAt(features, trainIndices[i], ridgeScaleDivisor);
+    const offset = i * featureCount;
+    for (let j = 0; j < featureCount; j += 1) {
+      normalized[offset + j] = (vector[j] - means[j]) / stds[j];
+    }
+  }
 
   for (let iter = 0; iter < iterations; iter += 1) {
     const grad = new Float64Array(featureCount);
     let gradBias = 0;
     for (let i = 0; i < sampleCount; i += 1) {
-      const vector = featureVectorAt(features, trainIndices[i], ridgeScaleDivisor);
+      const offset = i * featureCount;
       let z = bias;
       for (let j = 0; j < featureCount; j += 1) {
-        z += coefficients[j] * ((vector[j] - means[j]) / stds[j]);
+        z += coefficients[j] * normalized[offset + j];
       }
       const error = sigmoid(z) - labels[i];
       gradBias += error;
       for (let j = 0; j < featureCount; j += 1) {
-        grad[j] += error * ((vector[j] - means[j]) / stds[j]);
+        grad[j] += error * normalized[offset + j];
       }
     }
     bias -= learningRate * gradBias / sampleCount;
@@ -193,6 +203,28 @@ export function isUsableClassifierModel(model) {
   );
 }
 
+// Precompile immutable coefficients for a single prediction pass.
+export function makeClassifierPredictor(features, model) {
+  if (!isUsableClassifierModel(model)) return null;
+  const weights = new Float64Array(CLASSIFIER_FEATURES.length);
+  let bias = Number(model.bias);
+  for (let j = 0; j < weights.length; j += 1) {
+    const std = Math.max(1e-8, Number(model.stds[j]) || 1);
+    weights[j] = Number(model.coefficients[j]) / std;
+    bias -= weights[j] * Number(model.means[j] ?? 0);
+  }
+  const ridgeDivisor = Math.max(1, model.ridgeScaleDivisor ?? 2);
+  const inv255 = 1 / 255;
+  return p => sigmoid(bias
+    + weights[0] * ((features.dark?.[p] ?? 0) * inv255)
+    + weights[1] * ((features.ridge?.[p] ?? 0) * inv255)
+    + weights[2] * ((features.color?.[p] ?? 0) * inv255)
+    + weights[3] * ((features.dendrite?.[p] ?? 0) * inv255)
+    + weights[4] * ((features.dendriteLinePenalty?.[p] ?? 0) * inv255)
+    + weights[5] * ((features.dendriteCoherence?.[p] ?? 0) * inv255)
+    + weights[6] * clamp01((features.ridgeScale?.[p] ?? 0) / ridgeDivisor));
+}
+
 export function predictBoundaryProbability(features, p, model) {
   if (!isUsableClassifierModel(model)) return null;
   const vector = featureVectorAt(features, p, model.ridgeScaleDivisor ?? 2);
@@ -209,8 +241,9 @@ export function buildClassifierProbabilityMap(features, model) {
     throw new Error("利用可能なClassifier modelがありません。");
   }
   const out = new Float32Array(features.width * features.height);
+  const predict = makeClassifierPredictor(features, model);
   for (let p = 0; p < out.length; p += 1) {
-    out[p] = predictBoundaryProbability(features, p, model) ?? 0;
+    out[p] = predict(p);
   }
   return out;
 }
