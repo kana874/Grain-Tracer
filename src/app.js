@@ -951,7 +951,7 @@ async function trainBoundaryClassifier({automatic = false} = {}) {
 
     // A previously accepted classifier is the baseline for subsequent rounds.
     // The initial round uses the currently selected legacy/evidence baseline.
-    const oldModel = previousAccepted && previousAccepted.featureKey === featureKey
+    const oldModel = previousAccepted && (!previousAccepted.featureKey || previousAccepted.featureKey === featureKey)
       && oldScoreMode === "classifier" ? previousAccepted.model : null;
     const baselineMode = oldModel ? "classifier"
       : oldScoreMode === "evidence" ? "evidence" : "legacy";
@@ -962,7 +962,6 @@ async function trainBoundaryClassifier({automatic = false} = {}) {
     const common = {
       ...currentBoundaryOptions(),
       negativeMask: unbiasedNegative,
-      localCalibration: null,
       onProgress: () => {},
       onHysteresisDiagnostics: () => {},
     };
@@ -981,6 +980,16 @@ async function trainBoundaryClassifier({automatic = false} = {}) {
     const baselineEval = classifierValidationEvaluation(baselineMask, split.validation);
     const candidateEval = classifierValidationEvaluation(classifierMask, split.validation);
     const guard = evaluateAutoClassifierGuard(baselineEval, candidateEval);
+    // Prepare the live mask before switching the active model. A rendering or
+    // computation failure must never leave a partially adopted classifier.
+    const adoptedMask = guard.accepted ? await buildBoundaryMask(features, {
+      ...currentBoundaryOptions(), scoreMode: "classifier",
+      classifierModel: model, onProgress: () => {},
+    }) : null;
+    if (controller.signal.aborted || state.sourceFingerprint !== fingerprint ||
+        state.classifierLearning.revision !== revision ||
+        state.classifierLearning.validationRevision !== validationRevision ||
+        JSON.stringify(currentFeatureOptions()) !== featureKey) return;
     const record = {
       createdAt: new Date().toISOString(),
       schema: "graintracer-classifier-learning-v1",
@@ -1021,11 +1030,8 @@ async function trainBoundaryClassifier({automatic = false} = {}) {
         trainedAt: model.trainedAt, featureKey, previous,
       };
       if (els.scoreMode) els.scoreMode.value = "classifier";
-      // Re-render using the live labels; held-out labels were removed for Guard.
-      state.analysisMask = await buildBoundaryMask(features, {
-        ...currentBoundaryOptions(), scoreMode: "classifier",
-        classifierModel: model, onProgress: () => {},
-      });
+      // The live mask was computed before the model swap.
+      state.analysisMask = adoptedMask;
       resetGapBridgeState(true);
       invalidateTopology();
       renderNormalOverlay();
@@ -1246,6 +1252,9 @@ function featureSettingChanged() {
   noteClassifierLearningChange("configuration");
   invalidateFeatures();
   clearLocalCalibration(true);
+  if (state.classifier?.featureKey && state.classifier.featureKey !==
+      JSON.stringify(currentFeatureOptions()) && els.scoreMode?.value === "classifier")
+    els.scoreMode.value = "legacy";
   scheduleAutosave();
 }
 
@@ -3605,6 +3614,8 @@ async function restoreProject(project, source = "プロジェクト") {
   updateMetrics();
   updateControls();
   state.loadingProject = false;
+  if (state.classifierLearning.revision > state.classifierLearning.lastTrainedRevision)
+    classifierLearningCoordinator.changed();
   els.projectStatus.textContent = `${source}を復元しました`;
   setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界線 ${state.negativeCount.toLocaleString()} px / 閉領域Fill ${state.closedNegativeValidCount}領域 / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
 }
