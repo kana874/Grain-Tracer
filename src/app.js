@@ -204,6 +204,7 @@ const els = {
   negativeEvidenceWeight: $("negativeEvidenceWeight"),
   trainClassifierButton: $("trainClassifierButton"),
   resetClassifierButton: $("resetClassifierButton"),
+  rollbackClassifierButton: $("rollbackClassifierButton"),
   classifierStatus: $("classifierStatus"),
   hysteresisEnabled: $("hysteresisEnabled"),
   hysteresisHighThreshold: $("hysteresisHighThreshold"),
@@ -368,6 +369,35 @@ const state = {
     gapBridgeMs: null,
   },
 };
+
+function canAutoTrainClassifier() {
+  if (!state.preview || !state.sourceFingerprint || !canTuneImage(state.imageEvaluationRole)) return false;
+  if (state.referenceCount < 24 || state.negativeCount < 24) return false;
+  return verifyLearningPartitions(state.fullEvaluationRois).ok;
+}
+
+const classifierLearningCoordinator = createLearningCoordinator({
+  ready: canAutoTrainClassifier,
+  run: trainBoundaryClassifier,
+  debounceMs: 1800,
+  onStatus: (status) => {
+    if (state.loadingProject) return;
+    state.classifierLearning.status = status;
+    updateClassifierStatus();
+  },
+});
+
+function noteClassifierLearningChange(kind = "labels") {
+  if (state.loadingProject || !state.preview) return;
+  state.classifierLearning.revision++;
+  // A changed label can be within the held-out Validation ROI.
+  if (kind === "validation" || kind === "labels" || kind === "configuration")
+    state.classifierLearning.validationRevision++;
+  state.classifierLearning.status = "pending";
+  state.classifierTrainingAbort?.abort();
+  classifierLearningCoordinator.changed();
+  updateClassifierStatus();
+}
 
 function nowMs() {
   return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -874,100 +904,173 @@ function classifierValidationEvaluation(mask, rois) {
   };
 }
 
-async function trainBoundaryClassifier() {
+async function trainBoundaryClassifier({automatic = false} = {}) {
+  if (state.busy) {
+    if (automatic && canAutoTrainClassifier()) classifierLearningCoordinator.changed();
+    return;
+  }
   if (!state.preview || !hasReference() || !hasNegativeReference()) return;
   if (!canTuneImage(state.imageEvaluationRole)) {
     setStatus("Validation/Test画像ではClassifier学習できません。", 0);
     return;
   }
-  const trainingRois = explicitTrainingEvaluationRois();
-  const validationRois = validationEvaluationRois(state.fullEvaluationRois);
-  if (!trainingRois.length) {
-    setStatus("Classifier学習には明示的なTraining ROIが必要です。Legacy ROIは学習に使用しません。", 0);
-    return;
-  }
-  if (!validationRois.length) {
-    setStatus("Classifier自動採用GuardにはValidation ROIが必要です。Test ROIは使用しません。", 0);
+  const split = verifyLearningPartitions(state.fullEvaluationRois);
+  if (!split.ok) {
+    state.classifierLearning.status = "waiting";
+    updateClassifierStatus();
+    if (!automatic) setStatus("Classifier学習を保留: " + split.reason, 0);
     return;
   }
 
+  const fingerprint = state.sourceFingerprint;
+  const revision = state.classifierLearning.revision;
+  const featureKey = JSON.stringify(currentFeatureOptions());
+  const validationRevision = state.classifierLearning.validationRevision;
+  const controller = new AbortController();
+  state.classifierTrainingAbort = controller;
+  const previousAccepted = state.classifier?.accepted ? state.classifier : null;
+  const oldScoreMode = els.scoreMode?.value ?? "legacy";
+  state.classifierLearning.status = "training";
   setBusy(true);
+  updateClassifierStatus();
+
   try {
     ensureClosedNegativeFresh();
     const features = await ensureFeatures();
-    const trainingMask = buildRoiMask(state.preview.width, state.preview.height, trainingRois);
-    setStatus("Classifier学習中...", 8);
-    const model = trainLogisticBoundaryClassifier(
-      features,
-      state.referenceCenterline,
-      state.negativeMask,
-      {
-        roiMask: trainingMask,
-        exclusionMask: state.exclusionMask,
+    const trainingMask = buildRoiMask(state.preview.width, state.preview.height, split.training);
+    const packet = createCompactTrainingPacket(
+      features, state.referenceCenterline, state.negativeMask, {
+        roiMask: trainingMask, exclusionMask: state.exclusionMask,
       },
     );
+    setStatus("Classifier学習中（ROI教師画素のみWorkerへ送信）...", 12);
+    const model = await trainClassifierInWorker(packet, {signal: controller.signal});
+    if (controller.signal.aborted || state.sourceFingerprint !== fingerprint ||
+        state.classifierLearning.revision !== revision ||
+        JSON.stringify(currentFeatureOptions()) !== featureKey) return;
 
-    const extraction = currentExtractionOptions();
-    const baselineMode = extraction.scoreMode === "evidence" ? "evidence" : "legacy";
+    // A previously accepted classifier is the baseline for subsequent rounds.
+    // The initial round uses the currently selected legacy/evidence baseline.
+    const oldModel = previousAccepted && previousAccepted.featureKey === featureKey
+      && oldScoreMode === "classifier" ? previousAccepted.model : null;
+    const baselineMode = oldModel ? "classifier"
+      : oldScoreMode === "evidence" ? "evidence" : "legacy";
+    // Hold-out Negative labels must never suppress predictions in Validation/Test.
+    const heldOut = [...split.validation, ...testEvaluationRois(state.fullEvaluationRois)];
+    const unbiasedNegative = maskExcludingRois(state.negativeMask,
+      state.preview.width, state.preview.height, heldOut);
     const common = {
       ...currentBoundaryOptions(),
-      hysteresis: { enabled: false },
-      edgeFrameGuard: 0,
+      negativeMask: unbiasedNegative,
+      localCalibration: null,
       onProgress: () => {},
+      onHysteresisDiagnostics: () => {},
     };
-    setStatus("Classifier Guard: Validation比較中...", 55);
+    setStatus("Classifier: 独立Validationで旧モデルと候補を比較中...", 62);
     const baselineMask = await buildBoundaryMask(features, {
-      ...common,
-      scoreMode: baselineMode,
-      classifierModel: null,
+      ...common, scoreMode: baselineMode, classifierModel: oldModel,
     });
     const classifierMask = await buildBoundaryMask(features, {
-      ...common,
-      scoreMode: "classifier",
-      classifierModel: model,
+      ...common, scoreMode: "classifier", classifierModel: model,
     });
+    if (controller.signal.aborted || state.sourceFingerprint !== fingerprint ||
+        state.classifierLearning.revision !== revision ||
+        state.classifierLearning.validationRevision !== validationRevision ||
+        JSON.stringify(currentFeatureOptions()) !== featureKey) return;
 
-    const baselineEval = classifierValidationEvaluation(baselineMask, validationRois);
-    const candidateEval = classifierValidationEvaluation(classifierMask, validationRois);
-    const guard = evaluateClassifierGuard(baselineEval, candidateEval);
-    state.classifier = {
-      model,
+    const baselineEval = classifierValidationEvaluation(baselineMask, split.validation);
+    const candidateEval = classifierValidationEvaluation(classifierMask, split.validation);
+    const guard = evaluateAutoClassifierGuard(baselineEval, candidateEval);
+    const record = {
+      createdAt: new Date().toISOString(),
+      schema: "graintracer-classifier-learning-v1",
+      imageFingerprint: fingerprint,
+      trainingRevision: revision,
+      validationRevision,
+      algorithmVersion: ALGORITHM_VERSION,
+      featureKey,
       accepted: guard.accepted,
       guard,
-      baselineMode,
-      trainingRoiCount: trainingRois.length,
-      validationRoiCount: validationRois.length,
-      baseline: baselineEval,
-      candidate: candidateEval,
-      trainedAt: model.trainedAt,
+      sampleCounts: model.sampleCounts,
+      before: baselineEval,
+      after: candidateEval,
+      testExcluded: true,
     };
+    state.classifierLearning.history.push(record);
+    state.classifierLearning.history = state.classifierLearning.history.slice(-50);
+    state.classifierLearning.lastTrainedRevision = revision;
+    state.classifierLearning.status = guard.accepted ? "accepted" : "rejected";
 
     if (guard.accepted) {
+      const previous = previousAccepted ? {
+        model: previousAccepted.model,
+        accepted: previousAccepted.accepted,
+        guard: previousAccepted.guard,
+        baselineMode: previousAccepted.baselineMode,
+        baseline: previousAccepted.baseline,
+        candidate: previousAccepted.candidate,
+        trainedAt: previousAccepted.trainedAt,
+        featureKey: previousAccepted.featureKey,
+      } : null;
+      // Switch only after the comparison is complete. Preserve one rollback generation.
+      state.classifier = {
+        model, accepted: true, guard, baselineMode,
+        trainingRoiCount: split.training.length,
+        validationRoiCount: split.validation.length,
+        baseline: baselineEval, candidate: candidateEval,
+        trainedAt: model.trainedAt, featureKey, previous,
+      };
       if (els.scoreMode) els.scoreMode.value = "classifier";
-      state.analysisMask = classifierMask;
+      // Re-render using the live labels; held-out labels were removed for Guard.
+      state.analysisMask = await buildBoundaryMask(features, {
+        ...currentBoundaryOptions(), scoreMode: "classifier",
+        classifierModel: model, onProgress: () => {},
+      });
       resetGapBridgeState(true);
       invalidateTopology();
       renderNormalOverlay();
       updateMetrics();
       setStatus(
-        `Classifier Guard合格: Validation F1 ${(baselineEval.f1 * 100).toFixed(1)}→${(candidateEval.f1 * 100).toFixed(1)}% / Leakage ${(baselineEval.negativeLeakage * 100).toFixed(2)}→${(candidateEval.negativeLeakage * 100).toFixed(2)}%`,
+        "Classifier採用: Validation F1 " +
+        (baselineEval.f1 * 100).toFixed(2) + "% → " +
+        (candidateEval.f1 * 100).toFixed(2) + "%。Test未参照。",
         100,
       );
     } else {
-      if (els.scoreMode?.value === "classifier") els.scoreMode.value = baselineMode;
-      setStatus(`Classifier Guard不合格: ${guard.reasons.join(", ")}。従来方式を維持します。`, 100);
+      // Failed candidates never overwrite a working model or active score mode.
+      setStatus("Classifier候補を棄却: " + guard.reasons.join(", ") +
+        "。従来の採用済みモデルを維持します。", 100);
     }
     updateClassifierStatus();
     updateControls();
     scheduleAutosave();
   } catch (error) {
-    console.error(error);
-    state.classifier = null;
-    updateClassifierStatus();
-    setStatus(`Classifier学習エラー: ${error.message}。従来方式を維持します。`, 0);
+    if (error?.name !== "AbortError") {
+      console.error(error);
+      state.classifierLearning.status = "failed";
+      // Do not destroy state.classifier on errors; the previous model stays live.
+      updateClassifierStatus();
+      setStatus("Classifier学習エラー: " + error.message + "。旧モデルを維持します。", 0);
+    }
   } finally {
+    if (state.classifierTrainingAbort === controller) state.classifierTrainingAbort = null;
     setBusy(false);
+    updateClassifierStatus();
   }
+}
+
+function rollbackBoundaryClassifier() {
+  if (!state.classifier?.previous || state.busy) return;
+  state.classifier = {...state.classifier.previous, previous: null};
+  if (els.scoreMode) els.scoreMode.value = "classifier";
+  state.classifierLearning.status = "rolled-back";
+  state.analysisMask = null;
+  invalidateTopology();
+  renderNormalOverlay();
+  updateClassifierStatus();
+  updateControls();
+  scheduleAutosave();
+  setStatus("直前の採用済みClassifierへ戻しました。再解析してください。");
 }
 
 function resetBoundaryClassifier() {
@@ -5915,8 +6018,9 @@ els.scoreMode?.addEventListener("change", () => {
   }
   extractionSettingChanged();
 });
-els.trainClassifierButton?.addEventListener("click", trainBoundaryClassifier);
+els.trainClassifierButton?.addEventListener("click", () => { void trainBoundaryClassifier({automatic:false}); });
 els.resetClassifierButton?.addEventListener("click", resetBoundaryClassifier);
+els.rollbackClassifierButton?.addEventListener("click", rollbackBoundaryClassifier);
 const hysteresisSettingChanged = () => {
   state.lastHysteresis = null;
   updateHysteresisStatus();
