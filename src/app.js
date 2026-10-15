@@ -1,3 +1,6 @@
+import { createLearningCoordinator } from "./learning-coordinator.js";
+import { createCompactTrainingPacket, trainClassifierInWorker,
+  verifyLearningPartitions, evaluateAutoClassifierGuard } from "./classifier-learning.js";
 import { setupGroundTruth } from './ground-truth-ui.js';
 import { setupLocalAB } from './local-ab-ui.js';
 import { buildLocalPrediction } from './local-ab-engine.js';
@@ -324,6 +327,10 @@ const state = {
   feedbackPending: null,
   baselineSnapshots: [],
   classifier: null,
+  classifierLearning: {revision:0,validationRevision:0,lastTrainedRevision:-1,
+    status:"idle",history:[]},
+  classifierTrainingAbort: null,
+  loadingProject: false,
   precisionGuide: createDefaultPrecisionGuideState(),
   comparisonMode: false,
   annotationAssist: false,
@@ -747,7 +754,9 @@ function buildNegativeHoldout() {
 }
 function currentBoundaryOptions() {
   const extraction = currentExtractionOptions();
-  const classifierAccepted = Boolean(state.classifier?.accepted && state.classifier?.model);
+  const classifierAccepted = Boolean(state.classifier?.accepted && state.classifier?.model
+    && (!state.classifier.featureKey ||
+      state.classifier.featureKey === JSON.stringify(currentFeatureOptions())));
   return {
     ...extraction,
     scoreMode: extraction.scoreMode === "classifier" && !classifierAccepted
@@ -778,8 +787,13 @@ function updateLocalCalibrationStatus() {
 
 function updateClassifierStatus() {
   if (!els.classifierStatus) return;
+  const learning = state.classifierLearning;
+  const status = learning?.status && learning.status !== "idle"
+    ? " / 自動学習: " + learning.status : "";
+  if (els.rollbackClassifierButton) els.rollbackClassifierButton.disabled =
+    !state.classifier?.previous || state.busy;
   if (!state.classifier?.model) {
-    els.classifierStatus.textContent = "Classifier: 未学習";
+    els.classifierStatus.textContent = "Classifier: 未学習" + status;
     return;
   }
   const samples = state.classifier.model.sampleCounts ?? {};
@@ -789,10 +803,10 @@ function updateClassifierStatus() {
     const leak = Number.isFinite(delta?.negativeLeakage)
       ? ` / ΔLeak ${(delta.negativeLeakage * 100).toFixed(2)}pt`
       : "";
-    els.classifierStatus.textContent = `Classifier: Guard合格 / ${sampleText}${leak}`;
+    els.classifierStatus.textContent = `Classifier: Guard合格 / ${sampleText}${leak}${status}`;
   } else {
     const reasons = state.classifier.guard?.reasons?.join(", ") || "Guard未評価";
-    els.classifierStatus.textContent = `Classifier: 未採用 / ${sampleText} / ${reasons}`;
+    els.classifierStatus.textContent = `Classifier: 未採用 / ${sampleText} / ${reasons}${status}`;
   }
 }
 
@@ -958,7 +972,9 @@ async function trainBoundaryClassifier() {
 
 function resetBoundaryClassifier() {
   state.classifier = null;
+  classifierLearningCoordinator.cancel();
   if (els.scoreMode?.value === "classifier") els.scoreMode.value = "legacy";
+  state.classifierLearning.status = "idle";
   updateClassifierStatus();
   updateControls();
   scheduleAutosave();
@@ -1124,6 +1140,7 @@ function extractionSettingChanged() {
 }
 
 function featureSettingChanged() {
+  noteClassifierLearningChange("configuration");
   invalidateFeatures();
   clearLocalCalibration(true);
   scheduleAutosave();
@@ -3046,6 +3063,7 @@ function commitReferenceHistory(entry) {
 }
 
 function invalidateAfterReferenceEdit(affectsAnalysis = false) {
+  noteClassifierLearningChange("labels");
   clearLocalCalibration(true);
   const gapWasApplied = Boolean(state.gapBaseMask);
   if (gapWasApplied) {
@@ -3071,6 +3089,7 @@ function invalidateAfterReferenceEdit(affectsAnalysis = false) {
 }
 
 function invalidateEvaluationOnly() {
+  noteClassifierLearningChange("validation");
   state.comparisonMode = false;
   els.referenceCanvas.style.visibility = "visible";
   els.negativeCanvas.style.visibility = "visible";
@@ -3326,6 +3345,7 @@ function buildProject() {
     imageEvaluationRole: state.imageEvaluationRole,
     baselineSnapshots: state.baselineSnapshots,
     classifier: state.classifier,
+    classifierLearning: state.classifierLearning,
     feedbackReviews: state.feedbackReviews,
     localAbReviews: state.localAbReviews,
     preferenceAdoptions: state.preferenceAdoptions,
@@ -3396,6 +3416,9 @@ function scheduleAutosave() {
 }
 
 async function restoreProject(project, source = "プロジェクト") {
+  classifierLearningCoordinator.cancel();
+  state.classifierTrainingAbort?.abort();
+  state.loadingProject = true;
   project = validateProject(project);
   if (!state.preview || !state.sourceFingerprint) throw new Error("先に対応するBMPを開いてください。");
   if (project.source?.fingerprint && project.source.fingerprint !== state.sourceFingerprint) {
@@ -3442,6 +3465,15 @@ async function restoreProject(project, source = "プロジェクト") {
   state.classifier = project.classifier && typeof project.classifier === "object"
     ? structuredClone(project.classifier)
     : null;
+  state.classifierLearning = {
+    revision: Math.max(0, Number(project.classifierLearning?.revision) || 0),
+    validationRevision: Math.max(0, Number(project.classifierLearning?.validationRevision) || 0),
+    lastTrainedRevision: Number.isInteger(project.classifierLearning?.lastTrainedRevision)
+      ? project.classifierLearning.lastTrainedRevision : -1,
+    status: "idle",
+    history: Array.isArray(project.classifierLearning?.history)
+      ? project.classifierLearning.history.slice(-50) : [],
+  };
   state.precisionGuide = createDefaultPrecisionGuideState(project.precisionGuide ?? {});
   state.selectedExclusionIndex = -1;
   state.selectedFullRoiIndex = -1;
@@ -3469,6 +3501,7 @@ async function restoreProject(project, source = "プロジェクト") {
   renderNormalOverlay();
   updateMetrics();
   updateControls();
+  state.loadingProject = false;
   els.projectStatus.textContent = `${source}を復元しました`;
   setStatus(`${source}を復元しました。粒界お手本 ${state.referenceCount.toLocaleString()} px / 非粒界線 ${state.negativeCount.toLocaleString()} px / 閉領域Fill ${state.closedNegativeValidCount}領域 / 除外 ${state.exclusionRects.length}領域 / 完全評価ROI ${state.fullEvaluationRois.length}領域`, 100);
 }
@@ -3976,6 +4009,12 @@ async function exportDiagnostics(mode = "zip") {
 
 async function loadBmp(file, { skipAutosave = false } = {}) {
   if (!file) return;
+  classifierLearningCoordinator.cancel();
+  state.classifierTrainingAbort?.abort();
+  state.classifierTrainingAbort = null;
+  state.loadingProject = false;
+  state.classifierLearning = {revision:0,validationRevision:0,lastTrainedRevision:-1,
+    status:"idle",history:[]};
   cancelScheduledClosedFillRefresh();
   cancelScheduledAutosave();
   state.abortController?.abort();
