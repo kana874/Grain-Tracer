@@ -67,6 +67,7 @@ export function serializeDiagnosticJson(report, options = {}) {
         evaluationRoles:report.evaluationRoles,
         localAbReview:report.localAbReview,preferenceAdoption:report.preferenceAdoption,
         feedbackReview:report.feedbackReview,
+        classifierLearning:report.classifierLearning,
         diagnosticExport:{fallback:'essential-fields-only',reason:'oversized diagnostic document'},
       };
       json=encode(essential);
